@@ -1,6 +1,6 @@
 name = "goldsignalsx-worker"
 main = "worker.js"
-compatibility_date = "2024-10-01"
+compatibility_date = "2025-01-15"
 
 [vars]
 UPSTREAM_URL = "https://gold-ticks.example.workers.dev/price"
@@ -9,12 +9,12 @@ RL_LIMIT = "180"
 
 [[kv_namespaces]]
 binding = "GSX_KV"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "8a1e80ff17ec4a73bb32a15ad1e92552"
 
 [[d1_databases]]
 binding = "GSX_DB"
 database_name = "gsx_db"
-database_id = "YOUR_D1_ID"
+database_id = "2bd08f22-1829-48b9-b889-3b2693f2d8ea"
 
 [triggers]
 crons = ["*/5 * * * *"]
