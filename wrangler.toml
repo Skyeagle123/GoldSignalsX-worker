@@ -1,5 +1,5 @@
 name = "goldsignalsx-worker"
-main = "worker.js"
+main = "goldsignalsx-worker.js"
 compatibility_date = "2025-01-15"
 
 [vars]
