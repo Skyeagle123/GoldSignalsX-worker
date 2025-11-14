@@ -16,7 +16,7 @@ id = "8a1e80ff17ec4a73bb32a15ad1e92552"   # خليه مثل اللي عندك
 # ======== D1 (يبقى كما هو) ========
 [[d1_databases]]
 binding = "GSX_DB"
-database_name = "gsx_db"
+database_name = "gsx_bars"
 database_id = "2bd08f22-1829-48b9-b889-3b2693f2d8ea"  # خليه مثل اللي عندك
 
 # ======== Service Binding (الجديد) ========
