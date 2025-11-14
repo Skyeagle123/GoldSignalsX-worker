@@ -49,26 +49,37 @@ export default {
           const ts = Number(data.ts) || Date.now();
           const price = Number(data.price);
           const day = new Date(ts).toISOString().slice(0, 10);
-          await env.GSX_KV.put(`latest`, JSON.stringify({ price, ts }), { expirationTtl: 7 * 24 * 3600 }).catch(() => {});
-          await env.GSX_KV.put(`ticks:${day}:${ts}`, JSON.stringify({ p: price, ts }), { expirationTtl: 7 * 24 * 3600 }).catch(() => {});
+          await env.GSX_KV.put(
+            `latest`,
+            JSON.stringify({ price, ts }),
+            { expirationTtl: 7 * 24 * 3600 }
+          ).catch(() => {});
+          await env.GSX_KV.put(
+            `ticks:${day}:${ts}`,
+            JSON.stringify({ p: price, ts }),
+            { expirationTtl: 7 * 24 * 3600 }
+          ).catch(() => {});
         }
-                await upsertD1Minute(env, data);
-     let hasDB = !!env.GSX_DB;
-let barsCount = null;
-if (env.GSX_DB) {
-  try {
-    const row = await env.GSX_DB.prepare('SELECT COUNT(*) AS n FROM bars').first();
-    barsCount = row ? row.n : 0;
-  } catch (e) {
-    barsCount = 'ERR';
-  }
-}
 
-return json(
-  { ok: true, ...data, marker: "GSX-TEST-123", hasDB, barsCount },
-  corsHeaders
-);
- 
+        // كتابة شمعة 1 دقيقة في D1
+        if (env.GSX_DB && data && Number.isFinite(data.price)) {
+          try {
+            const price = Number(data.price);
+            const ts = Number(data.ts) || Date.now();
+            const tfMin = 1; // 1m
+            const bucketTs = Math.floor(ts / 60000) * 60000; // نقرّب للدقيقة
+
+            await env.GSX_DB.prepare(
+              'INSERT OR REPLACE INTO bars (t, tf, o, h, l, c, v) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)'
+            )
+            .bind(bucketTs, tfMin, price, price, price, price, 1)
+            .run();
+          } catch (e) {
+            // best-effort فقط: لا نكسر /price إذا فشل الإدخال
+          }
+        }
+
+        return json({ ok: true, ...data }, corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -429,3 +440,4 @@ async function upsertD1Minute(env, data) {
     // best-effort only
   }
 }
+
