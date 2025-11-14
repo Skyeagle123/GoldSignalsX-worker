@@ -53,7 +53,7 @@ export default {
           await env.GSX_KV.put(`ticks:${day}:${ts}`, JSON.stringify({ p: price, ts }), { expirationTtl: 7 * 24 * 3600 }).catch(() => {});
         }
                 await upsertD1Minute(env, data);
-return json({ ok: true, ...data }, corsHeaders);
+      return json({ ok: true, ...data, marker: "GSX-TEST-123" }, corsHeaders);
       }
 
       // CSV import -> D1 seed fast
