@@ -360,12 +360,45 @@ function* daySpan(fromMs, toMs) {
     d.setUTCDate(d.getUTCDate() + 1);
   }
 }
+
+// ===== دالة D1 المعدّلة لدعم TFs متعددة من 1m =====
 async function d1Bars(env, tf, limit) {
   if (!env.GSX_DB) return null;
-  const tfMin = tfToMin(tf);
+
+  const tfMin = tfToMin(tf);     // مثلًا 1 أو 5 أو 15 ...
+  const baseTf = 1;              // نحن نخزن فقط 1m في D1
   const q = `SELECT t,o,h,l,c,v FROM bars WHERE tf=? ORDER BY t DESC LIMIT ?`;
-  const { results } = await env.GSX_DB.prepare(q).bind(tfMin, limit).all();
-  return results.map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v })).reverse();
+
+  // لو الطلب 1m → رجّع مباشرة من D1
+  if (tfMin === baseTf) {
+    const { results } = await env.GSX_DB
+      .prepare(q)
+      .bind(baseTf, limit)
+      .all();
+
+    return results
+      .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v }))
+      .reverse();
+  }
+
+  // TF أكبر (5m, 15m, 30m, 60m, 240m, 1d...)
+  // منجيب عدد أكبر من شموع 1m وبنركّب منها TF المطلوب
+  const factor = Math.max(1, Math.round(tfMin / baseTf)); // مثلًا 5 أو 15...
+  const need = limit * factor + 10;                        // زيادة صغيرة احتياط
+
+  const { results } = await env.GSX_DB
+    .prepare(q)
+    .bind(baseTf, need)
+    .all();
+
+  const b1m = results
+    .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v }))
+    .reverse();
+
+  if (!b1m.length) return [];
+
+  // نستخدم نفس resample الموجودة فوق
+  return resample(b1m, tfMin).slice(-limit);
 }
 
 // ---------- Telegram ----------
@@ -440,4 +473,3 @@ async function upsertD1Minute(env, data) {
     // best-effort only
   }
 }
-
