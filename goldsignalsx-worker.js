@@ -53,7 +53,22 @@ export default {
           await env.GSX_KV.put(`ticks:${day}:${ts}`, JSON.stringify({ p: price, ts }), { expirationTtl: 7 * 24 * 3600 }).catch(() => {});
         }
                 await upsertD1Minute(env, data);
-      return json({ ok: true, ...data, marker: "GSX-TEST-123" }, corsHeaders);
+     let hasDB = !!env.GSX_DB;
+let barsCount = null;
+if (env.GSX_DB) {
+  try {
+    const row = await env.GSX_DB.prepare('SELECT COUNT(*) AS n FROM bars').first();
+    barsCount = row ? row.n : 0;
+  } catch (e) {
+    barsCount = 'ERR';
+  }
+}
+
+return json(
+  { ok: true, ...data, marker: "GSX-TEST-123", hasDB, barsCount },
+  corsHeaders
+);
+ 
       }
 
       // CSV import -> D1 seed fast
