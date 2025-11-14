@@ -1,0 +1,30 @@
+name = "goldsignalsx-worker"
+main = "goldsignalsx-worker.js"
+compatibility_date = "2025-01-15"
+
+[vars]
+# إبقيهم لو بدك fallback و CORS
+UPSTREAM_URL = "https://gold-ticks.samer-mourtada.workers.dev"  # بدون /price
+ALLOW_ORIGINS = "[\"https://skyeagle123.github.io\",\"http://localhost:8080\",\"http://127.0.0.1:5500\"]"
+RL_LIMIT = "180"
+
+# ======== KV (يبقى كما هو) ========
+[[kv_namespaces]]
+binding = "GSX_KV"
+id = "8a1e80ff17ec4a73bb32a15ad1e92552"   # خليه مثل اللي عندك
+
+# ======== D1 (يبقى كما هو) ========
+[[d1_databases]]
+binding = "GSX_DB"
+database_name = "gsx_db"
+database_id = "2bd08f22-1829-48b9-b889-3b2693f2d8ea"  # خليه مثل اللي عندك
+
+# ======== Service Binding (الجديد) ========
+[[services]]
+binding = "TICKS"            # الاسم اللي رح تستعمله بالكود: env.TICKS
+service = "gold-ticks"       # اسم الوركر الهدف تماماً
+environment = "production"
+
+# (اختياري) جدول كرونك الحالي
+[triggers]
+crons = ["*/5 * * * *"]
