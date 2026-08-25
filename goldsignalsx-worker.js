@@ -14,7 +14,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.25.2';
+const APP_VERSION = '2026.08.25.3';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -450,20 +450,14 @@ let d1InitPromise;
 async function maybeEnsureD1(env) {
   if (!env.GSX_DB) return;
   if (!d1InitPromise) {
-    d1InitPromise = env.GSX_DB.exec(`
-      CREATE TABLE IF NOT EXISTS bars (
-        tf INTEGER NOT NULL DEFAULT 1,
-        t INTEGER PRIMARY KEY,
-        o REAL NOT NULL,
-        h REAL NOT NULL,
-        l REAL NOT NULL,
-        c REAL NOT NULL,
-        v REAL NOT NULL DEFAULT 0
-      );
-      DELETE FROM bars WHERE rowid NOT IN (SELECT MAX(rowid) FROM bars GROUP BY t);
-      CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);
-      CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);
-    `).catch((error) => {
+    d1InitPromise = (async () => {
+      // D1 exec treats each newline as a statement boundary, so keep each
+      // statement complete and execute schema steps separately.
+      await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars (tf INTEGER NOT NULL DEFAULT 1, t INTEGER PRIMARY KEY, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0);');
+      await env.GSX_DB.exec('DELETE FROM bars WHERE rowid NOT IN (SELECT MAX(rowid) FROM bars GROUP BY t);');
+      await env.GSX_DB.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);');
+      await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);');
+    })().catch((error) => {
       d1InitPromise = null;
       throw error;
     });
