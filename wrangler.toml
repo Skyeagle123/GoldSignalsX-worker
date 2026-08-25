@@ -1,6 +1,6 @@
 name = "goldsignalsx-worker"
 main = "goldsignalsx-worker.js"
-compatibility_date = "2025-01-15"
+compatibility_date = "2026-08-25"
 
 [vars]
 # إبقيهم لو بدك fallback و CORS
@@ -28,3 +28,7 @@ environment = "production"
 # (اختياري) جدول كرونك الحالي
 [triggers]
 crons = ["*/5 * * * *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1

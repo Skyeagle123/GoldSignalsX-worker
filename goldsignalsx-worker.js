@@ -14,6 +14,11 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
+const APP_VERSION = '2026.08.25.1';
+const MAX_BARS_LIMIT = 5000;
+// 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
+const MAX_IMPORT_ROWS = 700;
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -33,84 +38,55 @@ export default {
     const KV_OFF = String(env.KV_OFF || '').trim() === '1';
 
     try {
-      await maybeEnsureD1(env);
-
       // ---------- Routes ----------
       if (path === '/') return htmlHome(corsHeaders);
 
-      if (path === '/health') return json({ ok: true }, corsHeaders);
+      if (path === '/health') return json({ ok: true, version: APP_VERSION }, corsHeaders);
 
       if (path === '/price') {
         const { ok, data } = await getPriceUnified(env);
         if (!ok) return json({ ok: false, error: 'price_failed' }, corsHeaders, 502);
 
-        // كتابة KV (اختياري) لكن مع احترام KV_OFF
-        if (!KV_OFF && env.GSX_KV && data && Number.isFinite(data.price)) {
-          const ts = Number(data.ts) || Date.now();
-          const price = Number(data.price);
-          const day = new Date(ts).toISOString().slice(0, 10);
-          await env.GSX_KV.put(
-            `latest`,
-            JSON.stringify({ price, ts }),
-            { expirationTtl: 7 * 24 * 3600 }
-          ).catch(() => {});
-          await env.GSX_KV.put(
-            `ticks:${day}:${ts}`,
-            JSON.stringify({ p: price, ts }),
-            { expirationTtl: 7 * 24 * 3600 }
-          ).catch(() => {});
-        }
-
-        // كتابة شمعة 1 دقيقة في D1
-        if (env.GSX_DB && data && Number.isFinite(data.price)) {
-          try {
-            const price = Number(data.price);
-            const ts = Number(data.ts) || Date.now();
-            const tfMin = 1; // 1m
-            const bucketTs = Math.floor(ts / 60000) * 60000; // نقرّب للدقيقة
-
-            await env.GSX_DB.prepare(
-              'INSERT OR REPLACE INTO bars (t, tf, o, h, l, c, v) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)'
-            )
-            .bind(bucketTs, tfMin, price, price, price, price, 1)
-            .run();
-          } catch (e) {
-            // best-effort فقط: لا نكسر /price إذا فشل الإدخال
-          }
-        }
+        // لا نؤخر السعر الحي بسبب تخزين KV/D1، لكن نضمن إكمال التخزين بالخلفية.
+        const store = persistPrice(env, data, KV_OFF).catch(() => {});
+        if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(store);
+        else await store;
 
         return json({ ok: true, ...data }, corsHeaders);
       }
 
       // CSV import -> D1 seed fast
       if (path === '/import.csv' && method === 'POST') {
-        if (!env.GSX_DB) return json({ ok:false, error:'missing D1 binding GSX_DB' }, 400);
-        const url2 = new URL(req.url);
-        const tf = parseInt(url2.searchParams.get('tf') || '1', 10);
+        if (!env.GSX_DB) return json({ ok:false, error:'missing D1 binding GSX_DB' }, corsHeaders, 400);
+        const tfRaw = url.searchParams.get('tf') || '1m';
+        if (tfRaw !== '1' && tfRaw !== '1m') {
+          return json({ ok:false, error:'import supports 1m only' }, corsHeaders, 400);
+        }
+        await maybeEnsureD1(env);
         const csv = await req.text();
         const lines = csv.trim().split(/\r?\n/);
-        const startIdx = lines[0].toLowerCase().includes('time') ? 1 : 0;
+        const startIdx = (lines[0] || '').toLowerCase().includes('time') ? 1 : 0;
         const rows = [];
-        for (let i = startIdx; i < lines.length; i++) {
+        for (let i = startIdx; i < lines.length && rows.length < MAX_IMPORT_ROWS; i++) {
           const parts = lines[i].split(',');
           if (parts.length < 5) continue;
           let [time,o,h,l,c,v] = parts;
           const t = isNaN(Number(time)) ? Date.parse(time) : Number(time);
           if (!Number.isFinite(t)) continue;
           o = parseFloat(o); h = parseFloat(h); l = parseFloat(l); c = parseFloat(c); v = parseFloat(v||'0');
+          if (![o, h, l, c, v].every(Number.isFinite) || h < l) continue;
           rows.push({t, o, h, l, c, v});
         }
-        await initD1(env);
-        if (rows.length === 0) return json({ ok:false, error:'no rows parsed' }, 400);
-        const stmt = env.GSX_DB.prepare('INSERT OR REPLACE INTO bars (t,o,h,l,c,v,tf) VALUES (?1,?2,?3,?4,?5,?6,?7)');
-        const batch = rows.map(r => stmt.bind(r.t, r.o, r.h, r.l, r.c, r.v, tf));
-        await env.GSX_DB.batch(batch);
-        return json({ ok:true, imported: rows.length, tf }, corsHeaders);
+        if (rows.length === 0) return json({ ok:false, error:'no rows parsed' }, corsHeaders, 400);
+        await importBars(env, rows);
+        return json({ ok:true, imported: rows.length, tf: 1, truncated: rows.length === MAX_IMPORT_ROWS }, corsHeaders);
       }
 
       if (path === '/bars') {
         const tf = url.searchParams.get('tf') || '1m';
-        const limit = Math.min(Number(url.searchParams.get('limit') || 1200), 5000);
+        if (!TF[tf]) return json({ ok:false, error:'bad tf' }, corsHeaders, 400);
+        const limit = parseLimit(url.searchParams.get('limit'), 1200, MAX_BARS_LIMIT);
+        await maybeEnsureD1(env);
 
         // من D1 أولاً
         const rows = await d1Bars(env, tf, limit);
@@ -124,13 +100,13 @@ export default {
           const ticks = await listTicks(env, fromMs, toMs, KV_OFF);
           const bars1m = build1m(ticks);
           const bars = resample(bars1m, tfMin).slice(-limit);
-          return json(bars, corsHeaders);
+          if (bars.length) return json(bars, corsHeaders);
         }
 
         // إذا لم نجد شيئاً في D1 ولا KV أو كانت النتيجة قليلة، جرّب الـ UPSTREAM /ohlc كـ fallback
         if (env.UPSTREAM_URL) {
           try {
-            const tfMap = { '1m':60, '3m':180, '5m':300, '15m':900, '30m':1800, '1h':3600, '4h':14400, '1d':86400 };
+            const tfMap = { '1m':60, '5m':300, '15m':900, '30m':1800, '60m':3600, '1h':3600, '240m':14400, '4h':14400, '1d':86400 };
             const tfSec = tfMap[tf] || 300;
             const lookback = (limit || 600) * tfSec;
             const u = new URL(env.UPSTREAM_URL);
@@ -139,15 +115,17 @@ export default {
             const r2 = await fetch(u.toString());
             if (r2.ok) {
               const j = await r2.json();
-              if (Array.isArray(j) && j.length) {
-                const mapped = j.map(row => {
+              const sourceRows = Array.isArray(j) ? j : (Array.isArray(j?.bars) ? j.bars : []);
+              if (sourceRows.length) {
+                const mapped = sourceRows.map(row => {
                   const t = row.t ?? row.time ?? row[0];
                   const o = row.o ?? row.open ?? row[1];
                   const h = row.h ?? row.high ?? row[2];
                   const l = row.l ?? row.low ?? row[3];
                   const c = row.c ?? row.close ?? row[4];
                   const v = row.v ?? row.volume ?? row[5] ?? 0;
-                  const ts = typeof t === 'number' ? t : Date.parse(t);
+                  const rawTs = typeof t === 'number' ? t : Date.parse(t);
+                  const ts = Number.isFinite(rawTs) && rawTs < 1e12 ? rawTs * 1000 : rawTs;
                   return { t: ts, o: Number(o), h: Number(h), l: Number(l), c: Number(c), v: Number(v) };
                 }).filter(b => Number.isFinite(b.t) && Number.isFinite(b.o) && Number.isFinite(b.c));
                 if (mapped.length) return json(mapped.slice(-limit), corsHeaders);
@@ -164,6 +142,8 @@ export default {
 
       if (path === '/export.csv') {
         const tf = url.searchParams.get('tf') || '1m';
+        if (!TF[tf]) return json({ ok:false, error:'bad tf' }, corsHeaders, 400);
+        await maybeEnsureD1(env);
         let bars = await d1Bars(env, tf, 20000);
         if ((!bars || !bars.length) && !KV_OFF) {
           const tfMin = tfToMin(tf);
@@ -199,28 +179,34 @@ export default {
     } catch (e) {
       return json({ ok: false, error: 'exception', message: String(e?.message || e) }, corsHeaders, 500);
     }
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(refreshStoredPrice(env));
   }
 };
 
 // ===== Helpers =====
 function parseAllow(v) {
   try {
-    if (!v) return ['*'];
+    if (!v) return [];
     if (Array.isArray(v)) return v;
     const a = JSON.parse(v);
-    return Array.isArray(a) ? a : ['*'];
-  } catch { return ['*']; }
+    return Array.isArray(a) ? a : [];
+  } catch { return []; }
 }
 function makeCorsHeaders(origin, allowList) {
   const allowAll = allowList.includes('*');
-  const allowed = allowAll || allowList.includes(origin) ? (origin || '*') : (allowAll ? '*' : allowList[0] || '*');
-  return {
-    'access-control-allow-origin': allowed,
+  const allowed = !origin ? '*' : (allowAll ? origin : (allowList.includes(origin) ? origin : ''));
+  const headers = {
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type',
+    'access-control-max-age': '86400',
     'content-type': 'application/json; charset=utf-8',
     'vary': 'origin'
   };
+  if (allowed) headers['access-control-allow-origin'] = allowed;
+  return headers;
 }
 function json(obj, headers = {}, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers });
@@ -248,7 +234,7 @@ ul{margin:8px 0 0 1.2em}
 <li><a href="/bars?tf=5m">/bars?tf=5m</a> — شموع TF</li>
 <li><a href="/export.csv?tf=15m">/export.csv?tf=15m</a> — تنزيل CSV</li>
 </ul>
-<p class="muted">نسخة: <code>v${new Date().toISOString()}</code></p>
+<p class="muted">نسخة: <code>v${APP_VERSION}</code></p>
 </div></body></html>`, { headers: h });
 }
 
@@ -256,20 +242,26 @@ ul{margin:8px 0 0 1.2em}
 async function getPriceUnified(env) {
   const base = (env.UPSTREAM_URL || '').trim().replace(/\/+$/g, '');
   const tried = [];
+  if (env.TICKS && typeof env.TICKS.fetch === 'function') {
+    try {
+      const r = await env.TICKS.fetch(new Request('https://gold-ticks.internal/price', {
+        headers: { accept: 'application/json' }
+      }));
+      tried.push({ source: 'service-binding', status: r.status });
+      const data = await priceFromResponse(r, 'gold-ticks-binding');
+      if (data) return { ok: true, data };
+    } catch (e) {
+      tried.push({ source: 'service-binding', error: String(e) });
+    }
+  }
   if (base) {
     const candidates = [`${base}/price`, `${base}/api/price`, base];
     for (const u of candidates) {
       try {
         const r = await fetch(u, { headers: { accept: 'application/json' }, cf: { cacheTtl: 0 } });
         tried.push({ url: u, status: r.status });
-        if (r.ok) {
-          const j = await r.json();
-          const price = Number(j.price ?? j.close ?? j.last);
-          if (Number.isFinite(price)) {
-            const ts = Number(j.ts) || Date.now();
-            return { ok: true, data: { source: 'gold-ticks', price, ts } };
-          }
-        }
+        const data = await priceFromResponse(r, 'gold-ticks');
+        if (data) return { ok: true, data };
       } catch (e) {
         tried.push({ url: u, error: String(e) });
       }
@@ -289,6 +281,15 @@ async function getPriceUnified(env) {
     return { ok: false, tried };
   }
 }
+async function priceFromResponse(response, source) {
+  if (!response.ok) return null;
+  const j = await response.json();
+  const price = Number(j.price ?? j.close ?? j.last);
+  if (!Number.isFinite(price)) return null;
+  let ts = Number(j.ts ?? j.time) || Date.now();
+  if (ts < 1e12) ts *= 1000;
+  return { source, price, ts };
+}
 function parseStooqCSV(text) {
   const lines = String(text || '').trim().split(/\r?\n/);
   const row = lines.length > 1 ? lines[1] : lines[0] || '';
@@ -298,9 +299,13 @@ function parseStooqCSV(text) {
 function toIsoMs(date, time) { if (!date || !time) return null; const d = new Date(`${date}T${time}Z`); return isNaN(d.getTime()) ? null : d.getTime(); }
 
 // ---------- OHLC / CSV ----------
-const TF = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '240m': 240, '1d': 1440 };
+const TF = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60, '240m': 240, '4h': 240, '1d': 1440 };
 function tfToMin(tf) { if (TF[tf]) return TF[tf]; throw new Error('bad tf'); }
 function bucket(ts, min) { return Math.floor(ts / (min * 60000)) * (min * 60000); }
+function parseLimit(value, fallback, max) {
+  const n = Number.parseInt(value || '', 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 1), max) : fallback;
+}
 
 function build1m(ticks) {
   const bars = []; let cur = null, base = null;
@@ -425,51 +430,81 @@ async function handleNotify(req, env) {
 }
 
 // ---------- D1 ensure ----------
+let d1InitPromise;
 async function maybeEnsureD1(env) {
   if (!env.GSX_DB) return;
-  try {
-    await env.GSX_DB.exec(`
+  if (!d1InitPromise) {
+    d1InitPromise = env.GSX_DB.exec(`
       CREATE TABLE IF NOT EXISTS bars (
-        t INTEGER NOT NULL,
-        tf INTEGER NOT NULL,
+        tf INTEGER NOT NULL DEFAULT 1,
+        t INTEGER PRIMARY KEY,
         o REAL NOT NULL,
         h REAL NOT NULL,
         l REAL NOT NULL,
         c REAL NOT NULL,
-        v INTEGER NOT NULL
+        v REAL NOT NULL DEFAULT 0
       );
+      DELETE FROM bars WHERE rowid NOT IN (SELECT MAX(rowid) FROM bars GROUP BY t);
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);
       CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);
-    `);
-  } catch (_) {}
+    `).catch((error) => {
+      d1InitPromise = null;
+      throw error;
+    });
+  }
+  await d1InitPromise;
 }
 
-// ملاحظة: initD1 مستخدمة قبل batch في /import.csv
-async function initD1(env) { /* الجدول يُنشأ في maybeEnsureD1 */ }
+async function refreshStoredPrice(env) {
+  const { ok, data } = await getPriceUnified(env);
+  if (!ok) throw new Error('price_failed');
+  await persistPrice(env, data, String(env.KV_OFF || '').trim() === '1');
+}
 
-// ===== GSX: auto-upsert 1m bar into D1 on each /price =====
-async function upsertD1Minute(env, data) {
-  try {
-    if (!env.GSX_DB) return;
-    if (!data || !Number.isFinite(Number(data.price))) return;
-    const price = Number(data.price);
-    const t = Math.floor((Number(data.ts) || Date.now()) / 60000) * 60000;
-    await env.GSX_DB.exec(`
-      CREATE TABLE IF NOT EXISTS bars (
-        t INTEGER NOT NULL,
-        tf INTEGER NOT NULL,
-        o REAL NOT NULL,
-        h REAL NOT NULL,
-        l REAL NOT NULL,
-        c REAL NOT NULL,
-        v INTEGER NOT NULL,
-        PRIMARY KEY (t, tf)
-      );
-      CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);
-    `);
-    const tf = 1;
-    const stmt = env.GSX_DB.prepare('INSERT OR REPLACE INTO bars (t,o,h,l,c,v,tf) VALUES (?1,?2,?3,?4,?5,?6,?7)');
-    await stmt.bind(t, price, price, price, price, 1, tf).run();
-  } catch (e) {
-    // best-effort only
+async function persistPrice(env, data, kvOff) {
+  if (!data || !Number.isFinite(Number(data.price))) return;
+  const price = Number(data.price);
+  const ts = Number(data.ts) || Date.now();
+  const writes = [];
+
+  if (!kvOff && env.GSX_KV) {
+    const day = new Date(ts).toISOString().slice(0, 10);
+    writes.push(env.GSX_KV.put('latest', JSON.stringify({ price, ts }), { expirationTtl: 7 * 24 * 3600 }));
+    writes.push(env.GSX_KV.put(`ticks:${day}:${ts}`, JSON.stringify({ p: price, ts }), { expirationTtl: 7 * 24 * 3600 }));
   }
+
+  if (env.GSX_DB) {
+    writes.push((async () => {
+      await maybeEnsureD1(env);
+      const t = bucket(ts, 1);
+      await env.GSX_DB.prepare(`
+        INSERT INTO bars (tf,t,o,h,l,c,v) VALUES (1,?1,?2,?2,?2,?2,1)
+        ON CONFLICT(t) DO UPDATE SET
+          tf=1,
+          h=MAX(bars.h, excluded.h),
+          l=MIN(bars.l, excluded.l),
+          c=excluded.c,
+          v=COALESCE(bars.v, 0) + 1
+      `).bind(t, price).run();
+    })());
+  }
+
+  await Promise.allSettled(writes);
+}
+
+async function importBars(env, rows) {
+  const statements = [];
+  // D1 permits at most 100 bound parameters; each row uses six.
+  const chunkSize = 16;
+  for (let start = 0; start < rows.length; start += chunkSize) {
+    const chunk = rows.slice(start, start + chunkSize);
+    const placeholders = chunk.map(() => '(1,?,?,?,?,?,?)').join(',');
+    const values = chunk.flatMap(r => [r.t, r.o, r.h, r.l, r.c, r.v]);
+    statements.push(env.GSX_DB.prepare(`
+      INSERT INTO bars (tf,t,o,h,l,c,v) VALUES ${placeholders}
+      ON CONFLICT(t) DO UPDATE SET
+        tf=1, o=excluded.o, h=excluded.h, l=excluded.l, c=excluded.c, v=excluded.v
+    `).bind(...values));
+  }
+  await env.GSX_DB.batch(statements);
 }
