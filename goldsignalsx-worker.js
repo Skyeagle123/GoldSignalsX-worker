@@ -14,7 +14,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.25.1';
+const APP_VERSION = '2026.08.25.2';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -268,6 +268,19 @@ async function getPriceUnified(env) {
     }
   }
 
+  // Public no-key fallback for a current XAU/USD spot quote.
+  try {
+    const r = await fetch('https://api.gold-api.com/price/XAU', {
+      headers: { accept: 'application/json' },
+      cf: { cacheTtl: 3 }
+    });
+    tried.push({ source: 'gold-api', status: r.status });
+    const data = await priceFromResponse(r, 'gold-api');
+    if (data) return { ok: true, data };
+  } catch (e) {
+    tried.push({ source: 'gold-api', error: String(e) });
+  }
+
   try {
     const stq = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcvn&h&e=csv";
     const r = await fetch(stq, { cf: { cacheTtl: 3 } });
@@ -278,6 +291,7 @@ async function getPriceUnified(env) {
     const ts = toIsoMs(out.date, out.time) || Date.now();
     return { ok: true, data: { source: 'stooq', price: out.close, ts } };
   } catch (e) {
+    tried.push({ source: 'stooq', error: String(e) });
     return { ok: false, tried };
   }
 }
@@ -286,7 +300,9 @@ async function priceFromResponse(response, source) {
   const j = await response.json();
   const price = Number(j.price ?? j.close ?? j.last);
   if (!Number.isFinite(price)) return null;
-  let ts = Number(j.ts ?? j.time) || Date.now();
+  const rawTs = j.ts ?? j.time ?? j.updatedAt ?? j.updated_at;
+  let ts = typeof rawTs === 'string' ? Date.parse(rawTs) : Number(rawTs);
+  if (!Number.isFinite(ts)) ts = Date.now();
   if (ts < 1e12) ts *= 1000;
   return { source, price, ts };
 }
