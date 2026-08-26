@@ -3,6 +3,7 @@
 //   GET  /                   → صفحة حالة بسيطة (HTML)
 //   GET  /health             → { ok: true }
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
+//   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST/GET /notify              → Telegram (TELEGRAM_TOKEN/CHAT)
@@ -11,11 +12,12 @@
 // Env:
 //   UPSTREAM_URL, ALLOW_ORIGINS
 //   OANDA_TOKEN + OANDA_ACCOUNT_ID (secrets), OANDA_ENV, OANDA_INSTRUMENT
+//   TWELVE_DATA_API_KEY (secret)
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.26.3';
+const APP_VERSION = '2026.08.26.4';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -47,8 +49,13 @@ export default {
           ok: true,
           version: APP_VERSION,
           primaryProvider: isOandaConfigured(env) ? 'oanda' : 'fallback',
-          oandaConfigured: isOandaConfigured(env)
+          oandaConfigured: isOandaConfigured(env),
+          twelveDataConfigured: isTwelveDataConfigured(env)
         }, corsHeaders);
+      }
+
+      if (path === '/stream') {
+        return handleTwelveDataStream(req, env, corsHeaders);
       }
 
       if (path === '/price') {
@@ -263,11 +270,102 @@ ul{margin:8px 0 0 1.2em}
 <ul>
 <li><a href="/health">/health</a> — فحص سريع</li>
 <li><a href="/price">/price</a> — آخر سعر (OANDA عند تفعيله، ثم fallback)</li>
+<li><code>/stream</code> — بث سعر XAU/USD الحي من Twelve Data</li>
 <li><a href="/bars?tf=5m">/bars?tf=5m</a> — شموع TF</li>
 <li><a href="/export.csv?tf=15m">/export.csv?tf=15m</a> — تنزيل CSV</li>
 </ul>
 <p class="muted">نسخة: <code>v${APP_VERSION}</code></p>
 </div></body></html>`, { headers: h });
+}
+
+// ---------- Twelve Data live WebSocket ----------
+function isTwelveDataConfigured(env) {
+  return Boolean(String(env.TWELVE_DATA_API_KEY || '').trim());
+}
+
+function closeSocket(socket, code = 1000, reason = 'closed') {
+  try {
+    if (socket && socket.readyState < 2) socket.close(code, reason);
+  } catch {}
+}
+
+function normalizeTwelveDataMessage(raw) {
+  let payload;
+  try {
+    payload = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+  } catch {
+    return null;
+  }
+
+  if (payload?.event === 'price') {
+    const price = Number(payload.price);
+    let ts = Number(payload.timestamp);
+    if (!Number.isFinite(price)) return null;
+    if (!Number.isFinite(ts)) ts = Date.now();
+    else if (ts < 1e12) ts *= 1000;
+    return {
+      event: 'price',
+      symbol: String(payload.symbol || 'XAU/USD'),
+      price,
+      ts,
+      source: 'twelve-data'
+    };
+  }
+
+  if (payload?.event === 'status' || payload?.status || payload?.code) {
+    return {
+      event: payload.event || 'status',
+      status: payload.status || 'error',
+      code: payload.code || '',
+      message: String(payload.message || 'Twelve Data status')
+    };
+  }
+  return null;
+}
+
+function handleTwelveDataStream(req, env, corsHeaders = {}) {
+  if (req.method.toUpperCase() !== 'GET') {
+    return json({ ok: false, error: 'method_not_allowed' }, corsHeaders, 405);
+  }
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigins = parseAllow(env.ALLOW_ORIGINS);
+  if (!origin || (!allowedOrigins.includes('*') && !allowedOrigins.includes(origin))) {
+    return json({ ok: false, error: 'origin_not_allowed' }, corsHeaders, 403);
+  }
+  if (!isTwelveDataConfigured(env)) {
+    return json({ ok: false, error: 'twelve_data_not_configured' }, corsHeaders, 503);
+  }
+  if ((req.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+    return json({ ok: false, error: 'websocket_upgrade_required' }, corsHeaders, 426);
+  }
+
+  const pair = new WebSocketPair();
+  const [client, server] = Object.values(pair);
+  server.accept();
+
+  const apiKey = String(env.TWELVE_DATA_API_KEY).trim();
+  const upstream = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${encodeURIComponent(apiKey)}`);
+
+  upstream.addEventListener('open', () => {
+    upstream.send(JSON.stringify({ action: 'subscribe', params: { symbols: 'XAU/USD' } }));
+  });
+  upstream.addEventListener('message', (event) => {
+    const message = normalizeTwelveDataMessage(event.data);
+    if (!message || server.readyState !== 1) return;
+    server.send(JSON.stringify(message));
+  });
+  upstream.addEventListener('error', () => {
+    if (server.readyState === 1) {
+      server.send(JSON.stringify({ event: 'error', message: 'live_provider_error' }));
+    }
+  });
+  upstream.addEventListener('close', (event) => {
+    closeSocket(server, event.code === 1000 ? 1000 : 1011, 'live provider closed');
+  });
+  server.addEventListener('close', () => closeSocket(upstream, 1000, 'client closed'));
+  server.addEventListener('error', () => closeSocket(upstream, 1011, 'client error'));
+
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 // ---------- OANDA (primary when configured) ----------
