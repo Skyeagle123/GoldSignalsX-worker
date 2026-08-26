@@ -15,7 +15,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.26.1';
+const APP_VERSION = '2026.08.26.2';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -56,7 +56,12 @@ export default {
         if (!ok) return json({ ok: false, error: 'price_failed' }, corsHeaders, 502);
 
         // Read-only by design. The 2-second UI poll must never consume KV writes.
-        return json({ ok: true, ...data, ageMs: Math.max(0, Date.now() - data.ts) }, corsHeaders);
+        return jsonNoStore({
+          ok: true,
+          ...data,
+          receivedAt: Date.now(),
+          ageMs: Math.max(0, Date.now() - data.ts)
+        }, corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -226,6 +231,13 @@ function makeCorsHeaders(origin, allowList) {
 function json(obj, headers = {}, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers });
 }
+function jsonNoStore(obj, headers = {}, status = 200) {
+  const h = new Headers(headers);
+  h.set('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
+  h.set('pragma', 'no-cache');
+  h.set('expires', '0');
+  return new Response(JSON.stringify(obj), { status, headers: h });
+}
 function jsonWithSource(obj, source, headers = {}, status = 200) {
   const h = new Headers(headers);
   h.set('x-gsx-source', source);
@@ -349,7 +361,7 @@ function logProviderError(provider, error) {
   }));
 }
 
-// ---------- Price (OANDA → gold-ticks → public fallbacks) ----------
+// ---------- Price (OANDA → direct public quote → legacy gold-ticks → Stooq) ----------
 async function getPriceUnified(env) {
   const base = (env.UPSTREAM_URL || '').trim().replace(/\/+$/g, '');
   const tried = [];
@@ -361,6 +373,22 @@ async function getPriceUnified(env) {
       logProviderError('oanda-price', error);
     }
   }
+  // Public no-key quote. Keep it ahead of the legacy gold-ticks Worker because
+  // that service can be healthy while its in-memory snapshot is still empty.
+  try {
+    const quoteUrl = `https://api.gold-api.com/price/XAU?_=${Date.now()}`;
+    const r = await fetch(quoteUrl, {
+      headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+      cache: 'no-store',
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    tried.push({ source: 'gold-api', status: r.status });
+    const data = await priceFromResponse(r, 'gold-api');
+    if (data) return { ok: true, data };
+  } catch (e) {
+    tried.push({ source: 'gold-api', error: String(e) });
+  }
+
   if (env.TICKS && typeof env.TICKS.fetch === 'function') {
     try {
       const r = await env.TICKS.fetch(new Request('https://gold-ticks.internal/price', {
@@ -387,19 +415,6 @@ async function getPriceUnified(env) {
     }
   }
 
-  // Public no-key fallback for a current XAU/USD spot quote.
-  try {
-    const r = await fetch('https://api.gold-api.com/price/XAU', {
-      headers: { accept: 'application/json' },
-      cf: { cacheTtl: 3 }
-    });
-    tried.push({ source: 'gold-api', status: r.status });
-    const data = await priceFromResponse(r, 'gold-api');
-    if (data) return { ok: true, data };
-  } catch (e) {
-    tried.push({ source: 'gold-api', error: String(e) });
-  }
-
   try {
     const stq = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcvn&h&e=csv";
     const r = await fetch(stq, { cf: { cacheTtl: 3 } });
@@ -419,7 +434,7 @@ async function priceFromResponse(response, source) {
   const j = await response.json();
   const price = Number(j.price ?? j.close ?? j.last);
   if (!Number.isFinite(price)) return null;
-  const rawTs = j.ts ?? j.time ?? j.updatedAt ?? j.updated_at;
+  const rawTs = j.ts ?? j.time ?? j.timestamp ?? j.updatedAt ?? j.updated_at;
   let ts = typeof rawTs === 'string' ? Date.parse(rawTs) : Number(rawTs);
   if (!Number.isFinite(ts)) ts = Date.now();
   if (ts < 1e12) ts *= 1000;
