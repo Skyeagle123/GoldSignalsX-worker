@@ -15,7 +15,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.26.2';
+const APP_VERSION = '2026.08.26.3';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -376,11 +376,9 @@ async function getPriceUnified(env) {
   // Public no-key quote. Keep it ahead of the legacy gold-ticks Worker because
   // that service can be healthy while its in-memory snapshot is still empty.
   try {
-    const quoteUrl = `https://api.gold-api.com/price/XAU?_=${Date.now()}`;
-    const r = await fetch(quoteUrl, {
-      headers: { accept: 'application/json', 'cache-control': 'no-cache' },
-      cache: 'no-store',
-      cf: { cacheTtl: 0, cacheEverything: false }
+    const r = await fetch('https://api.gold-api.com/price/XAU', {
+      headers: { accept: 'application/json' },
+      cf: { cacheTtl: 1 }
     });
     tried.push({ source: 'gold-api', status: r.status });
     const data = await priceFromResponse(r, 'gold-api');
