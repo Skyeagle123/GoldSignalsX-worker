@@ -1,8 +1,8 @@
-// GoldSignalsX Worker — unified with gold-ticks primary + stooq fallback
+// GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
 //   GET  /                   → صفحة حالة بسيطة (HTML)
 //   GET  /health             → { ok: true }
-//   GET  /price              → { ok, price, ts, source }
+//   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST/GET /notify              → Telegram (TELEGRAM_TOKEN/CHAT)
@@ -10,11 +10,12 @@
 //
 // Env:
 //   UPSTREAM_URL, ALLOW_ORIGINS
+//   OANDA_TOKEN + OANDA_ACCOUNT_ID (secrets), OANDA_ENV, OANDA_INSTRUMENT
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.25.3';
+const APP_VERSION = '2026.08.26.1';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -41,18 +42,21 @@ export default {
       // ---------- Routes ----------
       if (path === '/') return htmlHome(corsHeaders);
 
-      if (path === '/health') return json({ ok: true, version: APP_VERSION }, corsHeaders);
+      if (path === '/health') {
+        return json({
+          ok: true,
+          version: APP_VERSION,
+          primaryProvider: isOandaConfigured(env) ? 'oanda' : 'fallback',
+          oandaConfigured: isOandaConfigured(env)
+        }, corsHeaders);
+      }
 
       if (path === '/price') {
         const { ok, data } = await getPriceUnified(env);
         if (!ok) return json({ ok: false, error: 'price_failed' }, corsHeaders, 502);
 
-        // لا نؤخر السعر الحي بسبب تخزين KV/D1، لكن نضمن إكمال التخزين بالخلفية.
-        const store = persistPrice(env, data, KV_OFF).catch(() => {});
-        if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(store);
-        else await store;
-
-        return json({ ok: true, ...data }, corsHeaders);
+        // Read-only by design. The 2-second UI poll must never consume KV writes.
+        return json({ ok: true, ...data, ageMs: Math.max(0, Date.now() - data.ts) }, corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -86,11 +90,20 @@ export default {
         const tf = url.searchParams.get('tf') || '1m';
         if (!TF[tf]) return json({ ok:false, error:'bad tf' }, corsHeaders, 400);
         const limit = parseLimit(url.searchParams.get('limit'), 1200, MAX_BARS_LIMIT);
-        await maybeEnsureD1(env);
+
+        // Keep analysis candles on the same provider as the live quote.
+        if (isOandaConfigured(env)) {
+          try {
+            const bars = await getOandaBars(env, tf, limit);
+            if (bars.length) return jsonWithSource(bars, 'oanda', corsHeaders);
+          } catch (error) {
+            logProviderError('oanda-bars', error);
+          }
+        }
 
         // من D1 أولاً
         const rows = await d1Bars(env, tf, limit);
-        if (rows && rows.length) return json(rows, corsHeaders);
+        if (rows && rows.length) return jsonWithSource(rows, 'd1', corsHeaders);
 
         // Fallback إلى KV فقط إذا لم يكن KV_OFF
         if (!KV_OFF) {
@@ -100,7 +113,7 @@ export default {
           const ticks = await listTicks(env, fromMs, toMs, KV_OFF);
           const bars1m = build1m(ticks);
           const bars = resample(bars1m, tfMin).slice(-limit);
-          if (bars.length) return json(bars, corsHeaders);
+          if (bars.length) return jsonWithSource(bars, 'kv', corsHeaders);
         }
 
         // إذا لم نجد شيئاً في D1 ولا KV أو كانت النتيجة قليلة، جرّب الـ UPSTREAM /ohlc كـ fallback
@@ -128,11 +141,11 @@ export default {
                   const ts = Number.isFinite(rawTs) && rawTs < 1e12 ? rawTs * 1000 : rawTs;
                   return { t: ts, o: Number(o), h: Number(h), l: Number(l), c: Number(c), v: Number(v) };
                 }).filter(b => Number.isFinite(b.t) && Number.isFinite(b.o) && Number.isFinite(b.c));
-                if (mapped.length) return json(mapped.slice(-limit), corsHeaders);
+                if (mapped.length) return jsonWithSource(mapped.slice(-limit), 'gold-ticks', corsHeaders);
               }
             }
-          } catch (e) {
-            // ignore upstream fallback errors
+          } catch (error) {
+            logProviderError('gold-ticks-bars', error);
           }
         }
 
@@ -182,7 +195,8 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(refreshStoredPrice(env));
+    // One D1 snapshot every five minutes; never writes price ticks to KV.
+    if (env.GSX_DB) ctx.waitUntil(refreshStoredPrice(env));
   }
 };
 
@@ -201,6 +215,7 @@ function makeCorsHeaders(origin, allowList) {
   const headers = {
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type',
+    'access-control-expose-headers': 'x-gsx-source',
     'access-control-max-age': '86400',
     'content-type': 'application/json; charset=utf-8',
     'vary': 'origin'
@@ -210,6 +225,11 @@ function makeCorsHeaders(origin, allowList) {
 }
 function json(obj, headers = {}, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers });
+}
+function jsonWithSource(obj, source, headers = {}, status = 200) {
+  const h = new Headers(headers);
+  h.set('x-gsx-source', source);
+  return new Response(JSON.stringify(obj), { status, headers: h });
 }
 function htmlHome(headers = {}) {
   const h = new Headers(headers);
@@ -230,7 +250,7 @@ ul{margin:8px 0 0 1.2em}
 <p>خدمة موحّدة للسعر الحي، الشموع، الإشعارات والتصدير.</p>
 <ul>
 <li><a href="/health">/health</a> — فحص سريع</li>
-<li><a href="/price">/price</a> — آخر سعر (gold-ticks ← stooq)</li>
+<li><a href="/price">/price</a> — آخر سعر (OANDA عند تفعيله، ثم fallback)</li>
 <li><a href="/bars?tf=5m">/bars?tf=5m</a> — شموع TF</li>
 <li><a href="/export.csv?tf=15m">/export.csv?tf=15m</a> — تنزيل CSV</li>
 </ul>
@@ -238,10 +258,109 @@ ul{margin:8px 0 0 1.2em}
 </div></body></html>`, { headers: h });
 }
 
-// ---------- Price (gold-ticks primary → stooq fallback) ----------
+// ---------- OANDA (primary when configured) ----------
+function isOandaConfigured(env) {
+  return String(env.OANDA_ENABLED || '1').trim() !== '0' &&
+    Boolean(String(env.OANDA_TOKEN || '').trim()) &&
+    Boolean(String(env.OANDA_ACCOUNT_ID || '').trim());
+}
+function oandaBase(env) {
+  return String(env.OANDA_ENV || 'practice').trim().toLowerCase() === 'live'
+    ? 'https://api-fxtrade.oanda.com'
+    : 'https://api-fxpractice.oanda.com';
+}
+function oandaInstrument(env) {
+  return String(env.OANDA_INSTRUMENT || 'XAU_USD').trim().toUpperCase();
+}
+function oandaHeaders(env) {
+  return {
+    accept: 'application/json',
+    authorization: `Bearer ${String(env.OANDA_TOKEN || '').trim()}`,
+    'accept-datetime-format': 'RFC3339'
+  };
+}
+async function fetchOandaJson(env, path, query = {}) {
+  const url = new URL(path, oandaBase(env));
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+  const response = await fetch(url, { headers: oandaHeaders(env) });
+  if (!response.ok) {
+    const requestId = response.headers.get('requestid') || '';
+    throw new Error(`OANDA ${response.status}${requestId ? ` (${requestId})` : ''}`);
+  }
+  return response.json();
+}
+async function getOandaPrice(env) {
+  const account = encodeURIComponent(String(env.OANDA_ACCOUNT_ID).trim());
+  const instrument = oandaInstrument(env);
+  const payload = await fetchOandaJson(env, `/v3/accounts/${account}/pricing`, {
+    instruments: instrument,
+    includeUnitsAvailable: 'false',
+    includeHomeConversions: 'false'
+  });
+  const quote = Array.isArray(payload.prices) ? payload.prices[0] : null;
+  const bid = Number(quote?.bids?.[0]?.price ?? quote?.closeoutBid);
+  const ask = Number(quote?.asks?.[0]?.price ?? quote?.closeoutAsk);
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) throw new Error('OANDA quote has no bid/ask');
+  const ts = Date.parse(quote.time);
+  if (!Number.isFinite(ts)) throw new Error('OANDA quote has invalid time');
+  return {
+    source: 'oanda',
+    instrument,
+    status: quote.status || 'unknown',
+    price: (bid + ask) / 2,
+    bid,
+    ask,
+    spread: ask - bid,
+    ts
+  };
+}
+const OANDA_GRANULARITY = {
+  '1m': 'M1', '5m': 'M5', '15m': 'M15', '30m': 'M30',
+  '60m': 'H1', '1h': 'H1', '240m': 'H4', '4h': 'H4', '1d': 'D'
+};
+async function getOandaBars(env, tf, limit) {
+  const account = encodeURIComponent(String(env.OANDA_ACCOUNT_ID).trim());
+  const instrument = encodeURIComponent(oandaInstrument(env));
+  const payload = await fetchOandaJson(env, `/v3/accounts/${account}/instruments/${instrument}/candles`, {
+    price: 'M',
+    granularity: OANDA_GRANULARITY[tf],
+    count: Math.min(limit + 1, MAX_BARS_LIMIT),
+    smooth: 'false'
+  });
+  return (Array.isArray(payload.candles) ? payload.candles : [])
+    .filter(candle => candle?.complete === true && candle?.mid)
+    .map(candle => ({
+      t: Date.parse(candle.time),
+      o: Number(candle.mid.o),
+      h: Number(candle.mid.h),
+      l: Number(candle.mid.l),
+      c: Number(candle.mid.c),
+      v: Number(candle.volume || 0),
+      complete: true
+    }))
+    .filter(bar => [bar.t, bar.o, bar.h, bar.l, bar.c, bar.v].every(Number.isFinite) && bar.h >= bar.l)
+    .slice(-limit);
+}
+function logProviderError(provider, error) {
+  console.error(JSON.stringify({
+    message: 'market data provider failed',
+    provider,
+    error: error instanceof Error ? error.message : String(error)
+  }));
+}
+
+// ---------- Price (OANDA → gold-ticks → public fallbacks) ----------
 async function getPriceUnified(env) {
   const base = (env.UPSTREAM_URL || '').trim().replace(/\/+$/g, '');
   const tried = [];
+  if (isOandaConfigured(env)) {
+    try {
+      return { ok: true, data: await getOandaPrice(env) };
+    } catch (error) {
+      tried.push({ source: 'oanda', error: error instanceof Error ? error.message : String(error) });
+      logProviderError('oanda-price', error);
+    }
+  }
   if (env.TICKS && typeof env.TICKS.fetch === 'function') {
     try {
       const r = await env.TICKS.fetch(new Request('https://gold-ticks.internal/price', {
@@ -304,7 +423,16 @@ async function priceFromResponse(response, source) {
   let ts = typeof rawTs === 'string' ? Date.parse(rawTs) : Number(rawTs);
   if (!Number.isFinite(ts)) ts = Date.now();
   if (ts < 1e12) ts *= 1000;
-  return { source, price, ts };
+  const bid = Number(j.bid);
+  const ask = Number(j.ask);
+  return {
+    source,
+    price,
+    ts,
+    ...(Number.isFinite(bid) ? { bid } : {}),
+    ...(Number.isFinite(ask) ? { ask } : {}),
+    ...(Number.isFinite(bid) && Number.isFinite(ask) ? { spread: ask - bid } : {})
+  };
 }
 function parseStooqCSV(text) {
   const lines = String(text || '').trim().split(/\r?\n/);
@@ -446,60 +574,35 @@ async function handleNotify(req, env) {
 }
 
 // ---------- D1 ensure ----------
-let d1InitPromise;
 async function maybeEnsureD1(env) {
   if (!env.GSX_DB) return;
-  if (!d1InitPromise) {
-    d1InitPromise = (async () => {
-      // D1 exec treats each newline as a statement boundary, so keep each
-      // statement complete and execute schema steps separately.
-      await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars (tf INTEGER NOT NULL DEFAULT 1, t INTEGER PRIMARY KEY, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0);');
-      await env.GSX_DB.exec('DELETE FROM bars WHERE rowid NOT IN (SELECT MAX(rowid) FROM bars GROUP BY t);');
-      await env.GSX_DB.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);');
-      await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);');
-    })().catch((error) => {
-      d1InitPromise = null;
-      throw error;
-    });
-  }
-  await d1InitPromise;
+  // Only import/scheduled persistence call this; no module-level I/O promise.
+  await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars (tf INTEGER NOT NULL DEFAULT 1, t INTEGER PRIMARY KEY, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0);');
+  await env.GSX_DB.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);');
 }
 
 async function refreshStoredPrice(env) {
   const { ok, data } = await getPriceUnified(env);
   if (!ok) throw new Error('price_failed');
-  await persistPrice(env, data, String(env.KV_OFF || '').trim() === '1');
+  await persistPriceToD1(env, data);
 }
 
-async function persistPrice(env, data, kvOff) {
-  if (!data || !Number.isFinite(Number(data.price))) return;
+async function persistPriceToD1(env, data) {
+  if (!env.GSX_DB || !data || !Number.isFinite(Number(data.price))) return;
   const price = Number(data.price);
   const ts = Number(data.ts) || Date.now();
-  const writes = [];
-
-  if (!kvOff && env.GSX_KV) {
-    const day = new Date(ts).toISOString().slice(0, 10);
-    writes.push(env.GSX_KV.put('latest', JSON.stringify({ price, ts }), { expirationTtl: 7 * 24 * 3600 }));
-    writes.push(env.GSX_KV.put(`ticks:${day}:${ts}`, JSON.stringify({ p: price, ts }), { expirationTtl: 7 * 24 * 3600 }));
-  }
-
-  if (env.GSX_DB) {
-    writes.push((async () => {
-      await maybeEnsureD1(env);
-      const t = bucket(ts, 1);
-      await env.GSX_DB.prepare(`
-        INSERT INTO bars (tf,t,o,h,l,c,v) VALUES (1,?1,?2,?2,?2,?2,1)
-        ON CONFLICT(t) DO UPDATE SET
-          tf=1,
-          h=MAX(bars.h, excluded.h),
-          l=MIN(bars.l, excluded.l),
-          c=excluded.c,
-          v=COALESCE(bars.v, 0) + 1
-      `).bind(t, price).run();
-    })());
-  }
-
-  await Promise.allSettled(writes);
+  await maybeEnsureD1(env);
+  const t = bucket(ts, 1);
+  await env.GSX_DB.prepare(`
+    INSERT INTO bars (tf,t,o,h,l,c,v) VALUES (1,?1,?2,?2,?2,?2,1)
+    ON CONFLICT(t) DO UPDATE SET
+      tf=1,
+      h=MAX(bars.h, excluded.h),
+      l=MIN(bars.l, excluded.l),
+      c=excluded.c,
+      v=COALESCE(bars.v, 0) + 1
+  `).bind(t, price).run();
 }
 
 async function importBars(env, rows) {
