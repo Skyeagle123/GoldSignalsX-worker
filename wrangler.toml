@@ -1,12 +1,16 @@
 name = "goldsignalsx-worker"
 main = "goldsignalsx-worker.js"
-compatibility_date = "2026-08-25"
+compatibility_date = "2026-08-26"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # إبقيهم لو بدك fallback و CORS
 UPSTREAM_URL = "https://gold-ticks.samer-mourtada.workers.dev"  # بدون /price
 ALLOW_ORIGINS = "[\"https://skyeagle123.github.io\",\"http://localhost:8080\",\"http://127.0.0.1:5500\"]"
 RL_LIMIT = "180"
+OANDA_ENABLED = "1"
+OANDA_ENV = "practice"
+OANDA_INSTRUMENT = "XAU_USD"
 
 # ======== KV (يبقى كما هو) ========
 [[kv_namespaces]]
