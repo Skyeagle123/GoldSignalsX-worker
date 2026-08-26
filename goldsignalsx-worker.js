@@ -17,7 +17,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.26.4';
+const APP_VERSION = '2026.08.26.5';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -308,6 +308,7 @@ function normalizeTwelveDataMessage(raw) {
       symbol: String(payload.symbol || 'XAU/USD'),
       price,
       ts,
+      receivedAt: Date.now(),
       source: 'twelve-data'
     };
   }
@@ -341,7 +342,9 @@ function handleTwelveDataStream(req, env, corsHeaders = {}) {
 
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
-  server.accept();
+  // This Worker is a WebSocket proxy, so keep each side half-open long enough
+  // to coordinate provider/client close frames explicitly.
+  server.accept({ allowHalfOpen: true });
 
   const apiKey = String(env.TWELVE_DATA_API_KEY).trim();
   const upstream = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${encodeURIComponent(apiKey)}`);
@@ -355,14 +358,25 @@ function handleTwelveDataStream(req, env, corsHeaders = {}) {
     server.send(JSON.stringify(message));
   });
   upstream.addEventListener('error', () => {
+    console.error(JSON.stringify({ message: 'live provider websocket error', provider: 'twelve-data' }));
     if (server.readyState === 1) {
       server.send(JSON.stringify({ event: 'error', message: 'live_provider_error' }));
     }
   });
   upstream.addEventListener('close', (event) => {
+    console.log(JSON.stringify({
+      message: 'live provider websocket closed',
+      provider: 'twelve-data',
+      code: event.code,
+      wasClean: event.wasClean
+    }));
     closeSocket(server, event.code === 1000 ? 1000 : 1011, 'live provider closed');
   });
-  server.addEventListener('close', () => closeSocket(upstream, 1000, 'client closed'));
+  server.addEventListener('close', (event) => {
+    closeSocket(upstream, 1000, 'client closed');
+    // Required with allowHalfOpen: finish the client-side close handshake.
+    try { server.close(event.code || 1000, 'client closed'); } catch {}
+  });
   server.addEventListener('error', () => closeSocket(upstream, 1011, 'client error'));
 
   return new Response(null, { status: 101, webSocket: client });
