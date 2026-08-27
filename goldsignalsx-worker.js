@@ -1642,22 +1642,9 @@ async function maybeEnsureD1(env) {
   }
   await env.GSX_DB.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);');
-  await env.GSX_DB.exec(`
-    CREATE TABLE IF NOT EXISTS bars_v2 (
-      tf INTEGER NOT NULL,
-      t INTEGER NOT NULL,
-      o REAL NOT NULL,
-      h REAL NOT NULL,
-      l REAL NOT NULL,
-      c REAL NOT NULL,
-      v REAL NOT NULL DEFAULT 0,
-      provider TEXT NOT NULL DEFAULT 'legacy',
-      PRIMARY KEY (tf,t)
-    );
-    CREATE INDEX IF NOT EXISTS idx_bars_v2_tf_t ON bars_v2(tf,t);
-    INSERT OR IGNORE INTO bars_v2(tf,t,o,h,l,c,v,provider)
-      SELECT COALESCE(tf,1),t,o,h,l,c,COALESCE(v,0),COALESCE(provider,'legacy') FROM bars;
-  `);
+  await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars_v2 (tf INTEGER NOT NULL, t INTEGER NOT NULL, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0, provider TEXT NOT NULL DEFAULT \'legacy\', PRIMARY KEY (tf,t));');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_v2_tf_t ON bars_v2(tf,t);');
+  await env.GSX_DB.exec("INSERT OR IGNORE INTO bars_v2(tf,t,o,h,l,c,v,provider) SELECT COALESCE(tf,1),t,o,h,l,c,COALESCE(v,0),COALESCE(provider,'legacy') FROM bars;");
 }
 
 async function refreshStoredPrice(env) {
