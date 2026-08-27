@@ -5,6 +5,7 @@
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
+//   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST/GET /notify              → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
@@ -17,10 +18,13 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.26.5';
+const APP_VERSION = '2026.08.27.1';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
+const NEWS_CACHE_MS = 15 * 60 * 1000;
+const NEWS_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const NEWS_ALERT_MAX_AGE_MS = 45 * 60 * 1000;
 
 export default {
   async fetch(req, env, ctx) {
@@ -69,6 +73,11 @@ export default {
           receivedAt: Date.now(),
           ageMs: Math.max(0, Date.now() - data.ts)
         }, corsHeaders);
+      }
+
+      if (path === '/news') {
+        const brief = await getGoldNewsBrief(env, { notify: false });
+        return jsonNoStore(brief, corsHeaders, brief.ok ? 200 : 502);
       }
 
       // CSV import -> D1 seed fast
@@ -207,10 +216,23 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    // One D1 snapshot every five minutes; never writes price ticks to KV.
-    if (env.GSX_DB) ctx.waitUntil(refreshStoredPrice(env));
+    // Keep price persistence and news refresh off the request path.
+    ctx.waitUntil(runScheduledTasks(env));
   }
 };
+
+async function runScheduledTasks(env) {
+  const tasks = [];
+  if (env.GSX_DB) tasks.push(refreshStoredPrice(env));
+  tasks.push(getGoldNewsBrief(env, { notify: true }));
+  const results = await Promise.allSettled(tasks);
+  results.filter(result => result.status === 'rejected').forEach(result => {
+    console.error(JSON.stringify({
+      message: 'scheduled task failed',
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+    }));
+  });
+}
 
 // ===== Helpers =====
 function parseAllow(v) {
@@ -675,7 +697,301 @@ async function d1Bars(env, tf, limit) {
   return resample(b1m, tfMin).slice(-limit);
 }
 
+// ---------- Gold news intelligence ----------
+const NEWS_QUERY = [
+  'gold', 'bullion', 'XAUUSD', '"Federal Reserve"', 'FOMC', 'inflation',
+  '"interest rates"', '"Treasury yields"', '"US dollar"', 'war',
+  'sanctions', 'tariffs', '"central bank"'
+].join(' OR ');
+
+const TRUSTED_NEWS_DOMAINS = [
+  'federalreserve.gov', 'bls.gov', 'bea.gov', 'treasury.gov', 'ecb.europa.eu',
+  'reuters.com', 'apnews.com', 'bloomberg.com', 'ft.com', 'wsj.com',
+  'cnbc.com', 'bbc.com'
+];
+
+const BULLISH_NEWS_RULES = [
+  { phrases:['rate cut','cuts rates','cut interest rates','dovish','monetary easing'], weight:3, reason:'خفض الفائدة أو لهجة تيسيرية تدعم الذهب' },
+  { phrases:['dollar falls','dollar weakens','weaker dollar','dollar slides'], weight:2.5, reason:'ضعف الدولار يدعم الذهب' },
+  { phrases:['yields fall','yields drop','lower yields','bond yields decline'], weight:2.5, reason:'تراجع العوائد يقلل كلفة الاحتفاظ بالذهب' },
+  { phrases:['war','airstrike','missile','invasion','escalation','escalates','geopolitical tension'], weight:2.2, reason:'تصاعد المخاطر السياسية يدعم طلب الملاذ الآمن' },
+  { phrases:['sanctions','trade war','tariff escalation'], weight:1.8, reason:'العقوبات والتوتر التجاري يرفعان طلب التحوط' },
+  { phrases:['recession','bank crisis','market selloff','risk-off'], weight:2.2, reason:'مخاطر الركود أو الأسواق تدعم الملاذ الآمن' },
+  { phrases:['central bank buying','gold reserves rise','gold purchases','etf inflows','safe-haven demand'], weight:2.8, reason:'ارتفاع الطلب المؤسسي أو الاحتياطي يدعم الذهب' },
+  { phrases:['inflation accelerates','inflation rises','hot inflation','prices surge'], weight:1.3, reason:'ارتفاع التضخم قد يزيد طلب التحوط' }
+];
+
+const BEARISH_NEWS_RULES = [
+  { phrases:['rate hike','raises rates','hikes rates','hawkish','higher for longer','monetary tightening'], weight:3, reason:'رفع الفائدة أو لهجة متشددة يضغطان على الذهب' },
+  { phrases:['dollar rises','dollar strengthens','stronger dollar','dollar jumps'], weight:2.5, reason:'قوة الدولار تضغط على الذهب' },
+  { phrases:['yields rise','yields jump','higher yields','bond yields climb'], weight:2.5, reason:'ارتفاع العوائد يزيد كلفة الاحتفاظ بالذهب' },
+  { phrases:['ceasefire','peace deal','de-escalation','truce agreement'], weight:2, reason:'انحسار المخاطر يقلل طلب الملاذ الآمن' },
+  { phrases:['strong jobs','jobs beat','payrolls beat','unemployment falls','robust economy'], weight:1.8, reason:'قوة الاقتصاد قد تؤخر خفض الفائدة' },
+  { phrases:['inflation cools','inflation falls','inflation slows','prices ease'], weight:1.2, reason:'تراجع التضخم يقلل طلب التحوط' },
+  { phrases:['central bank selling','gold reserves fall','etf outflows'], weight:2.8, reason:'تراجع الطلب المؤسسي يضغط على الذهب' }
+];
+
+function normalizeHeadline(value) {
+  return ` ${String(value || '').toLowerCase().replace(/[^a-z0-9%]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
+}
+
+function hasAnyPhrase(text, phrases) {
+  return phrases.some(phrase => text.includes(` ${phrase.toLowerCase()} `));
+}
+
+function parseGdeltSeenDate(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value;
+  const raw = String(value || '').trim();
+  if (/^\d{10,13}$/.test(raw)) {
+    const numeric = Number(raw);
+    return raw.length <= 10 ? numeric * 1000 : numeric;
+  }
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (match) return Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function safeNewsUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : '';
+  } catch { return ''; }
+}
+
+function newsDomain(value, fallback = '') {
+  try { return new URL(String(value || '')).hostname.replace(/^www\./, '').toLowerCase(); }
+  catch { return String(fallback || '').replace(/^www\./, '').toLowerCase(); }
+}
+
+function trustedNewsDomain(domain) {
+  return TRUSTED_NEWS_DOMAINS.some(item => domain === item || domain.endsWith(`.${item}`));
+}
+
+function scoreNewsRules(text, rules) {
+  let score = 0;
+  const reasons = [];
+  for (const rule of rules) {
+    if (!hasAnyPhrase(text, rule.phrases)) continue;
+    score += rule.weight;
+    reasons.push(rule.reason);
+  }
+  return { score, reasons };
+}
+
+function classifyNewsArticle(article, now = Date.now()) {
+  const title = String(article?.title || '').trim().replace(/\s+/g, ' ');
+  const url = safeNewsUrl(article?.url);
+  if (!title || !url) return null;
+  const text = normalizeHeadline(title);
+  const domain = newsDomain(url, article?.domain);
+  const trusted = trustedNewsDomain(domain);
+  const seenAt = parseGdeltSeenDate(article?.seendate || article?.seenAt);
+  const ageMs = Math.max(0, now - seenAt);
+  if (ageMs > NEWS_MAX_AGE_MS) return null;
+
+  const goldTerms = ['gold','bullion','xauusd','xau usd','precious metal','safe haven'];
+  const macroTerms = ['federal reserve','fomc','interest rate','inflation','cpi','pce','payrolls','jobs report','us dollar','treasury yields','central bank','ecb'];
+  const geopoliticalTerms = ['war','airstrike','missile','invasion','attack','sanctions','tariffs','trade war','ceasefire','geopolitical tension','nato','ukraine','russia','iran','israel','china','taiwan'];
+  const goldRelated = hasAnyPhrase(text, goldTerms);
+  const macroRelated = hasAnyPhrase(text, macroTerms);
+  const geopolitical = hasAnyPhrase(text, geopoliticalTerms);
+  const relevance = (goldRelated ? 5 : 0) + (macroRelated ? 2 : 0) + (geopolitical ? 2 : 0) + (trusted ? 1 : 0);
+  if (relevance < 3) return null;
+
+  const bull = scoreNewsRules(text, BULLISH_NEWS_RULES);
+  const bear = scoreNewsRules(text, BEARISH_NEWS_RULES);
+  const delta = bull.score - bear.score;
+  const direction = delta >= 0.75 ? 'bullish' : delta <= -0.75 ? 'bearish' : 'neutral';
+  const criticalMacro = hasAnyPhrase(text, ['fomc','federal reserve','rate cut','rate hike','cpi','pce','payrolls','jobs report']);
+  const criticalRisk = hasAnyPhrase(text, ['war','airstrike','missile','invasion','sanctions','trade war','bank crisis']);
+  const importance = (criticalMacro && trusted) || (goldRelated && criticalRisk) ? 3 : (goldRelated || macroRelated || trusted ? 2 : 1);
+  const confidence = direction === 'neutral'
+    ? 50
+    : Math.min(92, Math.round(52 + Math.abs(delta) * 8 + importance * 4 + (trusted ? 5 : 0)));
+  const reasons = [...new Set(direction === 'bullish' ? bull.reasons : direction === 'bearish' ? bear.reasons : [])];
+
+  return {
+    id: '', title, url, domain,
+    source: domain || String(article?.sourcecountry || 'news'),
+    seenAt, ageMs, importance, direction, confidence,
+    reason: reasons[0] || 'الأثر غير محسوم ويحتاج تأكيداً من حركة السعر',
+    trusted
+  };
+}
+
+function uniqueNewsArticles(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function buildNewsBrief(rawArticles, now = Date.now()) {
+  const items = uniqueNewsArticles((Array.isArray(rawArticles) ? rawArticles : [])
+    .map(article => classifyNewsArticle(article, now))
+    .filter(Boolean))
+    .sort((a, b) => b.importance - a.importance || b.seenAt - a.seenAt)
+    .slice(0, 24);
+
+  let bullWeight = 0;
+  let bearWeight = 0;
+  const biasReasons = [];
+  for (const item of items) {
+    const freshness = Math.max(0.25, 1 - item.ageMs / NEWS_MAX_AGE_MS);
+    const weight = item.importance * (item.confidence / 100) * freshness;
+    if (item.direction === 'bullish') bullWeight += weight;
+    if (item.direction === 'bearish') bearWeight += weight;
+    if (item.direction !== 'neutral' && item.reason) biasReasons.push(item.reason);
+  }
+  const total = bullWeight + bearWeight;
+  const score = total ? (bullWeight - bearWeight) / total : 0;
+  const direction = score >= 0.18 ? 'bullish' : score <= -0.18 ? 'bearish' : 'neutral';
+  const confidence = total ? Math.min(90, Math.round(52 + Math.abs(score) * 36 + Math.min(8, total))) : 0;
+  const freshCritical = items.find(item => item.importance === 3 && item.ageMs <= 15 * 60 * 1000);
+  const hasBullCritical = items.some(item => item.importance === 3 && item.direction === 'bullish');
+  const hasBearCritical = items.some(item => item.importance === 3 && item.direction === 'bearish');
+  const conflictingCritical = hasBullCritical && hasBearCritical;
+  const blockTechnicalSignal = Boolean(freshCritical || conflictingCritical);
+  const blockReason = freshCritical
+    ? 'خبر شديد التأثير صدر خلال آخر 15 دقيقة؛ ننتظر استقرار السعر قبل الدخول'
+    : conflictingCritical ? 'الأخبار الشديدة متعارضة؛ تم تعليق الدخول حتى تتضح الحركة' : '';
+  const advice = blockTechnicalSignal
+    ? 'انتظار — لا دخول أثناء صدمة الخبر'
+    : direction === 'bullish' ? 'ميل شرائي مشروط بتأكيد الشارت'
+      : direction === 'bearish' ? 'ميل بيعي مشروط بتأكيد الشارت'
+        : 'حيادي — الخبر لا يعطي اتجاهاً واضحاً';
+
+  return {
+    ok: true,
+    updatedAt: now,
+    source: 'gdelt',
+    itemCount: items.length,
+    items,
+    goldBias: {
+      direction,
+      score: Number(score.toFixed(3)),
+      confidence,
+      advice,
+      reasons: [...new Set(biasReasons)].slice(0, 4)
+    },
+    safety: {
+      blockTechnicalSignal,
+      reason: blockReason,
+      blockUntil: freshCritical ? freshCritical.seenAt + 15 * 60 * 1000 : null
+    }
+  };
+}
+
+async function fetchGdeltGoldNews() {
+  const url = new URL('https://api.gdeltproject.org/api/v2/doc/doc');
+  url.searchParams.set('query', `(${NEWS_QUERY}) sourcelang:english`);
+  url.searchParams.set('mode', 'artlist');
+  url.searchParams.set('maxrecords', '75');
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('sort', 'datedesc');
+  url.searchParams.set('timespan', '12h');
+  const response = await fetch(url.toString(), {
+    headers: { accept: 'application/json', 'user-agent': 'GoldSignalsX/1.0' },
+    cf: { cacheTtl: 300, cacheEverything: true }
+  });
+  if (!response.ok) throw new Error(`GDELT ${response.status}`);
+  const payload = await response.json();
+  return Array.isArray(payload?.articles) ? payload.articles : [];
+}
+
+async function readNewsCache(env) {
+  if (!env.GSX_KV) return null;
+  try {
+    const cached = await env.GSX_KV.get('news:brief', 'json');
+    return cached && typeof cached === 'object' ? cached : null;
+  } catch { return null; }
+}
+
+async function writeNewsCache(env, brief) {
+  if (!env.GSX_KV) return;
+  await env.GSX_KV.put('news:brief', JSON.stringify(brief), { expirationTtl: 6 * 60 * 60 });
+}
+
+async function getGoldNewsBrief(env, { notify = false } = {}) {
+  const now = Date.now();
+  const cached = await readNewsCache(env);
+  if (cached && Number.isFinite(Number(cached.updatedAt)) && now - Number(cached.updatedAt) < NEWS_CACHE_MS) {
+    const result = { ...cached, stale: false, ageMs: now - Number(cached.updatedAt), cache: 'hit' };
+    if (notify) await maybeNotifyHighImpactNews(env, result);
+    return result;
+  }
+  try {
+    const articles = await fetchGdeltGoldNews();
+    const brief = buildNewsBrief(articles, now);
+    await writeNewsCache(env, brief);
+    if (notify) await maybeNotifyHighImpactNews(env, brief);
+    return { ...brief, stale: false, ageMs: 0, cache: 'refreshed' };
+  } catch (error) {
+    console.error(JSON.stringify({ message:'gold news refresh failed', error:error instanceof Error ? error.message : String(error) }));
+    if (cached) {
+      const ageMs = now - Number(cached.updatedAt || 0);
+      return { ...cached, stale: ageMs > 60 * 60 * 1000, ageMs, cache: 'stale-fallback', refreshError: 'news_refresh_failed' };
+    }
+    return { ok:false, stale:true, ageMs:null, updatedAt:null, source:'gdelt', itemCount:0, items:[], goldBias:{direction:'neutral',score:0,confidence:0,advice:'الأخبار غير متاحة مؤقتاً',reasons:[]}, safety:{blockTechnicalSignal:false,reason:'',blockUntil:null}, error:'news_unavailable' };
+  }
+}
+
+async function hashNewsId(value) {
+  const bytes = new TextEncoder().encode(String(value || ''));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).slice(0, 12).map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function newsDirectionArabic(direction) {
+  if (direction === 'bullish') return 'داعم للذهب';
+  if (direction === 'bearish') return 'ضاغط على الذهب';
+  return 'الأثر غير محسوم';
+}
+
+async function maybeNotifyHighImpactNews(env, brief) {
+  if (String(env.NEWS_ALERTS_ENABLED || '1').trim() === '0' || !env.GSX_KV) return;
+  const item = (brief?.items || []).find(candidate =>
+    candidate.importance === 3 && candidate.direction !== 'neutral' &&
+    candidate.confidence >= 65 && Date.now() - candidate.seenAt <= NEWS_ALERT_MAX_AGE_MS
+  );
+  if (!item) return;
+  const id = await hashNewsId(item.url || item.title);
+  const key = `news:sent:${id}`;
+  if (await env.GSX_KV.get(key)) return;
+  const text = [
+    '🚨 خبر مهم للذهب — GoldSignalsX',
+    item.title,
+    `التأثير المتوقع: ${newsDirectionArabic(item.direction)} (${item.confidence}%)`,
+    `السبب: ${item.reason}`,
+    brief?.safety?.blockTechnicalSignal ? 'النصيحة: انتظار 15 دقيقة ومراقبة تأكيد الشارت' : `النصيحة: ${brief?.goldBias?.advice || 'مراقبة الشارت'}`,
+    `المصدر: ${item.source}`,
+    item.url,
+    'تنبيه: الخبر لا يُستخدم وحده كإشارة تداول.'
+  ].join('\n');
+  const sent = await sendTelegramText(env, text);
+  if (sent.ok) await env.GSX_KV.put(key, String(Date.now()), { expirationTtl: 24 * 60 * 60 });
+}
+
 // ---------- Telegram ----------
+async function sendTelegramText(env, text) {
+  const token = env.TELEGRAM_TOKEN;
+  const chat = env.TELEGRAM_CHAT;
+  if (!token || !chat) return { ok:false, error:'telegram vars missing' };
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({ chat_id:chat, text:String(text || 'GSX alert') })
+  });
+  const tg = await response.json().catch(() => null);
+  return { ok:response.ok, status:response.status, tg };
+}
+
 async function handleNotify(req, env) {
   const token = env.TELEGRAM_TOKEN;
   const chat = env.TELEGRAM_CHAT;
@@ -689,13 +1005,7 @@ async function handleNotify(req, env) {
     text = url.searchParams.get('text') || url.searchParams.get('message') || text;
   }
 
-  const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chat, text })
-  });
-  const j = await r.json().catch(() => null);
-  return { ok: r.ok, status: r.status, tg: j };
+  return sendTelegramText(env, text);
 }
 
 // ---------- D1 ensure ----------
@@ -746,3 +1056,5 @@ async function importBars(env, rows) {
   }
   await env.GSX_DB.batch(statements);
 }
+
+export { buildNewsBrief, classifyNewsArticle, parseGdeltSeenDate };

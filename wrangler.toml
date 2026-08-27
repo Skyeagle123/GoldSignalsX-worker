@@ -11,6 +11,7 @@ RL_LIMIT = "180"
 OANDA_ENABLED = "1"
 OANDA_ENV = "practice"
 OANDA_INSTRUMENT = "XAU_USD"
+NEWS_ALERTS_ENABLED = "1"
 
 # ======== KV (يبقى كما هو) ========
 [[kv_namespaces]]
