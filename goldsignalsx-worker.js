@@ -437,7 +437,10 @@ async function runScheduledTasks(env) {
   }
   const newsPromise=getGoldNewsBrief(env,{notify:true});
   tasks.push(newsPromise);
-  tasks.push(backfillSignalRollups(env).then(()=>newsPromise).then(news=>runSignalCycle(env,news)));
+  const historyPromise=isTwelveDataConfigured(env)
+    ? backfillTwelveDataHistory(env)
+    : backfillSignalRollups(env);
+  tasks.push(historyPromise.then(()=>newsPromise).then(news=>runSignalCycle(env,news)));
   const results = await Promise.allSettled(tasks);
   results.filter(result => result.status === 'rejected').forEach(result => {
     console.error(JSON.stringify({
@@ -445,6 +448,53 @@ async function runScheduledTasks(env) {
       error: result.reason instanceof Error ? result.reason.message : String(result.reason)
     }));
   });
+}
+
+const TWELVE_HISTORY_FRAMES = [
+  {tf:'1m',interval:'1min',limit:2000},
+  {tf:'5m',interval:'5min',limit:1200},
+  {tf:'15m',interval:'15min',limit:800},
+  {tf:'30m',interval:'30min',limit:500},
+  {tf:'60m',interval:'1h',limit:400},
+  {tf:'240m',interval:'4h',limit:300},
+  {tf:'1d',interval:'1day',limit:300}
+];
+
+function parseTwelveDataTimeSeries(payload) {
+  if (!payload||payload.status==='error'||!Array.isArray(payload.values)) return [];
+  return payload.values.map(row=>{
+    const raw=String(row?.datetime||'').trim();
+    const t=Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(raw)?raw:`${raw}Z`);
+    const o=Number(row?.open),h=Number(row?.high),l=Number(row?.low),c=Number(row?.close),v=Number(row?.volume||0);
+    return {t,o,h,l,c,v,provider:'twelve-data'};
+  }).filter(row=>[row.t,row.o,row.h,row.l,row.c,row.v].every(Number.isFinite)&&row.h>=row.l)
+    .sort((a,b)=>a.t-b.t);
+}
+
+async function backfillTwelveDataHistory(env) {
+  if (!env.GSX_DB||!env.GSX_KV||!isTwelveDataConfigured(env)) return;
+  await maybeEnsureD1(env);
+  const apiKey=String(env.TWELVE_DATA_API_KEY).trim();
+  for (const frame of TWELVE_HISTORY_FRAMES) {
+    const marker=`history:twelve:${frame.tf}:v1`;
+    if (await env.GSX_KV.get(marker)) continue;
+    const url=new URL('https://api.twelvedata.com/time_series');
+    url.searchParams.set('symbol','XAU/USD');
+    url.searchParams.set('interval',frame.interval);
+    url.searchParams.set('outputsize',String(frame.limit));
+    url.searchParams.set('timezone','UTC');
+    url.searchParams.set('apikey',apiKey);
+    try {
+      const response=await fetch(url.toString(),{headers:{accept:'application/json'}});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bars=parseTwelveDataTimeSeries(await response.json());
+      if (bars.length<40) throw new Error(`insufficient rows: ${bars.length}`);
+      await runD1StatementBatches(env,rollupReplaceStatements(env,bars,tfToMin(frame.tf)));
+      await env.GSX_KV.put(marker,JSON.stringify({storedAt:Date.now(),count:bars.length}));
+    } catch (error) {
+      console.error(JSON.stringify({message:'Twelve Data history backfill failed',tf:frame.tf,error:String(error?.message||error)}));
+    }
+  }
 }
 
 async function readKvJson(env,key) {
@@ -1662,4 +1712,4 @@ async function upsertCompletedBarRollups(env,bar) {
   await env.GSX_DB.batch(statements);
 }
 
-export { applyArabicNewsEnrichment, buildNewsBrief, classifyNewsArticle, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate };
+export { applyArabicNewsEnrichment, buildNewsBrief, classifyNewsArticle, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate, parseTwelveDataTimeSeries };

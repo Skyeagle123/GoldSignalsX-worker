@@ -9,11 +9,20 @@ const testSource = source.replace(
 ).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl));
 const worker = await import(`data:text/javascript;base64,${Buffer.from(testSource).toString('base64')}`);
 const { computeServerSignal, evaluateCandleQuality } = await import(signalEngineUrl);
-const { GoldFeed, classifyNewsArticle, buildNewsBrief, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate } = worker;
+const { GoldFeed, classifyNewsArticle, buildNewsBrief, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate, parseTwelveDataTimeSeries } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
 const seen = '20260827T075500Z';
 assert.equal(parseGdeltSeenDate(seen), Date.UTC(2026, 7, 27, 7, 55, 0));
+
+const historyRows=parseTwelveDataTimeSeries({values:[
+  {datetime:'2026-08-27 10:01:00',open:'2401',high:'2403',low:'2400',close:'2402',volume:'4'},
+  {datetime:'2026-08-27 10:00:00',open:'2400',high:'2402',low:'2399',close:'2401',volume:'3'},
+  {datetime:'bad',open:'1',high:'0',low:'2',close:'1'}
+]});
+assert.equal(historyRows.length,2);
+assert.equal(historyRows[0].t,Date.UTC(2026,7,27,10,0));
+assert.equal(historyRows[1].provider,'twelve-data');
 
 const bullish = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates and dollar falls',
