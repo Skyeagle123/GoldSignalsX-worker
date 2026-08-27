@@ -266,7 +266,19 @@ export default {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const tf=url.searchParams.get('tf')||'';
         if (tf&&!SIGNAL_TIMEFRAMES.includes(tf)) return json({ok:false,error:'bad_tf'},corsHeaders,400);
-        return jsonNoStore(await readSignalSnapshot(env,tf||null),corsHeaders);
+        const snapshot=await readSignalSnapshot(env,tf||null);
+        const stale=Date.now()-Number(snapshot.updatedAt||0)>6*60_000;
+        if (stale&&ctx?.waitUntil) ctx.waitUntil(runScheduledTasksGuarded(env,'signals-read'));
+        return jsonNoStore({...snapshot,refreshing:stale},corsHeaders);
+      }
+
+      if (path === '/diagnostics') {
+        if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        const [cycle,history]=await Promise.all([
+          readKvJson(env,'system:signal-cycle'),
+          readKvJson(env,'system:history-status')
+        ]);
+        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history},corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -423,11 +435,20 @@ export default {
 
   async scheduled(_controller, env, ctx) {
     // Keep price persistence and news refresh off the request path.
-    ctx.waitUntil(runScheduledTasks(env));
+    ctx.waitUntil(runScheduledTasksGuarded(env,'cron'));
   }
 };
 
-async function runScheduledTasks(env) {
+async function runScheduledTasksGuarded(env,source) {
+  if (!env.GSX_KV) return runScheduledTasks(env);
+  const now=Date.now();
+  const previous=await readKvJson(env,'system:signal-cycle');
+  if (previous?.status==='running'&&now-Number(previous.startedAt||0)<4*60_000) return;
+  await env.GSX_KV.put('system:signal-cycle',JSON.stringify({status:'running',source,startedAt:now}));
+  await runScheduledTasks(env,source,now);
+}
+
+async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
   const tasks = [];
   if (env.GOLD_FEED && isTwelveDataConfigured(env)) {
     tasks.push(env.GOLD_FEED.getByName('xau-usd').ensureProvider());
@@ -442,12 +463,19 @@ async function runScheduledTasks(env) {
     : backfillSignalRollups(env);
   tasks.push(historyPromise.then(()=>newsPromise).then(news=>runSignalCycle(env,news)));
   const results = await Promise.allSettled(tasks);
+  const errors=[];
   results.filter(result => result.status === 'rejected').forEach(result => {
+    errors.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
     console.error(JSON.stringify({
       message: 'scheduled task failed',
       error: result.reason instanceof Error ? result.reason.message : String(result.reason)
     }));
   });
+  if (env.GSX_KV) {
+    await env.GSX_KV.put('system:signal-cycle',JSON.stringify({
+      status:errors.length?'partial':'completed',source,startedAt,completedAt:Date.now(),errors:errors.slice(0,5)
+    }));
+  }
 }
 
 const TWELVE_HISTORY_FRAMES = [
@@ -475,9 +503,14 @@ async function backfillTwelveDataHistory(env) {
   if (!env.GSX_DB||!env.GSX_KV||!isTwelveDataConfigured(env)) return;
   await maybeEnsureD1(env);
   const apiKey=String(env.TWELVE_DATA_API_KEY).trim();
+  const statuses=[];
   for (const frame of TWELVE_HISTORY_FRAMES) {
     const marker=`history:twelve:${frame.tf}:v1`;
-    if (await env.GSX_KV.get(marker)) continue;
+    const stored=await readKvJson(env,marker);
+    if (stored) {
+      statuses.push({tf:frame.tf,ok:true,count:Number(stored.count||0),cached:true});
+      continue;
+    }
     const url=new URL('https://api.twelvedata.com/time_series');
     url.searchParams.set('symbol','XAU/USD');
     url.searchParams.set('interval',frame.interval);
@@ -491,10 +524,14 @@ async function backfillTwelveDataHistory(env) {
       if (bars.length<40) throw new Error(`insufficient rows: ${bars.length}`);
       await runD1StatementBatches(env,rollupReplaceStatements(env,bars,tfToMin(frame.tf)));
       await env.GSX_KV.put(marker,JSON.stringify({storedAt:Date.now(),count:bars.length}));
+      statuses.push({tf:frame.tf,ok:true,count:bars.length,cached:false});
     } catch (error) {
-      console.error(JSON.stringify({message:'Twelve Data history backfill failed',tf:frame.tf,error:String(error?.message||error)}));
+      const message=String(error?.message||error).slice(0,160);
+      statuses.push({tf:frame.tf,ok:false,error:message});
+      console.error(JSON.stringify({message:'Twelve Data history backfill failed',tf:frame.tf,error:message}));
     }
   }
+  await env.GSX_KV.put('system:history-status',JSON.stringify({updatedAt:Date.now(),frames:statuses}));
 }
 
 async function readKvJson(env,key) {

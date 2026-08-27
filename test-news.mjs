@@ -132,7 +132,7 @@ Date.now=realDateNow;
 assert.equal(serverSignal.side,'buy','server signal engine must reproduce a strong confirmed buy');
 assert.ok(serverSignal.conf>=60);
 
-const storedSignal={...serverSignal,id:'test-signal',createdAt:fixedNow,updatedAt:fixedNow,status:'active',tp1Hit:false,lastPrice:serverSignal.entry,signalBarTs:serverSignal.lastTs};
+const storedSignal={...serverSignal,id:'test-signal',createdAt:fixedNow,updatedAt:Date.now(),status:'active',tp1Hit:false,lastPrice:serverSignal.entry,signalBarTs:serverSignal.lastTs};
 const snapshotResponse=await worker.default.fetch(new Request('https://example.com/signals?tf=1m'),{
   ALLOW_ORIGINS:'["https://skyeagle123.github.io"]',
   GSX_KV:{
