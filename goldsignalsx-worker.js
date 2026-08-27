@@ -18,12 +18,13 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.27.2';
+const APP_VERSION = '2026.08.27.3';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
 const NEWS_CACHE_MS = 15 * 60 * 1000;
-const NEWS_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
 const NEWS_ALERT_MAX_AGE_MS = 45 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
@@ -954,14 +955,14 @@ async function enrichNewsBriefArabic(env, brief) {
   }
 }
 
-async function fetchGdeltGoldNews() {
+async function fetchGdeltNewsQuery(query, timespan = '24h') {
   const url = new URL('https://api.gdeltproject.org/api/v2/doc/doc');
-  url.searchParams.set('query', `(${NEWS_QUERY}) sourcelang:english`);
+  url.searchParams.set('query', query);
   url.searchParams.set('mode', 'artlist');
   url.searchParams.set('maxrecords', '75');
   url.searchParams.set('format', 'json');
   url.searchParams.set('sort', 'datedesc');
-  url.searchParams.set('timespan', '12h');
+  url.searchParams.set('timespan', timespan);
   const response = await fetch(url.toString(), {
     headers: { accept: 'application/json', 'user-agent': 'GoldSignalsX/1.0' },
     cf: { cacheTtl: 300, cacheEverything: true }
@@ -969,6 +970,25 @@ async function fetchGdeltGoldNews() {
   if (!response.ok) throw new Error(`GDELT ${response.status}`);
   const payload = await response.json();
   return Array.isArray(payload?.articles) ? payload.articles : [];
+}
+
+async function fetchGdeltGoldNews(now = Date.now()) {
+  const queries = [
+    `(${NEWS_QUERY}) sourcelang:english`,
+    'gold sourcelang:english'
+  ];
+  const articles = [];
+  let lastError = null;
+  for (const query of queries) {
+    try {
+      articles.push(...await fetchGdeltNewsQuery(query));
+      if (articles.some(article => classifyNewsArticle(article, now))) break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!articles.length && lastError) throw lastError;
+  return articles;
 }
 
 async function readNewsCache(env) {
@@ -989,13 +1009,15 @@ async function writeNewsCache(env, brief) {
 async function getGoldNewsBrief(env, { notify = false } = {}) {
   const now = Date.now();
   const cached = await readNewsCache(env);
-  if (cached && Number.isFinite(Number(cached.updatedAt)) && now - Number(cached.updatedAt) < NEWS_CACHE_MS) {
+  const cachedAgeMs = cached && Number.isFinite(Number(cached.updatedAt)) ? now - Number(cached.updatedAt) : Infinity;
+  const cachedTtl = Number(cached?.itemCount || 0) > 0 ? NEWS_CACHE_MS : NEWS_EMPTY_CACHE_MS;
+  if (cached && cachedAgeMs < cachedTtl) {
     const result = { ...cached, stale: false, ageMs: now - Number(cached.updatedAt), cache: 'hit' };
     if (notify) await maybeNotifyHighImpactNews(env, result);
     return result;
   }
   try {
-    const articles = await fetchGdeltGoldNews();
+    const articles = await fetchGdeltGoldNews(now);
     const brief = await enrichNewsBriefArabic(env, buildNewsBrief(articles, now));
     await writeNewsCache(env, brief);
     if (notify) await maybeNotifyHighImpactNews(env, brief);

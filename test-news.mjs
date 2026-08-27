@@ -84,10 +84,29 @@ assert.match(upgraded.items[0].titleAr, /عربي/);
 assert.equal(upgradedCache.key, 'news:brief:v2');
 assert.equal(upgradedCache.value.legacyCache, undefined);
 
+let newsFetchCalls = 0;
+globalThis.fetch = async url => {
+  newsFetchCalls += 1;
+  if (newsFetchCalls === 1) return { ok: true, json: async () => ({ articles: [] }) };
+  assert.match(String(url), /query=gold(?:\+|%20)sourcelang/);
+  return { ok: true, json: async () => ({ articles: [{
+    title: 'Gold rises as the US dollar falls',
+    url: 'https://www.reuters.com/markets/gold-fallback',
+    seenAt: Date.now() - 5 * 60 * 1000
+  }] }) };
+};
+const focusedFallback = await getGoldNewsBrief({
+  AI: { run: async () => ({ response: JSON.stringify({ items: [] }) }) }
+});
+globalThis.fetch = originalFetch;
+assert.equal(newsFetchCalls, 2);
+assert.equal(focusedFallback.itemCount, 1);
+assert.equal(focusedFallback.items[0].direction, 'bullish');
+
 const stale = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates',
   url: 'https://www.reuters.com/markets/example-old',
-  seenAt: now - 13 * 60 * 60 * 1000
+  seenAt: now - 25 * 60 * 60 * 1000
 }, now);
 assert.equal(stale, null);
 
