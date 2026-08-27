@@ -975,7 +975,9 @@ async function readNewsCache(env) {
   if (!env.GSX_KV) return null;
   try {
     const cached = await env.GSX_KV.get('news:brief:v2', 'json');
-    return cached && typeof cached === 'object' ? cached : null;
+    if (cached && typeof cached === 'object') return cached;
+    const legacy = await env.GSX_KV.get('news:brief', 'json');
+    return legacy && typeof legacy === 'object' ? { ...legacy, legacyCache: true } : null;
   } catch { return null; }
 }
 
@@ -1001,8 +1003,13 @@ async function getGoldNewsBrief(env, { notify = false } = {}) {
   } catch (error) {
     console.error(JSON.stringify({ message:'gold news refresh failed', error:error instanceof Error ? error.message : String(error) }));
     if (cached) {
+      const { legacyCache, ...cachedBrief } = cached;
+      const fallbackBrief = cachedBrief.items?.some(item => item?.titleAr)
+        ? cachedBrief
+        : await enrichNewsBriefArabic(env, cachedBrief);
+      if (legacyCache || fallbackBrief !== cachedBrief) await writeNewsCache(env, fallbackBrief);
       const ageMs = now - Number(cached.updatedAt || 0);
-      return { ...cached, stale: ageMs > 60 * 60 * 1000, ageMs, cache: 'stale-fallback', refreshError: 'news_refresh_failed' };
+      return { ...fallbackBrief, stale: ageMs > 60 * 60 * 1000, ageMs, cache: legacyCache ? 'legacy-upgraded' : 'stale-fallback', refreshError: 'news_refresh_failed' };
     }
     return { ok:false, stale:true, ageMs:null, updatedAt:null, source:'gdelt', itemCount:0, items:[], goldBias:{direction:'neutral',score:0,confidence:0,advice:'الأخبار غير متاحة مؤقتاً',reasons:[]}, safety:{blockTechnicalSignal:false,reason:'',blockUntil:null}, error:'news_unavailable' };
   }
@@ -1124,4 +1131,4 @@ async function importBars(env, rows) {
   await env.GSX_DB.batch(statements);
 }
 
-export { applyArabicNewsEnrichment, buildNewsBrief, classifyNewsArticle, enrichNewsBriefArabic, parseGdeltSeenDate };
+export { applyArabicNewsEnrichment, buildNewsBrief, classifyNewsArticle, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate };

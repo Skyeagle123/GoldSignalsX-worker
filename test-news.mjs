@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 
 const source = await fs.readFile(new URL('./goldsignalsx-worker.js', import.meta.url), 'utf8');
 const worker = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-const { classifyNewsArticle, buildNewsBrief, enrichNewsBriefArabic, parseGdeltSeenDate } = worker;
+const { classifyNewsArticle, buildNewsBrief, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
 const seen = '20260827T075500Z';
@@ -59,6 +59,30 @@ const fallbackArabic = await enrichNewsBriefArabic({}, brief);
 assert.equal(fallbackArabic.arabicEnrichment, 'fallback');
 assert.equal(fallbackArabic.items[0].titleAr, '');
 assert.equal(fallbackArabic.items[0].summaryAr, brief.items[0].reason);
+
+const legacyBrief = { ...brief, updatedAt: Date.now() - 2 * 60 * 60 * 1000 };
+let upgradedCache = null;
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async () => ({ ok: false, status: 503 });
+const upgraded = await getGoldNewsBrief({
+  GSX_KV: {
+    get: async key => key === 'news:brief' ? legacyBrief : null,
+    put: async (key, value) => { upgradedCache = { key, value: JSON.parse(value) }; }
+  },
+  AI: {
+    run: async () => ({ response: JSON.stringify({ items: [{
+      id: 0,
+      titleAr: 'عنوان عربي من الكاش القديم',
+      summaryAr: 'ملخص عربي محافظ للأثر المتوقع على الذهب.'
+    }] }) })
+  }
+});
+globalThis.fetch = originalFetch;
+assert.equal(upgraded.ok, true);
+assert.equal(upgraded.cache, 'legacy-upgraded');
+assert.match(upgraded.items[0].titleAr, /عربي/);
+assert.equal(upgradedCache.key, 'news:brief:v2');
+assert.equal(upgradedCache.value.legacyCache, undefined);
 
 const stale = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates',
