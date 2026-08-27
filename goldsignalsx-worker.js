@@ -1,3 +1,6 @@
+import { DurableObject } from 'cloudflare:workers';
+import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from './signal-engine.js';
+
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
 //   GET  /                   → صفحة حالة بسيطة (HTML)
@@ -18,7 +21,7 @@
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.27.3';
+const APP_VERSION = '2026.08.27.5';
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -28,6 +31,155 @@ const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
 const NEWS_ALERT_MAX_AGE_MS = 45 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
+
+/**
+ * One coordination point for XAU/USD. It owns the single Twelve Data
+ * connection, fans normalized quotes out to every browser, and persists only
+ * completed one-minute candles. Critical state is stored before it is exposed.
+ */
+export class GoldFeed extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.upstream = null;
+    this.connecting = false;
+    this.latestQuote = null;
+    this.currentBar = null;
+    this.lastSnapshotWriteAt = 0;
+    this.schemaReady = false;
+    this.ctx.blockConcurrencyWhile(async () => {
+      const stored = await this.ctx.storage.get(['latestQuote', 'currentBar']);
+      this.latestQuote = stored.get('latestQuote') || null;
+      this.currentBar = stored.get('currentBar') || null;
+      const alarm = await this.ctx.storage.getAlarm();
+      if (alarm == null) await this.ctx.storage.setAlarm(Date.now() + 1000);
+    });
+  }
+
+  async fetch(request) {
+    if ((request.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+      return Response.json(await this.status());
+    }
+    await this.ensureProvider();
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    this.ctx.acceptWebSocket(server);
+    if (this.latestQuote) server.send(JSON.stringify(this.latestQuote));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async status() {
+    return {
+      ok: Boolean(this.latestQuote),
+      provider: 'twelve-data',
+      connected: this.upstream?.readyState === 1,
+      latestQuote: this.latestQuote,
+      currentBar: this.currentBar,
+      clients: this.ctx.getWebSockets().length
+    };
+  }
+
+  async ensureProvider() {
+    if (!isTwelveDataConfigured(this.env)) return false;
+    if (this.upstream?.readyState === 0 || this.upstream?.readyState === 1 || this.connecting) return true;
+    this.connecting = true;
+    try {
+      const apiKey = String(this.env.TWELVE_DATA_API_KEY).trim();
+      const socket = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${encodeURIComponent(apiKey)}`);
+      this.upstream = socket;
+      socket.addEventListener('open', () => {
+        this.connecting = false;
+        socket.send(JSON.stringify({ action: 'subscribe', params: { symbols: 'XAU/USD' } }));
+      });
+      socket.addEventListener('message', event => {
+        this.ctx.waitUntil(this.handleProviderMessage(event.data));
+      });
+      socket.addEventListener('error', () => {
+        this.broadcast({ event:'error', message:'live_provider_error' });
+      });
+      socket.addEventListener('close', event => {
+        if (this.upstream === socket) this.upstream = null;
+        this.connecting = false;
+        console.log(JSON.stringify({ message:'central live provider closed', provider:'twelve-data', code:event.code }));
+        this.ctx.waitUntil(this.ctx.storage.setAlarm(Date.now() + 5000));
+      });
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return true;
+    } catch (error) {
+      this.connecting = false;
+      this.upstream = null;
+      await this.ctx.storage.setAlarm(Date.now() + 5000);
+      console.error(JSON.stringify({ message:'central live provider connect failed', error:error instanceof Error ? error.message : String(error) }));
+      return false;
+    }
+  }
+
+  async handleProviderMessage(raw) {
+    const message = normalizeTwelveDataMessage(raw);
+    if (!message) return;
+    if (message.event !== 'price') {
+      this.broadcast(message);
+      return;
+    }
+
+    const minute = bucket(message.ts, 1);
+    const previous = this.currentBar;
+    if (!previous || previous.t !== minute) {
+      if (previous && previous.t < minute) await this.persistCompletedBar(previous);
+      this.currentBar = {
+        t: minute, o: message.price, h: message.price, l: message.price,
+        c: message.price, v: 1, provider: 'twelve-data'
+      };
+    } else {
+      this.currentBar = {
+        ...previous,
+        h: Math.max(previous.h, message.price),
+        l: Math.min(previous.l, message.price),
+        c: message.price,
+        v: Number(previous.v || 0) + 1,
+        provider: 'twelve-data'
+      };
+    }
+    this.latestQuote = message;
+
+    const now = Date.now();
+    if (now - this.lastSnapshotWriteAt >= 15_000) {
+      await this.ctx.storage.put({ latestQuote:this.latestQuote, currentBar:this.currentBar });
+      this.lastSnapshotWriteAt = now;
+    }
+    this.broadcast(message);
+  }
+
+  async persistCompletedBar(bar) {
+    if (!this.env.GSX_DB || !bar || !Number.isFinite(bar.t)) return;
+    if (!this.schemaReady) {
+      await maybeEnsureD1(this.env);
+      this.schemaReady = true;
+    }
+    await upsertCompletedBarRollups(this.env,bar);
+  }
+
+  broadcast(message) {
+    const payload = JSON.stringify(message);
+    for (const socket of this.ctx.getWebSockets()) {
+      try { socket.send(payload); } catch {}
+    }
+  }
+
+  async alarm() {
+    await this.ensureProvider();
+    await this.ctx.storage.setAlarm(Date.now() + 60_000);
+  }
+
+  webSocketMessage(socket, message) {
+    if (message === 'status' && this.latestQuote) socket.send(JSON.stringify(this.latestQuote));
+  }
+  webSocketClose(socket, code, reason) {
+    try { socket.close(code || 1000, reason || 'closed'); } catch {}
+  }
+  webSocketError(socket) {
+    try { socket.close(1011, 'client error'); } catch {}
+  }
+}
 
 export default {
   async fetch(req, env, ctx) {
@@ -52,20 +204,47 @@ export default {
       if (path === '/') return htmlHome(corsHeaders);
 
       if (path === '/health') {
+        const centralFeedConfigured = Boolean(env.GOLD_FEED && isTwelveDataConfigured(env));
         return json({
           ok: true,
           version: APP_VERSION,
-          primaryProvider: isOandaConfigured(env) ? 'oanda' : 'fallback',
+          primaryProvider: centralFeedConfigured ? 'twelve-data' : (isOandaConfigured(env) ? 'oanda' : 'fallback'),
           oandaConfigured: isOandaConfigured(env),
-          twelveDataConfigured: isTwelveDataConfigured(env)
+          twelveDataConfigured: isTwelveDataConfigured(env),
+          centralFeedConfigured
         }, corsHeaders);
       }
 
       if (path === '/stream') {
+        if (env.GOLD_FEED) {
+          if (method !== 'GET') return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
+          if (!origin || (!allow.includes('*') && !allow.includes(origin))) {
+            return json({ ok:false, error:'origin_not_allowed' }, corsHeaders, 403);
+          }
+          if (!isTwelveDataConfigured(env)) return json({ ok:false, error:'twelve_data_not_configured' }, corsHeaders, 503);
+          if ((req.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
+            return json({ ok:false, error:'websocket_upgrade_required' }, corsHeaders, 426);
+          }
+          return env.GOLD_FEED.getByName('xau-usd').fetch(req);
+        }
         return handleTwelveDataStream(req, env, corsHeaders);
       }
 
       if (path === '/price') {
+        if (env.GOLD_FEED && isTwelveDataConfigured(env)) {
+          try {
+            const status = await env.GOLD_FEED.getByName('xau-usd').status();
+            const quote = status?.latestQuote;
+            if (quote?.event === 'price' && Number.isFinite(Number(quote.price)) && Date.now() - Number(quote.ts) <= 90_000) {
+              return jsonNoStore({
+                ok:true, price:Number(quote.price), ts:Number(quote.ts), source:'twelve-data',
+                receivedAt:Number(quote.receivedAt || Date.now()), ageMs:Math.max(0,Date.now()-Number(quote.ts))
+              }, corsHeaders);
+            }
+          } catch (error) {
+            logProviderError('central-feed-price', error);
+          }
+        }
         const { ok, data } = await getPriceUnified(env);
         if (!ok) return json({ ok: false, error: 'price_failed' }, corsHeaders, 502);
 
@@ -83,15 +262,24 @@ export default {
         return jsonNoStore(brief, corsHeaders, brief.ok ? 200 : 502);
       }
 
+      if (path === '/signals') {
+        if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        const tf=url.searchParams.get('tf')||'';
+        if (tf&&!SIGNAL_TIMEFRAMES.includes(tf)) return json({ok:false,error:'bad_tf'},corsHeaders,400);
+        return jsonNoStore(await readSignalSnapshot(env,tf||null),corsHeaders);
+      }
+
       // CSV import -> D1 seed fast
       if (path === '/import.csv' && method === 'POST') {
+        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'import');
+        if (denied) return denied;
         if (!env.GSX_DB) return json({ ok:false, error:'missing D1 binding GSX_DB' }, corsHeaders, 400);
         const tfRaw = url.searchParams.get('tf') || '1m';
         if (tfRaw !== '1' && tfRaw !== '1m') {
           return json({ ok:false, error:'import supports 1m only' }, corsHeaders, 400);
         }
         await maybeEnsureD1(env);
-        const csv = await req.text();
+        const csv = await readTextBody(req, 512 * 1024);
         const lines = csv.trim().split(/\r?\n/);
         const startIdx = (lines[0] || '').toLowerCase().includes('time') ? 1 : 0;
         const rows = [];
@@ -115,8 +303,10 @@ export default {
         if (!TF[tf]) return json({ ok:false, error:'bad tf' }, corsHeaders, 400);
         const limit = parseLimit(url.searchParams.get('limit'), 1200, MAX_BARS_LIMIT);
 
-        // Keep analysis candles on the same provider as the live quote.
-        if (isOandaConfigured(env)) {
+        // The central Twelve Data feed writes the canonical 1m candles to D1.
+        // Only use OANDA when that central feed is not configured.
+        const centralFeedConfigured = Boolean(env.GOLD_FEED && isTwelveDataConfigured(env));
+        if (!centralFeedConfigured && isOandaConfigured(env)) {
           try {
             const bars = await getOandaBars(env, tf, limit);
             if (bars.length) return jsonWithSource(bars, 'oanda', corsHeaders);
@@ -127,7 +317,13 @@ export default {
 
         // من D1 أولاً
         const rows = await d1Bars(env, tf, limit);
-        if (rows && rows.length) return jsonWithSource(rows, 'd1', corsHeaders);
+        if (rows && rows.length) {
+          const latestProvider = String(rows.at(-1)?.provider || 'legacy');
+          const h = new Headers(corsHeaders);
+          h.set('x-gsx-storage', 'd1');
+          h.set('x-gsx-gaps', String(countBarGaps(rows, tf)));
+          return jsonWithSource(rows, latestProvider, h);
+        }
 
         // Fallback إلى KV فقط إذا لم يكن KV_OFF
         if (!KV_OFF) {
@@ -198,14 +394,18 @@ export default {
       }
 
       if (path === '/notify') {
+        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'notify');
+        if (denied) return denied;
         const out = await handleNotify(req, env);
         const code = out.ok ? 200 : 502;
         return json(out, corsHeaders, code);
       }
 
       if (path === '/decision') {
+        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'decision');
+        if (denied) return denied;
         if (!env.GSX_KV || KV_OFF) return json({ ok: false, error: 'no KV' }, corsHeaders, 500);
-        const body = await req.json().catch(() => ({}));
+        const body = await readJsonBody(req, 8192);
         const ts = Date.now();
         await env.GSX_KV.put(`dec:${ts}`, JSON.stringify({ ...body, ts }), { expirationTtl: 7 * 24 * 3600 });
         return json({ ok: true, ts }, corsHeaders);
@@ -214,7 +414,10 @@ export default {
       return json({ error: 'Not found' }, corsHeaders, 404);
 
     } catch (e) {
-      return json({ ok: false, error: 'exception', message: String(e?.message || e) }, corsHeaders, 500);
+      const message=String(e?.message||e);
+      console.error(JSON.stringify({ message:'request failed', path, method, error:message }));
+      const safeError=['payload_too_large','invalid_json'].includes(message)?message:'internal_error';
+      return json({ ok:false, error:safeError }, corsHeaders, safeError==='payload_too_large'?413:500);
     }
   },
 
@@ -226,8 +429,15 @@ export default {
 
 async function runScheduledTasks(env) {
   const tasks = [];
-  if (env.GSX_DB) tasks.push(refreshStoredPrice(env));
-  tasks.push(getGoldNewsBrief(env, { notify: true }));
+  if (env.GOLD_FEED && isTwelveDataConfigured(env)) {
+    tasks.push(env.GOLD_FEED.getByName('xau-usd').ensureProvider());
+  } else if (env.GSX_DB) {
+    // Compatibility fallback for deployments that have not added GOLD_FEED yet.
+    tasks.push(refreshStoredPrice(env));
+  }
+  const newsPromise=getGoldNewsBrief(env,{notify:true});
+  tasks.push(newsPromise);
+  tasks.push(backfillSignalRollups(env).then(()=>newsPromise).then(news=>runSignalCycle(env,news)));
   const results = await Promise.allSettled(tasks);
   results.filter(result => result.status === 'rejected').forEach(result => {
     console.error(JSON.stringify({
@@ -236,6 +446,152 @@ async function runScheduledTasks(env) {
     }));
   });
 }
+
+async function readKvJson(env,key) {
+  if (!env.GSX_KV) return null;
+  try {
+    const value=await env.GSX_KV.get(key,'json');
+    return value&&typeof value==='object'?value:null;
+  } catch {
+    return null;
+  }
+}
+
+async function readSignalSnapshot(env,tf=null) {
+  if (!env.GSX_KV) return {ok:false,error:'signals_storage_unavailable'};
+  const timeframes=tf?[tf]:SIGNAL_TIMEFRAMES;
+  const rows=await Promise.all(timeframes.map(async frame=>({
+    tf:frame,
+    state:await readKvJson(env,`signal:state:${frame}`),
+    evaluation:await readKvJson(env,`signal:evaluation:${frame}`)
+  })));
+  return {
+    ok:true,
+    updatedAt:Math.max(0,...rows.map(row=>Number(row.evaluation?.evaluatedAt||row.state?.updatedAt||0))),
+    signals:rows
+  };
+}
+
+async function currentPriceForSignals(env) {
+  if (env.GOLD_FEED&&isTwelveDataConfigured(env)) {
+    try {
+      const status=await env.GOLD_FEED.getByName('xau-usd').status();
+      const quote=status?.latestQuote;
+      if (quote?.event==='price'&&Number.isFinite(Number(quote.price))) {
+        return {
+          price:Number(quote.price),ts:Number(quote.ts),receivedAt:Number(quote.receivedAt||Date.now()),
+          source:'twelve-data'
+        };
+      }
+    } catch (error) {
+      logProviderError('central-feed-signals',error);
+    }
+  }
+  const result=await getPriceUnified(env);
+  if (!result.ok) return null;
+  return {...result.data,receivedAt:Date.now()};
+}
+
+function signalExpiryMs(tf) {
+  const duration=tfToMin(tf)*60_000;
+  return Math.min(7*24*60*60*1000,Math.max(30*60*1000,duration*12));
+}
+
+function updateSignalLifecycle(signal,bar,livePrice,now) {
+  if (!signal||!['active','tp1'].includes(signal.status)) return signal;
+  const high=Math.max(Number(bar?.h)||-Infinity,Number(livePrice)||-Infinity);
+  const low=Math.min(Number(bar?.l)||Infinity,Number(livePrice)||Infinity);
+  let status=signal.status;
+  if (signal.side==='buy') {
+    if (low<=signal.sl) status='stopped';
+    else if (high>=signal.tp2) status='tp2';
+    else if (high>=signal.tp1) status='tp1';
+  } else {
+    if (high>=signal.sl) status='stopped';
+    else if (low<=signal.tp2) status='tp2';
+    else if (low<=signal.tp1) status='tp1';
+  }
+  if (status===signal.status&&now-signal.createdAt>signalExpiryMs(signal.tf)) status='expired';
+  return {
+    ...signal,status,tp1Hit:signal.tp1Hit||status==='tp1'||status==='tp2',
+    lastPrice:Number(livePrice),updatedAt:now,
+    ...(['tp2','stopped','expired'].includes(status)?{closedAt:now,closedBarTs:Number(bar?.t||now)}:{})
+  };
+}
+
+function signalTelegramText(signal,event='created') {
+  const side=signal.side==='buy'?'شراء':'بيع';
+  if (event!=='created') {
+    const status=signal.status==='tp1'?'تحقق TP1':signal.status==='tp2'?'تحقق TP2':signal.status==='stopped'?'ضُرب SL':'انتهت صلاحية الإشارة';
+    return [`🔔 تحديث إشارة ${side} — ${signal.tf}`,status,`السعر: ${Number(signal.lastPrice).toFixed(2)}`,`Entry: ${signal.entry.toFixed(2)} • TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`].join('\n');
+  }
+  return [
+    `🟢 إشارة ${side} مؤكدة — ${signal.tf}`,
+    `Entry: ${signal.entry.toFixed(2)}`,
+    `TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`,
+    `درجة الثقة: ${signal.conf.toFixed(0)}%`,
+    ...signal.reasons.slice(0,6).map(reason=>`• ${reason}`),
+    'إشارة آلية لإدارة المخاطر وليست ضماناً للربح.'
+  ].join('\n');
+}
+
+async function saveSignalState(env,signal,event) {
+  if (!env.GSX_KV) return;
+  await env.GSX_KV.put(`signal:state:${signal.tf}`,JSON.stringify(signal),{expirationTtl:90*24*60*60});
+  await env.GSX_KV.put(`signal:log:${signal.id}:${event}`,JSON.stringify({...signal,event}),{expirationTtl:90*24*60*60});
+  if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
+    const sent=await sendTelegramText(env,signalTelegramText(signal,event));
+    if (!sent.ok) console.error(JSON.stringify({message:'signal telegram failed',tf:signal.tf,event,status:sent.status||0}));
+  }
+}
+
+async function runSignalCycle(env,news) {
+  if (String(env.SIGNALS_ENABLED||'1').trim()==='0'||!env.GSX_DB||!env.GSX_KV) return;
+  const live=await currentPriceForSignals(env);
+  if (!live) return;
+  const limits={'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60};
+  const frames={};
+  await Promise.all(SIGNAL_TIMEFRAMES.map(async tf=>{
+    const bars=await d1Bars(env,tf,limits[tf],{allowLegacy:false})||[];
+    frames[tf]={tf,bars,quality:evaluateCandleQuality(bars,tf),provider:String(bars.at(-1)?.provider||'')};
+  }));
+  const trackingBar=frames['1m'].bars.at(-1);
+  const now=Date.now();
+
+  for (const tf of SIGNAL_TIMEFRAMES) {
+    const existing=await readKvJson(env,`signal:state:${tf}`);
+    if (existing&&['active','tp1'].includes(existing.status)) {
+      const updated=updateSignalLifecycle(existing,trackingBar,live.price,now);
+      if (updated.status!==existing.status) await saveSignalState(env,updated,updated.status);
+      else await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(updated),{expirationTtl:90*24*60*60});
+      continue;
+    }
+
+    const frame=frames[tf];
+    const mtf=(HIGHER_SIGNAL_TF[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
+    const result=computeServerSignal(frame.bars,{
+      tf,mtf,live,barsSource:'d1',news,dataQuality:frame.quality
+    });
+    const evaluation={...result,provider:frame.provider,quality:frame.quality,evaluatedAt:now};
+    await env.GSX_KV.put(`signal:evaluation:${tf}`,JSON.stringify(evaluation),{expirationTtl:24*60*60});
+    if (!['buy','sell'].includes(result.side)) continue;
+    const signalBarTs=Number(result.lastTs||frame.bars.at(-1)?.t||now);
+    if (existing&&signalBarTs<=Number(existing.closedBarTs||existing.signalBarTs||0)) continue;
+    const id=`${tf}:${signalBarTs}:${result.side}`;
+    const signal={
+      id,tf,side:result.side,entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
+      conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
+      signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
+      provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral'
+    };
+    await saveSignalState(env,signal,'created');
+  }
+}
+
+const HIGHER_SIGNAL_TF={
+  '1m':['5m','15m'],'5m':['15m','60m'],'15m':['60m','240m'],
+  '30m':['60m','240m'],'60m':['240m'],'240m':[],'1d':[]
+};
 
 // ===== Helpers =====
 function parseAllow(v) {
@@ -246,13 +602,65 @@ function parseAllow(v) {
     return Array.isArray(a) ? a : [];
   } catch { return []; }
 }
+
+async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action) {
+  if (req.method.toUpperCase() !== 'POST') {
+    return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
+  }
+  const origin = req.headers.get('Origin') || '';
+  if (!origin || (!allowedOrigins.includes('*') && !allowedOrigins.includes(origin))) {
+    return json({ ok:false, error:'origin_not_allowed' }, corsHeaders, 403);
+  }
+  const configuredToken = String(env.GSX_WRITE_TOKEN || '');
+  if (configuredToken) {
+    const suppliedToken = String(req.headers.get('x-gsx-write-token') || '');
+    if (!(await constantTimeEqual(configuredToken, suppliedToken))) {
+      return json({ ok:false, error:'unauthorized' }, corsHeaders, 401);
+    }
+  }
+  if (env.GSX_KV) {
+    const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
+    const limit = Math.max(1, Math.min(60, Number(env.WRITE_RL_LIMIT || 10)));
+    const window = Math.floor(Date.now() / 60_000);
+    const key = `rl:write:${action}:${ip}:${window}`;
+    const count = Number(await env.GSX_KV.get(key) || 0) + 1;
+    if (count > limit) return json({ ok:false, error:'rate_limited' }, corsHeaders, 429);
+    await env.GSX_KV.put(key, String(count), { expirationTtl:120 });
+  }
+  return null;
+}
+
+async function constantTimeEqual(expected, actual) {
+  const encoder = new TextEncoder();
+  const [expectedHash,actualHash]=await Promise.all([
+    crypto.subtle.digest('SHA-256',encoder.encode(String(expected))),
+    crypto.subtle.digest('SHA-256',encoder.encode(String(actual)))
+  ]);
+  return crypto.subtle.timingSafeEqual(expectedHash,actualHash);
+}
+
+async function readJsonBody(req, maxBytes = 8192) {
+  const text=await readTextBody(req,maxBytes);
+  try {
+    return text?JSON.parse(text):{};
+  } catch {
+    throw new Error('invalid_json');
+  }
+}
+async function readTextBody(req,maxBytes) {
+  const length=Number(req.headers.get('content-length')||0);
+  if (length>maxBytes) throw new Error('payload_too_large');
+  const text=await req.text();
+  if (new TextEncoder().encode(text).byteLength>maxBytes) throw new Error('payload_too_large');
+  return text;
+}
 function makeCorsHeaders(origin, allowList) {
   const allowAll = allowList.includes('*');
   const allowed = !origin ? '*' : (allowAll ? origin : (allowList.includes(origin) ? origin : ''));
   const headers = {
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type',
-    'access-control-expose-headers': 'x-gsx-source',
+    'access-control-allow-headers': 'content-type,x-gsx-write-token',
+    'access-control-expose-headers': 'x-gsx-source,x-gsx-storage,x-gsx-gaps',
     'access-control-max-age': '86400',
     'content-type': 'application/json; charset=utf-8',
     'vary': 'origin'
@@ -617,12 +1025,25 @@ function resample(b1m, toMin) {
   const out = []; let acc = null, base = null;
   for (const b of b1m) {
     const B = bucket(b.t, toMin);
-    if (base === null) { base = B; acc = { t: B, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }; continue; }
-    if (B === base) { acc.h = Math.max(acc.h, b.h); acc.l = Math.min(acc.l, b.l); acc.c = b.c; acc.v += b.v; }
-    else { out.push(acc); base = B; acc = { t: B, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }; }
+    if (base === null) { base = B; acc = { t: B, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, provider:b.provider || 'legacy' }; continue; }
+    if (B === base) {
+      acc.h = Math.max(acc.h, b.h); acc.l = Math.min(acc.l, b.l); acc.c = b.c; acc.v += b.v;
+      if (acc.provider !== (b.provider || 'legacy')) acc.provider = 'mixed';
+    }
+    else { out.push(acc); base = B; acc = { t: B, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, provider:b.provider || 'legacy' }; }
   }
   if (acc) out.push(acc);
   return out;
+}
+
+function countBarGaps(bars, tf) {
+  const step = tfToMin(tf) * 60_000;
+  let gaps = 0;
+  for (let i = 1; i < (bars || []).length; i++) {
+    const delta = Number(bars[i].t) - Number(bars[i - 1].t);
+    if (!Number.isFinite(delta) || delta <= 0 || delta > step * 1.5) gaps++;
+  }
+  return gaps;
 }
 function toCSV(bars) {
   const head = 'time,o,h,l,c,v\n';
@@ -661,12 +1082,25 @@ function* daySpan(fromMs, toMs) {
 }
 
 // ===== دالة D1 المعدّلة لدعم TFs متعددة من 1m =====
-async function d1Bars(env, tf, limit) {
+async function d1Bars(env, tf, limit, { allowLegacy = true } = {}) {
   if (!env.GSX_DB) return null;
 
   const tfMin = tfToMin(tf);     // مثلًا 1 أو 5 أو 15 ...
   const baseTf = 1;              // نحن نخزن فقط 1m في D1
-  const q = `SELECT t,o,h,l,c,v FROM bars WHERE tf=? ORDER BY t DESC LIMIT ?`;
+  const q2 = `SELECT t,o,h,l,c,v,provider FROM bars_v2 WHERE tf=? ORDER BY t DESC LIMIT ?`;
+  const q = `SELECT t,o,h,l,c,v,provider FROM bars WHERE tf=? ORDER BY t DESC LIMIT ?`;
+
+  let direct=[];
+  try {
+    const {results}=await env.GSX_DB.prepare(q2).bind(tfMin,limit).all();
+    direct=(results||[])
+      .map(r=>({t:r.t,o:r.o,h:r.h,l:r.l,c:r.c,v:r.v,provider:r.provider||'legacy'}))
+      .reverse();
+    if (tfMin===1||direct.length>=Math.min(40,limit)) return direct;
+  } catch (error) {
+    if (!String(error?.message||error).toLowerCase().includes('no such table')) throw error;
+  }
+  if (!allowLegacy) return direct;
 
   // لو الطلب 1m → رجّع مباشرة من D1
   if (tfMin === baseTf) {
@@ -676,14 +1110,14 @@ async function d1Bars(env, tf, limit) {
       .all();
 
     return results
-      .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v }))
+      .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v, provider:r.provider || 'legacy' }))
       .reverse();
   }
 
   // TF أكبر (5m, 15m, 30m, 60m, 240m, 1d...)
   // منجيب عدد أكبر من شموع 1m وبنركّب منها TF المطلوب
   const factor = Math.max(1, Math.round(tfMin / baseTf)); // مثلًا 5 أو 15...
-  const need = limit * factor + 10;                        // زيادة صغيرة احتياط
+  const need = Math.min(limit * factor + 10, 100000);       // حد آمن لقراءة D1
 
   const { results } = await env.GSX_DB
     .prepare(q)
@@ -691,7 +1125,7 @@ async function d1Bars(env, tf, limit) {
     .all();
 
   const b1m = results
-    .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v }))
+    .map(r => ({ t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v, provider:r.provider || 'legacy' }))
     .reverse();
 
   if (!b1m.length) return [];
@@ -808,10 +1242,13 @@ function classifyNewsArticle(article, now = Date.now()) {
   const direction = delta >= 0.75 ? 'bullish' : delta <= -0.75 ? 'bearish' : 'neutral';
   const criticalMacro = hasAnyPhrase(text, ['fomc','federal reserve','rate cut','rate hike','cpi','pce','payrolls','jobs report']);
   const criticalRisk = hasAnyPhrase(text, ['war','airstrike','missile','invasion','sanctions','trade war','bank crisis']);
-  const importance = (criticalMacro && trusted) || (goldRelated && criticalRisk) ? 3 : (goldRelated || macroRelated || trusted ? 2 : 1);
-  const confidence = direction === 'neutral'
+  // Only a trusted publisher can create a market-blocking level-3 event.
+  // Untrusted headlines remain visible for context but never stop trading.
+  const importance = trusted && (criticalMacro || (goldRelated && criticalRisk)) ? 3 : (goldRelated || macroRelated || trusted ? 2 : 1);
+  let confidence = direction === 'neutral'
     ? 50
     : Math.min(92, Math.round(52 + Math.abs(delta) * 8 + importance * 4 + (trusted ? 5 : 0)));
+  if (!trusted) confidence = Math.min(confidence, 64);
   const reasons = [...new Set(direction === 'bullish' ? bull.reasons : direction === 'bearish' ? bear.reasons : [])];
 
   return {
@@ -856,9 +1293,9 @@ function buildNewsBrief(rawArticles, now = Date.now()) {
   const score = total ? (bullWeight - bearWeight) / total : 0;
   const direction = score >= 0.18 ? 'bullish' : score <= -0.18 ? 'bearish' : 'neutral';
   const confidence = total ? Math.min(90, Math.round(52 + Math.abs(score) * 36 + Math.min(8, total))) : 0;
-  const freshCritical = items.find(item => item.importance === 3 && item.ageMs <= 15 * 60 * 1000);
-  const hasBullCritical = items.some(item => item.importance === 3 && item.direction === 'bullish');
-  const hasBearCritical = items.some(item => item.importance === 3 && item.direction === 'bearish');
+  const freshCritical = items.find(item => item.trusted && item.importance === 3 && item.direction !== 'neutral' && item.ageMs <= 15 * 60 * 1000);
+  const hasBullCritical = items.some(item => item.trusted && item.importance === 3 && item.direction === 'bullish');
+  const hasBearCritical = items.some(item => item.trusted && item.importance === 3 && item.direction === 'bearish');
   const conflictingCritical = hasBullCritical && hasBearCritical;
   const blockTechnicalSignal = Boolean(freshCritical || conflictingCritical);
   const blockReason = freshCritical
@@ -1052,7 +1489,7 @@ function newsDirectionArabic(direction) {
 async function maybeNotifyHighImpactNews(env, brief) {
   if (String(env.NEWS_ALERTS_ENABLED || '1').trim() === '0' || !env.GSX_KV) return;
   const item = (brief?.items || []).find(candidate =>
-    candidate.importance === 3 && candidate.direction !== 'neutral' &&
+    candidate.trusted && candidate.importance === 3 && candidate.direction !== 'neutral' &&
     candidate.confidence >= 65 && Date.now() - candidate.seenAt <= NEWS_ALERT_MAX_AGE_MS
   );
   if (!item) return;
@@ -1108,9 +1545,32 @@ async function handleNotify(req, env) {
 async function maybeEnsureD1(env) {
   if (!env.GSX_DB) return;
   // Only import/scheduled persistence call this; no module-level I/O promise.
-  await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars (tf INTEGER NOT NULL DEFAULT 1, t INTEGER PRIMARY KEY, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS bars (tf INTEGER NOT NULL DEFAULT 1, t INTEGER PRIMARY KEY, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0, provider TEXT NOT NULL DEFAULT 'legacy');");
+  const columns = await env.GSX_DB.prepare('PRAGMA table_info(bars)').all();
+  if (!(columns.results || []).some(column => column.name === 'provider')) {
+    try { await env.GSX_DB.exec("ALTER TABLE bars ADD COLUMN provider TEXT NOT NULL DEFAULT 'legacy'"); }
+    catch (error) {
+      if (!String(error?.message || error).toLowerCase().includes('duplicate column')) throw error;
+    }
+  }
   await env.GSX_DB.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_bars_t ON bars(t);');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_tf_t ON bars(tf, t);');
+  await env.GSX_DB.exec(`
+    CREATE TABLE IF NOT EXISTS bars_v2 (
+      tf INTEGER NOT NULL,
+      t INTEGER NOT NULL,
+      o REAL NOT NULL,
+      h REAL NOT NULL,
+      l REAL NOT NULL,
+      c REAL NOT NULL,
+      v REAL NOT NULL DEFAULT 0,
+      provider TEXT NOT NULL DEFAULT 'legacy',
+      PRIMARY KEY (tf,t)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bars_v2_tf_t ON bars_v2(tf,t);
+    INSERT OR IGNORE INTO bars_v2(tf,t,o,h,l,c,v,provider)
+      SELECT COALESCE(tf,1),t,o,h,l,c,COALESCE(v,0),COALESCE(provider,'legacy') FROM bars;
+  `);
 }
 
 async function refreshStoredPrice(env) {
@@ -1124,32 +1584,81 @@ async function persistPriceToD1(env, data) {
   const price = Number(data.price);
   const ts = Number(data.ts) || Date.now();
   await maybeEnsureD1(env);
-  const t = bucket(ts, 1);
-  await env.GSX_DB.prepare(`
-    INSERT INTO bars (tf,t,o,h,l,c,v) VALUES (1,?1,?2,?2,?2,?2,1)
-    ON CONFLICT(t) DO UPDATE SET
-      tf=1,
-      h=MAX(bars.h, excluded.h),
-      l=MIN(bars.l, excluded.l),
-      c=excluded.c,
-      v=COALESCE(bars.v, 0) + 1
-  `).bind(t, price).run();
+  await upsertCompletedBarRollups(env,{
+    t:bucket(ts,1),o:price,h:price,l:price,c:price,v:1,provider:String(data.source||'fallback')
+  });
 }
 
 async function importBars(env, rows) {
   const statements = [];
-  // D1 permits at most 100 bound parameters; each row uses six.
-  const chunkSize = 16;
-  for (let start = 0; start < rows.length; start += chunkSize) {
-    const chunk = rows.slice(start, start + chunkSize);
-    const placeholders = chunk.map(() => '(1,?,?,?,?,?,?)').join(',');
-    const values = chunk.flatMap(r => [r.t, r.o, r.h, r.l, r.c, r.v]);
+  const imported=rows.map(row=>({...row,provider:String(row.provider||'import')})).sort((a,b)=>a.t-b.t);
+  for (const tfMin of STORED_TF_MINUTES) {
+    const frame=tfMin===1?imported:resample(imported,tfMin);
+    statements.push(...rollupReplaceStatements(env,frame,tfMin));
+  }
+  await runD1StatementBatches(env,statements);
+}
+
+const STORED_TF_MINUTES=[1,5,15,30,60,240,1440];
+
+function rollupReplaceStatements(env,frame,tfMin) {
+  const statements=[];
+  // Eight values per row stay under D1's 100-bind limit.
+  for (let start=0;start<frame.length;start+=12) {
+    const chunk=frame.slice(start,start+12);
+    const placeholders=chunk.map(()=>'(?,?,?,?,?,?,?,?)').join(',');
+    const values=chunk.flatMap(row=>[tfMin,row.t,row.o,row.h,row.l,row.c,row.v,String(row.provider||'import')]);
     statements.push(env.GSX_DB.prepare(`
-      INSERT INTO bars (tf,t,o,h,l,c,v) VALUES ${placeholders}
-      ON CONFLICT(t) DO UPDATE SET
-        tf=1, o=excluded.o, h=excluded.h, l=excluded.l, c=excluded.c, v=excluded.v
+      INSERT INTO bars_v2(tf,t,o,h,l,c,v,provider) VALUES ${placeholders}
+      ON CONFLICT(tf,t) DO UPDATE SET
+        o=excluded.o,h=excluded.h,l=excluded.l,c=excluded.c,v=excluded.v,provider=excluded.provider
     `).bind(...values));
   }
+  return statements;
+}
+
+async function runD1StatementBatches(env,statements) {
+  for (let start=0;start<statements.length;start+=100) {
+    await env.GSX_DB.batch(statements.slice(start,start+100));
+  }
+}
+
+async function backfillSignalRollups(env) {
+  if (!env.GSX_DB||!env.GSX_KV) return;
+  const marker='signals:rollups-backfilled:v1';
+  if (await env.GSX_KV.get(marker)) return;
+  await maybeEnsureD1(env);
+  const {results}=await env.GSX_DB.prepare(
+    'SELECT t,o,h,l,c,v,provider FROM bars_v2 WHERE tf=1 ORDER BY t DESC LIMIT 10000'
+  ).all();
+  const oneMinute=(results||[]).map(row=>({
+    t:Number(row.t),o:Number(row.o),h:Number(row.h),l:Number(row.l),c:Number(row.c),
+    v:Number(row.v||0),provider:String(row.provider||'legacy')
+  })).reverse();
+  if (oneMinute.length<40) return;
+  const statements=[];
+  for (const tfMin of STORED_TF_MINUTES.filter(value=>value>1)) {
+    statements.push(...rollupReplaceStatements(env,resample(oneMinute,tfMin),tfMin));
+  }
+  await runD1StatementBatches(env,statements);
+  await env.GSX_KV.put(marker,String(Date.now()));
+}
+
+async function upsertCompletedBarRollups(env,bar) {
+  if (!env.GSX_DB||!bar||![bar.t,bar.o,bar.h,bar.l,bar.c].every(Number.isFinite)) return;
+  const provider=String(bar.provider||'legacy');
+  const statements=STORED_TF_MINUTES.map(tfMin=>{
+    const t=bucket(bar.t,tfMin);
+    return env.GSX_DB.prepare(`
+      INSERT INTO bars_v2(tf,t,o,h,l,c,v,provider) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+      ON CONFLICT(tf,t) DO UPDATE SET
+        h=MAX(bars_v2.h,excluded.h),
+        l=MIN(bars_v2.l,excluded.l),
+        c=excluded.c,
+        v=COALESCE(bars_v2.v,0)+COALESCE(excluded.v,0),
+        provider=CASE WHEN bars_v2.provider=excluded.provider THEN bars_v2.provider ELSE 'mixed' END
+    `).bind(tfMin,t,bar.o,bar.h,bar.l,bar.c,Number(bar.v||0),provider);
+  });
   await env.GSX_DB.batch(statements);
 }
 

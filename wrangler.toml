@@ -1,6 +1,6 @@
 name = "goldsignalsx-worker"
 main = "goldsignalsx-worker.js"
-compatibility_date = "2026-08-26"
+compatibility_date = "2026-08-27"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
@@ -12,6 +12,8 @@ OANDA_ENABLED = "1"
 OANDA_ENV = "practice"
 OANDA_INSTRUMENT = "XAU_USD"
 NEWS_ALERTS_ENABLED = "1"
+SIGNALS_ENABLED = "1"
+SIGNAL_ALERTS_ENABLED = "1"
 
 # ======== KV (يبقى كما هو) ========
 [[kv_namespaces]]
@@ -40,3 +42,13 @@ head_sampling_rate = 1
 
 [ai]
 binding = "AI"
+
+# One globally coordinated XAU/USD feed. The deterministic object name is
+# selected in code with GOLD_FEED.getByName("xau-usd").
+[[durable_objects.bindings]]
+name = "GOLD_FEED"
+class_name = "GoldFeed"
+
+[[migrations]]
+tag = "v1-gold-feed"
+new_sqlite_classes = ["GoldFeed"]

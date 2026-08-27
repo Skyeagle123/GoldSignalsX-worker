@@ -1,0 +1,36 @@
+name: Test Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "goldsignalsx-worker.js"
+      - "signal-engine.js"
+      - "test-news.mjs"
+      - "schema.sql"
+      - "wrangler.toml"
+      - ".github/workflows/test.yml"
+  pull_request:
+    paths:
+      - "goldsignalsx-worker.js"
+      - "signal-engine.js"
+      - "test-news.mjs"
+      - "schema.sql"
+      - "wrangler.toml"
+      - ".github/workflows/test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check goldsignalsx-worker.js
+      - run: node --check signal-engine.js
+      - run: node test-news.mjs
