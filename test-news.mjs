@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
+const originalFetch=globalThis.fetch;
+
 const source = await fs.readFile(new URL('./goldsignalsx-worker.js', import.meta.url), 'utf8');
 const signalEngineUrl = new URL('./signal-engine.js', import.meta.url).href;
 const testSource = source.replace(
@@ -9,7 +11,11 @@ const testSource = source.replace(
 ).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl));
 const worker = await import(`data:text/javascript;base64,${Buffer.from(testSource).toString('base64')}`);
 const { computeServerSignal, evaluateCandleQuality } = await import(signalEngineUrl);
-const { GoldFeed, classifyNewsArticle, buildNewsBrief, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate, parseTwelveDataTimeSeries } = worker;
+const {
+  GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
+  parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
+  updateSignalLifecycleAcrossBars
+} = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
 const seen = '20260827T075500Z';
@@ -132,6 +138,45 @@ Date.now=realDateNow;
 assert.equal(serverSignal.side,'buy','server signal engine must reproduce a strong confirmed buy');
 assert.ok(serverSignal.conf>=60);
 
+const lifecycleSignal={
+  id:'1m:test:buy',tf:'1m',side:'buy',entry:100,tp1:101,tp2:102,sl:99,
+  signalBarTs:fixedNow-4*60000,lastProcessedBarTs:fixedNow-4*60000,
+  createdAt:fixedNow-4*60000,updatedAt:fixedNow-4*60000,status:'active',tp1Hit:false,lastPrice:100
+};
+const lifecycle=updateSignalLifecycleAcrossBars(lifecycleSignal,[
+  {t:fixedNow-3*60000,o:100,h:101.2,l:99.5,c:100.8},
+  {t:fixedNow-2*60000,o:100.8,h:100.9,l:100.2,c:100.4}
+],100.5,fixedNow);
+assert.equal(lifecycle.signal.status,'tp1','an earlier minute TP touch must not be lost when the latest minute no longer touches it');
+assert.deepEqual(lifecycle.events.map(item=>item.event),['tp1']);
+assert.equal(lifecycle.signal.lastProcessedBarTs,fixedNow-2*60000);
+
+const ambiguous=updateSignalLifecycleAcrossBars(lifecycleSignal,[
+  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:101}
+],101,fixedNow);
+assert.equal(ambiguous.signal.status,'stopped','SL must win conservatively when one minute touches target and stop');
+
+assert.equal((await sendTelegramText({},'test')).error,'telegram_not_configured');
+const telegramStore=new Map();
+const telegramKv={
+  get:async (key,type)=>{
+    const value=telegramStore.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  },
+  put:async (key,value)=>telegramStore.set(key,value),
+  list:async ({prefix})=>({keys:[...telegramStore.keys()].filter(key=>key.startsWith(prefix)).map(name=>({name})),list_complete:true})
+};
+globalThis.fetch=async ()=>({ok:false,status:401,json:async()=>({ok:false,description:'Unauthorized'})});
+const pendingDelivery=await queueTelegramDelivery({GSX_KV:telegramKv,TELEGRAM_TOKEN:'invalid',TELEGRAM_CHAT:'chat'},lifecycleSignal,'created','test');
+assert.equal(pendingDelivery.status,'pending');
+assert.equal(pendingDelivery.attempts,1);
+assert.equal(pendingDelivery.lastError,'invalid_bot_token');
+globalThis.fetch=async ()=>({ok:true,status:200,json:async()=>({ok:true})});
+const sentDelivery=await queueTelegramDelivery({GSX_KV:telegramKv,TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'},lifecycleSignal,'created','test');
+assert.equal(sentDelivery.status,'sent');
+assert.equal(sentDelivery.attempts,2);
+globalThis.fetch=originalFetch;
+
 const storedSignal={...serverSignal,id:'test-signal',createdAt:fixedNow,updatedAt:Date.now(),status:'active',tp1Hit:false,lastPrice:serverSignal.entry,signalBarTs:serverSignal.lastTs};
 const snapshotResponse=await worker.default.fetch(new Request('https://example.com/signals?tf=1m'),{
   ALLOW_ORIGINS:'["https://skyeagle123.github.io"]',
@@ -170,7 +215,6 @@ assert.equal(fallbackArabic.items[0].summaryAr, brief.items[0].reason);
 
 const legacyBrief = { ...brief, updatedAt: Date.now() - 2 * 60 * 60 * 1000 };
 let upgradedCache = null;
-const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => ({ ok: false, status: 503 });
 const upgraded = await getGoldNewsBrief({
   GSX_KV: {

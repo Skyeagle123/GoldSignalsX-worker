@@ -21,7 +21,9 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.27.6';
+const APP_VERSION = '2026.08.28.1';
+const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
+const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -274,11 +276,12 @@ export default {
 
       if (path === '/diagnostics') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
-        const [cycle,history]=await Promise.all([
+        const [cycle,history,telegram]=await Promise.all([
           readKvJson(env,'system:signal-cycle'),
-          readKvJson(env,'system:history-status')
+          readKvJson(env,'system:history-status'),
+          readTelegramDiagnostics(env)
         ]);
-        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history},corsHeaders);
+        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram},corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -406,7 +409,8 @@ export default {
       }
 
       if (path === '/notify') {
-        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'notify');
+        // This endpoint can only re-send the current official server signal, never arbitrary text.
+        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'notify', false);
         if (denied) return denied;
         const out = await handleNotify(req, env);
         const code = out.ok ? 200 : 502;
@@ -458,6 +462,8 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
   }
   const newsPromise=getGoldNewsBrief(env,{notify:true});
   tasks.push(newsPromise);
+  tasks.push(processTelegramOutbox(env));
+  tasks.push(refreshTelegramHealth(env));
   const historyPromise=isTwelveDataConfigured(env)
     ? backfillTwelveDataHistory(env)
     : backfillSignalRollups(env);
@@ -547,11 +553,17 @@ async function readKvJson(env,key) {
 async function readSignalSnapshot(env,tf=null) {
   if (!env.GSX_KV) return {ok:false,error:'signals_storage_unavailable'};
   const timeframes=tf?[tf]:SIGNAL_TIMEFRAMES;
-  const rows=await Promise.all(timeframes.map(async frame=>({
-    tf:frame,
-    state:await readKvJson(env,`signal:state:${frame}`),
-    evaluation:await readKvJson(env,`signal:evaluation:${frame}`)
-  })));
+  const rows=await Promise.all(timeframes.map(async frame=>{
+    const state=await readKvJson(env,`signal:state:${frame}`);
+    const telegram=state?.id
+      ? await readKvJson(env,telegramDeliveryKey(state.id,'created'))
+      : null;
+    return {
+      tf:frame,
+      state:state?{...state,telegram:publicTelegramDelivery(telegram)}:null,
+      evaluation:await readKvJson(env,`signal:evaluation:${frame}`)
+    };
+  }));
   return {
     ok:true,
     updatedAt:Math.max(0,...rows.map(row=>Number(row.evaluation?.evaluatedAt||row.state?.updatedAt||0))),
@@ -586,8 +598,9 @@ function signalExpiryMs(tf) {
 
 function updateSignalLifecycle(signal,bar,livePrice,now) {
   if (!signal||!['active','tp1'].includes(signal.status)) return signal;
-  const high=Math.max(Number(bar?.h)||-Infinity,Number(livePrice)||-Infinity);
-  const low=Math.min(Number(bar?.l)||Infinity,Number(livePrice)||Infinity);
+  const barHigh=Number(bar?.h),barLow=Number(bar?.l),price=Number(livePrice);
+  const high=Math.max(Number.isFinite(barHigh)?barHigh:-Infinity,Number.isFinite(price)?price:-Infinity);
+  const low=Math.min(Number.isFinite(barLow)?barLow:Infinity,Number.isFinite(price)?price:Infinity);
   let status=signal.status;
   if (signal.side==='buy') {
     if (low<=signal.sl) status='stopped';
@@ -601,9 +614,32 @@ function updateSignalLifecycle(signal,bar,livePrice,now) {
   if (status===signal.status&&now-signal.createdAt>signalExpiryMs(signal.tf)) status='expired';
   return {
     ...signal,status,tp1Hit:signal.tp1Hit||status==='tp1'||status==='tp2',
-    lastPrice:Number(livePrice),updatedAt:now,
+    lastPrice:Number.isFinite(price)?price:Number(signal.lastPrice),updatedAt:now,
     ...(['tp2','stopped','expired'].includes(status)?{closedAt:now,closedBarTs:Number(bar?.t||now)}:{})
   };
+}
+
+function updateSignalLifecycleAcrossBars(signal,bars,livePrice,now) {
+  let current={...signal};
+  const events=[];
+  const after=Number(current.lastProcessedBarTs||current.signalBarTs||0);
+  const pending=(Array.isArray(bars)?bars:[])
+    .filter(bar=>Number(bar?.t)>after)
+    .sort((a,b)=>Number(a.t)-Number(b.t));
+  for (const bar of pending) {
+    const previous=current.status;
+    const eventAt=Math.min(now,Number(bar.t)+60_000);
+    current=updateSignalLifecycle(current,bar,Number(bar.c),eventAt);
+    current.lastProcessedBarTs=Number(bar.t);
+    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
+    if (!['active','tp1'].includes(current.status)) break;
+  }
+  if (['active','tp1'].includes(current.status)) {
+    const previous=current.status;
+    current=updateSignalLifecycle(current,null,livePrice,now);
+    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
+  }
+  return {signal:current,events};
 }
 
 function signalTelegramText(signal,event='created') {
@@ -627,8 +663,7 @@ async function saveSignalState(env,signal,event) {
   await env.GSX_KV.put(`signal:state:${signal.tf}`,JSON.stringify(signal),{expirationTtl:90*24*60*60});
   await env.GSX_KV.put(`signal:log:${signal.id}:${event}`,JSON.stringify({...signal,event}),{expirationTtl:90*24*60*60});
   if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
-    const sent=await sendTelegramText(env,signalTelegramText(signal,event));
-    if (!sent.ok) console.error(JSON.stringify({message:'signal telegram failed',tf:signal.tf,event,status:sent.status||0}));
+    await queueTelegramDelivery(env,signal,event,signalTelegramText(signal,event));
   }
 }
 
@@ -642,15 +677,19 @@ async function runSignalCycle(env,news) {
     const bars=await d1Bars(env,tf,limits[tf],{allowLegacy:false})||[];
     frames[tf]={tf,bars,quality:evaluateCandleQuality(bars,tf),provider:String(bars.at(-1)?.provider||'')};
   }));
-  const trackingBar=frames['1m'].bars.at(-1);
+  const trackingBars=frames['1m'].bars;
   const now=Date.now();
 
   for (const tf of SIGNAL_TIMEFRAMES) {
     const existing=await readKvJson(env,`signal:state:${tf}`);
     if (existing&&['active','tp1'].includes(existing.status)) {
-      const updated=updateSignalLifecycle(existing,trackingBar,live.price,now);
-      if (updated.status!==existing.status) await saveSignalState(env,updated,updated.status);
-      else await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(updated),{expirationTtl:90*24*60*60});
+      const lifecycle=updateSignalLifecycleAcrossBars(existing,trackingBars,live.price,now);
+      for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event);
+      if (!lifecycle.events.length) {
+        await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(lifecycle.signal),{expirationTtl:90*24*60*60});
+      } else if (JSON.stringify(lifecycle.events.at(-1).signal)!==JSON.stringify(lifecycle.signal)) {
+        await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(lifecycle.signal),{expirationTtl:90*24*60*60});
+      }
       continue;
     }
 
@@ -668,7 +707,8 @@ async function runSignalCycle(env,news) {
     const signal={
       id,tf,side:result.side,entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
       conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
-      signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
+      signalBarTs,lastProcessedBarTs:signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
+      origin:'server',
       provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral'
     };
     await saveSignalState(env,signal,'created');
@@ -690,7 +730,7 @@ function parseAllow(v) {
   } catch { return []; }
 }
 
-async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action) {
+async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action, requireToken=true) {
   if (req.method.toUpperCase() !== 'POST') {
     return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
   }
@@ -699,7 +739,7 @@ async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action
     return json({ ok:false, error:'origin_not_allowed' }, corsHeaders, 403);
   }
   const configuredToken = String(env.GSX_WRITE_TOKEN || '');
-  if (configuredToken) {
+  if (configuredToken&&requireToken) {
     const suppliedToken = String(req.headers.get('x-gsx-write-token') || '');
     if (!(await constantTimeEqual(configuredToken, suppliedToken))) {
       return json({ ok:false, error:'unauthorized' }, corsHeaders, 401);
@@ -1594,38 +1634,163 @@ async function maybeNotifyHighImpactNews(env, brief) {
     item.url,
     'تنبيه: الخبر لا يُستخدم وحده كإشارة تداول.'
   ].join('\n');
-  const sent = await sendTelegramText(env, text);
-  if (sent.ok) await env.GSX_KV.put(key, String(Date.now()), { expirationTtl: 24 * 60 * 60 });
+  const delivery=await queueTelegramDelivery(env,{id:`news:${id}`,tf:'news'},'created',text);
+  if (delivery?.status==='sent') await env.GSX_KV.put(key,String(Date.now()),{expirationTtl:24*60*60});
 }
 
 // ---------- Telegram ----------
+function telegramDeliveryKey(signalId,event) {
+  return `telegram:delivery:${String(signalId)}:${String(event)}`;
+}
+
+function publicTelegramDelivery(record) {
+  if (!record) return null;
+  return {
+    signalId:String(record.signalId||''),tf:String(record.tf||''),event:String(record.event||''),
+    status:String(record.status||'pending'),attempts:Number(record.attempts||0),
+    createdAt:Number(record.createdAt||0),updatedAt:Number(record.updatedAt||0),
+    sentAt:Number(record.sentAt||0),nextAttemptAt:Number(record.nextAttemptAt||0),
+    lastStatus:Number(record.lastStatus||0),lastError:String(record.lastError||'')
+  };
+}
+
+function safeTelegramError(value) {
+  const text=String(value||'telegram_failed').toLowerCase();
+  if (text.includes('chat not found')) return 'chat_not_found';
+  if (text.includes('unauthorized')||text.includes('token')) return 'invalid_bot_token';
+  if (text.includes('blocked')) return 'bot_blocked_by_chat';
+  if (text.includes('timeout')||text.includes('abort')) return 'telegram_timeout';
+  if (text.includes('not configured')||text.includes('missing')) return 'telegram_not_configured';
+  return 'telegram_api_error';
+}
+
 async function sendTelegramText(env, text) {
   const token = env.TELEGRAM_TOKEN;
   const chat = env.TELEGRAM_CHAT;
-  if (!token || !chat) return { ok:false, error:'telegram vars missing' };
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body:JSON.stringify({ chat_id:chat, text:String(text || 'GSX alert') })
-  });
-  const tg = await response.json().catch(() => null);
-  return { ok:response.ok, status:response.status, tg };
+  if (!token || !chat) return {ok:false,status:0,error:'telegram_not_configured'};
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({chat_id:chat,text:String(text||'GSX alert')}),
+      signal:AbortSignal.timeout(10_000)
+    });
+    const body=await response.json().catch(()=>null);
+    return {
+      ok:response.ok&&body?.ok!==false,
+      status:response.status,
+      error:response.ok&&body?.ok!==false?'':safeTelegramError(body?.description||`HTTP ${response.status}`)
+    };
+  } catch (error) {
+    return {ok:false,status:0,error:safeTelegramError(error?.message||error)};
+  }
+}
+
+function telegramRetryDelayMs(attempts) {
+  return Math.min(6*60*60_000,Math.max(60_000,30_000*(2**Math.min(8,Math.max(0,attempts-1)))));
+}
+
+async function persistTelegramDelivery(env,key,record) {
+  if (!env.GSX_KV) return;
+  await Promise.all([
+    env.GSX_KV.put(key,JSON.stringify(record),{expirationTtl:TELEGRAM_DELIVERY_TTL}),
+    env.GSX_KV.put('telegram:last-delivery',JSON.stringify(publicTelegramDelivery(record)),{expirationTtl:TELEGRAM_DELIVERY_TTL})
+  ]);
+}
+
+async function deliverTelegramRecord(env,key,record) {
+  if (!env.GSX_KV||record?.status==='sent') return record;
+  const result=await sendTelegramText(env,record.text);
+  const attempts=Number(record.attempts||0)+1;
+  const updated={
+    ...record,attempts,updatedAt:Date.now(),lastStatus:Number(result.status||0),
+    lastError:result.ok?'':String(result.error||'telegram_api_error'),
+    status:result.ok?'sent':attempts>=TELEGRAM_MAX_ATTEMPTS?'failed':'pending',
+    ...(result.ok?{sentAt:Date.now(),nextAttemptAt:0}:{nextAttemptAt:Date.now()+telegramRetryDelayMs(attempts)})
+  };
+  await persistTelegramDelivery(env,key,updated);
+  if (!result.ok) console.error(JSON.stringify({message:'telegram delivery failed',signalId:record.signalId,event:record.event,attempts,status:result.status||0,error:updated.lastError}));
+  return updated;
+}
+
+async function queueTelegramDelivery(env,signal,event,text) {
+  if (!env.GSX_KV) return {ok:false,error:'signals_storage_unavailable'};
+  const key=telegramDeliveryKey(signal.id,event);
+  const existing=await readKvJson(env,key);
+  if (existing?.status==='sent') return existing;
+  const now=Date.now();
+  const record=existing||{
+    signalId:signal.id,tf:signal.tf,event,status:'pending',attempts:0,
+    createdAt:now,updatedAt:now,nextAttemptAt:now,text:String(text||'')
+  };
+  await persistTelegramDelivery(env,key,record);
+  return deliverTelegramRecord(env,key,record);
+}
+
+async function processTelegramOutbox(env) {
+  if (!env.GSX_KV) return;
+  let cursor;
+  let processed=0;
+  do {
+    const page=await env.GSX_KV.list({prefix:'telegram:delivery:',limit:100,...(cursor?{cursor}:{})});
+    for (const item of page.keys||[]) {
+      if (processed>=100) return;
+      const record=await readKvJson(env,item.name);
+      if (record?.status==='pending'&&Number(record.nextAttemptAt||0)<=Date.now()) {
+        await deliverTelegramRecord(env,item.name,record);
+        processed++;
+      }
+    }
+    cursor=page.list_complete?undefined:page.cursor;
+  } while (cursor&&processed<100);
+}
+
+async function refreshTelegramHealth(env) {
+  if (!env.GSX_KV) return;
+  const previous=await readKvJson(env,'telegram:health');
+  if (previous&&Date.now()-Number(previous.checkedAt||0)<60*60_000) return;
+  const token=String(env.TELEGRAM_TOKEN||'');
+  const chat=String(env.TELEGRAM_CHAT||'');
+  const health={tokenConfigured:Boolean(token),chatConfigured:Boolean(chat),botOk:false,chatOk:false,checkedAt:Date.now(),error:''};
+  if (!token||!chat) {
+    health.error='telegram_not_configured';
+  } else {
+    try {
+      const [botResponse,chatResponse]=await Promise.all([
+        fetch(`https://api.telegram.org/bot${token}/getMe`,{signal:AbortSignal.timeout(10_000)}),
+        fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(chat)}`,{signal:AbortSignal.timeout(10_000)})
+      ]);
+      const [botBody,chatBody]=await Promise.all([botResponse.json().catch(()=>null),chatResponse.json().catch(()=>null)]);
+      health.botOk=Boolean(botResponse.ok&&botBody?.ok);
+      health.chatOk=Boolean(chatResponse.ok&&chatBody?.ok);
+      if (!health.botOk||!health.chatOk) health.error=safeTelegramError(botBody?.description||chatBody?.description||'telegram_api_error');
+    } catch (error) {
+      health.error=safeTelegramError(error?.message||error);
+    }
+  }
+  await env.GSX_KV.put('telegram:health',JSON.stringify(health),{expirationTtl:7*24*60*60});
+}
+
+async function readTelegramDiagnostics(env) {
+  const [health,lastDelivery]=await Promise.all([
+    readKvJson(env,'telegram:health'),readKvJson(env,'telegram:last-delivery')
+  ]);
+  return {
+    tokenConfigured:Boolean(env.TELEGRAM_TOKEN),chatConfigured:Boolean(env.TELEGRAM_CHAT),
+    health,lastDelivery
+  };
 }
 
 async function handleNotify(req, env) {
-  const token = env.TELEGRAM_TOKEN;
-  const chat = env.TELEGRAM_CHAT;
-  if (!token || !chat) return { ok: false, error: 'telegram vars missing' };
-
-  let text = 'GSX alert';
-  if (req.method === 'POST') {
-    try { const b = await req.json(); if (b && b.text) text = String(b.text); } catch {}
-  } else {
-    const url = new URL(req.url);
-    text = url.searchParams.get('text') || url.searchParams.get('message') || text;
-  }
-
-  return sendTelegramText(env, text);
+  if (!env.GSX_KV) return {ok:false,error:'signals_storage_unavailable'};
+  const body=await readJsonBody(req,2048);
+  const tf=String(body?.tf||'');
+  const signalId=String(body?.signalId||'');
+  if (!SIGNAL_TIMEFRAMES.includes(tf)||!signalId) return {ok:false,error:'official_signal_required'};
+  const signal=await readKvJson(env,`signal:state:${tf}`);
+  if (!signal||signal.id!==signalId||!['active','tp1'].includes(signal.status)) return {ok:false,error:'official_signal_not_active'};
+  const delivery=await queueTelegramDelivery(env,signal,'manual',signalTelegramText(signal,'created'));
+  return {ok:delivery?.status==='sent',delivery:publicTelegramDelivery(delivery),error:delivery?.lastError||''};
 }
 
 // ---------- D1 ensure ----------
@@ -1736,4 +1901,8 @@ async function upsertCompletedBarRollups(env,bar) {
   await env.GSX_DB.batch(statements);
 }
 
-export { applyArabicNewsEnrichment, buildNewsBrief, classifyNewsArticle, enrichNewsBriefArabic, getGoldNewsBrief, parseGdeltSeenDate, parseTwelveDataTimeSeries };
+export {
+  applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
+  parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
+  updateSignalLifecycleAcrossBars
+};
