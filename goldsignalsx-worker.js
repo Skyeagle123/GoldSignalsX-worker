@@ -1657,8 +1657,11 @@ function publicTelegramDelivery(record) {
 function safeTelegramError(value) {
   const text=String(value||'telegram_failed').toLowerCase();
   if (text.includes('chat not found')) return 'chat_not_found';
+  if (text.includes("can't initiate")||text.includes('cannot initiate')||text.includes('start the bot')) return 'chat_not_started';
+  if (text.includes('user is deactivated')) return 'chat_unavailable';
   if (text.includes('unauthorized')||text.includes('token')) return 'invalid_bot_token';
   if (text.includes('blocked')) return 'bot_blocked_by_chat';
+  if (text.includes('forbidden')) return 'telegram_forbidden';
   if (text.includes('timeout')||text.includes('abort')) return 'telegram_timeout';
   if (text.includes('not configured')||text.includes('missing')) return 'telegram_not_configured';
   return 'telegram_api_error';
