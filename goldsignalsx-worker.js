@@ -1747,10 +1747,14 @@ async function processTelegramOutbox(env) {
 
 async function refreshTelegramHealth(env) {
   if (!env.GSX_KV) return;
-  const previous=await readKvJson(env,'telegram:health');
-  if (previous&&Date.now()-Number(previous.checkedAt||0)<60*60_000) return;
   const token=String(env.TELEGRAM_TOKEN||'');
   const chat=String(env.TELEGRAM_CHAT||'');
+  const previous=await readKvJson(env,'telegram:health');
+  const configurationChanged=previous&&(
+    Boolean(previous.tokenConfigured)!==Boolean(token)||
+    Boolean(previous.chatConfigured)!==Boolean(chat)
+  );
+  if (previous&&!configurationChanged&&Date.now()-Number(previous.checkedAt||0)<60*60_000) return;
   const health={tokenConfigured:Boolean(token),chatConfigured:Boolean(chat),botOk:false,chatOk:false,checkedAt:Date.now(),error:''};
   if (!token||!chat) {
     health.error='telegram_not_configured';
