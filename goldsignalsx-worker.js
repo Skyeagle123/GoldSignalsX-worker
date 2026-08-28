@@ -10,7 +10,7 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
-//   POST/GET /notify              → Telegram (TELEGRAM_TOKEN/CHAT)
+//   POST /notify                  → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
 //
 // Env:
@@ -20,8 +20,9 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
+//   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.28.2';
+const APP_VERSION = '2026.08.28.3';
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -213,7 +214,8 @@ export default {
           primaryProvider: centralFeedConfigured ? 'twelve-data' : (isOandaConfigured(env) ? 'oanda' : 'fallback'),
           oandaConfigured: isOandaConfigured(env),
           twelveDataConfigured: isTwelveDataConfigured(env),
-          centralFeedConfigured
+          centralFeedConfigured,
+          writeAuthConfigured: Boolean(String(env.GSX_WRITE_TOKEN || '').trim())
         }, corsHeaders);
       }
 
@@ -410,7 +412,7 @@ export default {
 
       if (path === '/notify') {
         // This endpoint can only re-send the current official server signal, never arbitrary text.
-        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'notify', false);
+        const denied = await enforceWriteRequest(req, env, allow, corsHeaders, 'notify');
         if (denied) return denied;
         const out = await handleNotify(req, env);
         const code = out.ok ? 200 : 502;
@@ -731,7 +733,7 @@ function parseAllow(v) {
   } catch { return []; }
 }
 
-async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action, requireToken=true) {
+async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action) {
   if (req.method.toUpperCase() !== 'POST') {
     return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
   }
@@ -739,12 +741,13 @@ async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action
   if (!origin || (!allowedOrigins.includes('*') && !allowedOrigins.includes(origin))) {
     return json({ ok:false, error:'origin_not_allowed' }, corsHeaders, 403);
   }
-  const configuredToken = String(env.GSX_WRITE_TOKEN || '');
-  if (configuredToken&&requireToken) {
-    const suppliedToken = String(req.headers.get('x-gsx-write-token') || '');
-    if (!(await constantTimeEqual(configuredToken, suppliedToken))) {
-      return json({ ok:false, error:'unauthorized' }, corsHeaders, 401);
-    }
+  const configuredToken = String(env.GSX_WRITE_TOKEN || '').trim();
+  if (!configuredToken) {
+    return json({ ok:false, error:'write_auth_not_configured' }, corsHeaders, 503);
+  }
+  const suppliedToken = String(req.headers.get('x-gsx-write-token') || '');
+  if (!(await constantTimeEqual(configuredToken, suppliedToken))) {
+    return json({ ok:false, error:'unauthorized' }, corsHeaders, 401);
   }
   if (env.GSX_KV) {
     const ip = req.headers.get('CF-Connecting-IP') || 'unknown';

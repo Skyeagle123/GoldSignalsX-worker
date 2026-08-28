@@ -3,6 +3,18 @@ import fs from 'node:fs/promises';
 
 const originalFetch=globalThis.fetch;
 
+if (typeof globalThis.crypto.subtle.timingSafeEqual !== 'function') {
+  Object.defineProperty(globalThis.crypto.subtle, 'timingSafeEqual', {
+    value(left, right) {
+      const a=new Uint8Array(left),b=new Uint8Array(right);
+      if (a.byteLength!==b.byteLength) return false;
+      let diff=0;
+      for (let i=0;i<a.byteLength;i++) diff|=a[i]^b[i];
+      return diff===0;
+    }
+  });
+}
+
 const source = await fs.readFile(new URL('./goldsignalsx-worker.js', import.meta.url), 'utf8');
 const signalEngineUrl = new URL('./signal-engine.js', import.meta.url).href;
 const testSource = source.replace(
@@ -127,6 +139,75 @@ await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD
 assert.equal(persistedBars.length, 1, 'one completed minute must be persisted');
 assert.deepEqual(persistedBars[0].slice(1,5), [4600,4602,4600,4602], 'OHLC must be built from the shared live stream');
 
+const allowedOrigin='https://skyeagle123.github.io';
+const writeToken='unit-test-write-token';
+let unauthorizedWrites=0;
+const rejectWritesKv={
+  get:async()=>null,
+  put:async()=>{ unauthorizedWrites+=1; throw new Error('unauthorized mutation'); }
+};
+const unauthorizedWriteCases=[
+  {path:'/import.csv?tf=1m',body:'time,o,h,l,c,v\n2026-08-28T00:00:00Z,1,2,1,2,1',contentType:'text/csv'},
+  {path:'/notify',body:JSON.stringify({tf:'1m',signalId:'not-authorized'}),contentType:'application/json'},
+  {path:'/decision',body:JSON.stringify({decision:'not-authorized'}),contentType:'application/json'}
+];
+for (const testCase of unauthorizedWriteCases) {
+  const response=await worker.default.fetch(new Request(`https://example.com${testCase.path}`,{
+    method:'POST',
+    headers:{Origin:allowedOrigin,'content-type':testCase.contentType},
+    body:testCase.body
+  }),{
+    ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),
+    GSX_WRITE_TOKEN:writeToken,
+    GSX_KV:rejectWritesKv,
+    GSX_DB:fakeDb
+  },{});
+  assert.equal(response.status,401,`${testCase.path}: missing write token must be rejected`);
+  assert.equal((await response.json()).error,'unauthorized');
+}
+assert.equal(unauthorizedWrites,0,'rejected write requests must not touch KV, D1, or Telegram');
+
+const wrongTokenResponse=await worker.default.fetch(new Request('https://example.com/decision',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':'wrong-token'},
+  body:'{}'
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:rejectWritesKv
+},{});
+assert.equal(wrongTokenResponse.status,401,'an incorrect write token must be rejected');
+assert.equal(unauthorizedWrites,0,'an incorrect token must be rejected before rate-limit storage');
+
+const missingSecretResponse=await worker.default.fetch(new Request('https://example.com/decision',{
+  method:'POST',headers:{Origin:allowedOrigin,'content-type':'application/json'},body:'{}'
+}),{ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:rejectWritesKv},{});
+assert.equal(missingSecretResponse.status,503,'write endpoints must fail closed when the secret is absent');
+assert.equal((await missingSecretResponse.json()).error,'write_auth_not_configured');
+
+const authorizedStore=new Map();
+const authorizedKv={
+  get:async key=>authorizedStore.get(key)??null,
+  put:async (key,value)=>authorizedStore.set(key,value)
+};
+const authorizedDecision=await worker.default.fetch(new Request('https://example.com/decision',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken},
+  body:JSON.stringify({decision:'authorized-test'})
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:authorizedKv
+},{});
+assert.equal(authorizedDecision.status,200,'an authorized decision write must succeed');
+assert.ok([...authorizedStore.keys()].some(key=>key.startsWith('dec:')),'authorized decision must be persisted');
+
+const authorizedImport=await worker.default.fetch(new Request('https://example.com/import.csv?tf=1m',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'text/csv','x-gsx-write-token':writeToken},
+  body:'time,o,h,l,c,v\n2026-08-28T00:00:00Z,4600,4602,4599,4601,3'
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:authorizedKv,GSX_DB:fakeDb
+},{});
+assert.equal(authorizedImport.status,200,'an authorized CSV import must succeed');
+assert.equal((await authorizedImport.json()).imported,1);
+
 function makeTrend(direction,count,stepMs,end) {
   const rows=[];
   let price=direction==='up'?2400:2600;
@@ -161,7 +242,8 @@ assert.ok(serverSignal.conf>=60);
 const lifecycleSignal={
   id:'1m:test:buy',tf:'1m',side:'buy',entry:100,tp1:101,tp2:102,sl:99,
   signalBarTs:fixedNow-4*60000,lastProcessedBarTs:fixedNow-4*60000,
-  createdAt:fixedNow-4*60000,updatedAt:fixedNow-4*60000,status:'active',tp1Hit:false,lastPrice:100
+  createdAt:fixedNow-4*60000,updatedAt:fixedNow-4*60000,status:'active',tp1Hit:false,lastPrice:100,
+  conf:80,reasons:['authorized test signal']
 };
 const lifecycle=updateSignalLifecycleAcrossBars(lifecycleSignal,[
   {t:fixedNow-3*60000,o:100,h:101.2,l:99.5,c:100.8},
@@ -195,6 +277,17 @@ globalThis.fetch=async ()=>({ok:true,status:200,json:async()=>({ok:true})});
 const sentDelivery=await queueTelegramDelivery({GSX_KV:telegramKv,TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'},lifecycleSignal,'created','test');
 assert.equal(sentDelivery.status,'sent');
 assert.equal(sentDelivery.attempts,2);
+telegramStore.set('signal:state:1m',JSON.stringify(lifecycleSignal));
+const authorizedNotify=await worker.default.fetch(new Request('https://example.com/notify',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken},
+  body:JSON.stringify({tf:'1m',signalId:lifecycleSignal.id})
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:telegramKv,
+  TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'
+},{});
+assert.equal(authorizedNotify.status,200,'an authorized official-signal notification must succeed');
+assert.equal((await authorizedNotify.json()).ok,true);
 globalThis.fetch=originalFetch;
 
 const storedSignal={...serverSignal,id:'test-signal',createdAt:fixedNow,updatedAt:Date.now(),status:'active',tp1Hit:false,lastPrice:serverSignal.entry,signalBarTs:serverSignal.lastTs};
