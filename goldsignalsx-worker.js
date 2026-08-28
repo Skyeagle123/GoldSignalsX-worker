@@ -1750,12 +1750,14 @@ async function refreshTelegramHealth(env) {
   const token=String(env.TELEGRAM_TOKEN||'');
   const chat=String(env.TELEGRAM_CHAT||'');
   const previous=await readKvJson(env,'telegram:health');
-  const configurationChanged=previous&&(
-    Boolean(previous.tokenConfigured)!==Boolean(token)||
-    Boolean(previous.chatConfigured)!==Boolean(chat)
-  );
-  if (previous&&!configurationChanged&&Date.now()-Number(previous.checkedAt||0)<60*60_000) return;
-  const health={tokenConfigured:Boolean(token),chatConfigured:Boolean(chat),botOk:false,chatOk:false,checkedAt:Date.now(),error:''};
+  const configurationFingerprint=(token||chat)?await hashNewsId(`${token}\u0000${chat}`):'';
+  const configurationChanged=previous&&String(previous.configurationFingerprint||'')!==configurationFingerprint;
+  const refreshAfterMs=previous?.error?5*60_000:60*60_000;
+  if (previous&&!configurationChanged&&Date.now()-Number(previous.checkedAt||0)<refreshAfterMs) return;
+  const health={
+    tokenConfigured:Boolean(token),chatConfigured:Boolean(chat),botOk:false,chatOk:false,
+    checkedAt:Date.now(),error:'',configurationFingerprint
+  };
   if (!token||!chat) {
     health.error='telegram_not_configured';
   } else {
@@ -1779,9 +1781,10 @@ async function readTelegramDiagnostics(env) {
   const [health,lastDelivery]=await Promise.all([
     readKvJson(env,'telegram:health'),readKvJson(env,'telegram:last-delivery')
   ]);
+  const {configurationFingerprint:_configurationFingerprint,...publicHealth}=health||{};
   return {
     tokenConfigured:Boolean(env.TELEGRAM_TOKEN),chatConfigured:Boolean(env.TELEGRAM_CHAT),
-    health,lastDelivery
+    health:health?publicHealth:null,lastDelivery
   };
 }
 
