@@ -14,7 +14,7 @@ const { computeServerSignal, evaluateCandleQuality } = await import(signalEngine
 const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars
+  updateSignalLifecycleAcrossBars,closedBarsOnly
 } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
@@ -29,6 +29,26 @@ const historyRows=parseTwelveDataTimeSeries({values:[
 assert.equal(historyRows.length,2);
 assert.equal(historyRows[0].t,Date.UTC(2026,7,27,10,0));
 assert.equal(historyRows[1].provider,'twelve-data');
+
+const signalFrameMinutes={ '1m':1,'5m':5,'15m':15,'30m':30,'60m':60,'240m':240,'1d':1440 };
+for (const [tf,minutes] of Object.entries(signalFrameMinutes)) {
+  const duration=minutes*60_000;
+  const openAt=Date.UTC(2026,7,28,0,0);
+  const bars=[
+    {t:openAt-duration,o:1,h:2,l:1,c:2,v:1},
+    {t:openAt,o:2,h:3,l:2,c:3,v:1}
+  ];
+  assert.deepEqual(
+    closedBarsOnly(bars,tf,openAt+duration-1).map(bar=>bar.t),
+    [bars[0].t],
+    `${tf}: the current open candle must be excluded from signal inputs`
+  );
+  assert.equal(
+    closedBarsOnly(bars,tf,openAt+duration).length,
+    2,
+    `${tf}: a candle must become eligible exactly at its close time`
+  );
+}
 
 const bullish = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates and dollar falls',

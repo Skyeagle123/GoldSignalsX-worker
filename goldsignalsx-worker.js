@@ -21,7 +21,7 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 
-const APP_VERSION = '2026.08.28.1';
+const APP_VERSION = '2026.08.28.2';
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -673,12 +673,13 @@ async function runSignalCycle(env,news) {
   if (!live) return;
   const limits={'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60};
   const frames={};
+  const now=Date.now();
   await Promise.all(SIGNAL_TIMEFRAMES.map(async tf=>{
-    const bars=await d1Bars(env,tf,limits[tf],{allowLegacy:false})||[];
+    const storedBars=await d1Bars(env,tf,limits[tf],{allowLegacy:false})||[];
+    const bars=closedBarsOnly(storedBars,tf,now);
     frames[tf]={tf,bars,quality:evaluateCandleQuality(bars,tf),provider:String(bars.at(-1)?.provider||'')};
   }));
   const trackingBars=frames['1m'].bars;
-  const now=Date.now();
 
   for (const tf of SIGNAL_TIMEFRAMES) {
     const existing=await readKvJson(env,`signal:state:${tf}`);
@@ -1130,6 +1131,10 @@ function toIsoMs(date, time) { if (!date || !time) return null; const d = new Da
 // ---------- OHLC / CSV ----------
 const TF = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60, '240m': 240, '4h': 240, '1d': 1440 };
 function tfToMin(tf) { if (TF[tf]) return TF[tf]; throw new Error('bad tf'); }
+function closedBarsOnly(bars,tf,now=Date.now()) {
+  const duration=tfToMin(tf)*60_000;
+  return (Array.isArray(bars)?bars:[]).filter(bar=>Number.isFinite(Number(bar?.t))&&Number(bar.t)+duration<=now);
+}
 function bucket(ts, min) { return Math.floor(ts / (min * 60000)) * (min * 60000); }
 function parseLimit(value, fallback, max) {
   const n = Number.parseInt(value || '', 10);
@@ -1914,5 +1919,5 @@ async function upsertCompletedBarRollups(env,bar) {
 export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars
+  updateSignalLifecycleAcrossBars,closedBarsOnly
 };
