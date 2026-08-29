@@ -253,6 +253,36 @@ assert.equal(lifecycle.signal.status,'tp1','an earlier minute TP touch must not 
 assert.deepEqual(lifecycle.events.map(item=>item.event),['tp1']);
 assert.equal(lifecycle.signal.lastProcessedBarTs,fixedNow-2*60000);
 
+const issuedMidMinute={
+  ...lifecycleSignal,
+  createdAt:fixedNow-150000,
+  updatedAt:fixedNow-150000
+};
+const ignoresPreSignalTouches=updateSignalLifecycleAcrossBars(issuedMidMinute,[
+  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:100.4},
+  {t:fixedNow-2*60000,o:100.4,h:100.8,l:99.4,c:100.5}
+],100.5,fixedNow);
+assert.equal(ignoresPreSignalTouches.signal.status,'active','TP/SL touches in a minute that began before signal issuance must be ignored');
+assert.deepEqual(ignoresPreSignalTouches.events,[]);
+
+const tracksPostSignalBar=updateSignalLifecycleAcrossBars(issuedMidMinute,[
+  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:100.4},
+  {t:fixedNow-2*60000,o:100.4,h:101.2,l:99.4,c:101}
+],100.5,fixedNow);
+assert.equal(tracksPostSignalBar.signal.status,'tp1','a TP touch in a minute that began after signal issuance must be counted');
+assert.deepEqual(tracksPostSignalBar.events.map(item=>item.event),['tp1']);
+
+const tracksPostSignalLivePrice=updateSignalLifecycleAcrossBars(issuedMidMinute,[
+  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:100.4}
+],102.1,fixedNow);
+assert.equal(tracksPostSignalLivePrice.signal.status,'tp2','a live-price touch observed after signal issuance must be counted');
+
+const issuedAtMinuteOpen={...lifecycleSignal,createdAt:fixedNow-2*60000,updatedAt:fixedNow-2*60000};
+const exactBoundary=updateSignalLifecycleAcrossBars(issuedAtMinuteOpen,[
+  {t:fixedNow-2*60000,o:100,h:101.2,l:99.5,c:101}
+],100.5,fixedNow);
+assert.equal(exactBoundary.signal.status,'tp1','a candle beginning exactly at signal issuance must be eligible');
+
 const ambiguous=updateSignalLifecycleAcrossBars(lifecycleSignal,[
   {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:101}
 ],101,fixedNow);

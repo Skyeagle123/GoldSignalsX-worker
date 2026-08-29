@@ -22,7 +22,7 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.28.3';
+const APP_VERSION = '2026.08.28.4';
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -625,8 +625,9 @@ function updateSignalLifecycleAcrossBars(signal,bars,livePrice,now) {
   let current={...signal};
   const events=[];
   const after=Number(current.lastProcessedBarTs||current.signalBarTs||0);
+  const trackingStartedAt=Number(current.createdAt||0);
   const pending=(Array.isArray(bars)?bars:[])
-    .filter(bar=>Number(bar?.t)>after)
+    .filter(bar=>Number(bar?.t)>after&&Number(bar.t)>=trackingStartedAt)
     .sort((a,b)=>Number(a.t)-Number(b.t));
   for (const bar of pending) {
     const previous=current.status;
