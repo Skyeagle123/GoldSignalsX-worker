@@ -29,7 +29,7 @@ const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory
+  pruneTickHistory,decideGoldExposure
 } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
@@ -128,7 +128,11 @@ const fakeStorage = {
     : storageValues.get(keys),
   getAlarm: async () => null,
   setAlarm: async () => {},
-  put: async values => Object.entries(values).forEach(([key,value])=>storageValues.set(key,value))
+  put: async values => Object.entries(values).forEach(([key,value])=>storageValues.set(key,value)),
+  transaction: async callback => callback({
+    get:async key=>storageValues.get(key),
+    put:async (key,value)=>storageValues.set(key,value)
+  })
 };
 const fakeCtx = {
   storage: fakeStorage,
@@ -202,6 +206,124 @@ const ticksBody=await ticksResponse.json();
 assert.ok(ticksBody.count>1,'the read endpoint must return historical ticks');
 assert.equal(ticksBody.retentionMs,60*60_000);
 assert.equal(ticksBody.maxTicks,2400);
+
+const exposureNow=Date.UTC(2026,7,31,14,0,0);
+const exposureSignal=(id,tf,side,conf,status='')=>({
+  id,tf,side,conf,status,signalBarTs:exposureNow-60_000,createdAt:exposureNow-1_000
+});
+const simultaneous=decideGoldExposure(null,{
+  now:exposureNow,officialSignals:[],candidates:[
+    exposureSignal('5m-high','5m','sell',90),
+    exposureSignal('15m-low','15m','sell',85),
+    exposureSignal('30m-opposite','30m','buy',84)
+  ]
+});
+assert.equal(simultaneous.decisions.filter(item=>item.decision==='accepted').length,1,'one cycle must accept only one gold exposure');
+assert.equal(simultaneous.decisions.find(item=>item.signalId==='5m-high').decision,'accepted','highest confidence must win');
+assert.equal(simultaneous.decisions.find(item=>item.signalId==='15m-low').decision,'confirmation','same direction must become a confirmation');
+assert.equal(simultaneous.decisions.find(item=>item.signalId==='30m-opposite').decision,'blocked_opposite','opposite direction must be blocked');
+
+const tied=decideGoldExposure(null,{
+  now:exposureNow,officialSignals:[],candidates:[
+    exposureSignal('15m-tie','15m','buy',88),
+    exposureSignal('60m-tie','60m','buy',88)
+  ]
+});
+assert.equal(tied.decisions.find(item=>item.decision==='accepted').signalId,'60m-tie','higher timeframe must win a confidence tie');
+
+const primary=exposureSignal('5m-primary','5m','sell',88,'active');
+const activeState=decideGoldExposure(null,{now:exposureNow,officialSignals:[primary],candidates:[]}).state;
+const sameDirection=decideGoldExposure(activeState,{
+  now:exposureNow+1_000,officialSignals:[primary],candidates:[exposureSignal('15m-confirm','15m','sell',80)]
+});
+assert.equal(sameDirection.decisions[0].decision,'confirmation');
+assert.equal(sameDirection.state.primarySignalId,primary.id);
+const oppositeDirection=decideGoldExposure(activeState,{
+  now:exposureNow+1_000,officialSignals:[primary],candidates:[exposureSignal('30m-block','30m','buy',90)]
+});
+assert.equal(oppositeDirection.decisions[0].decision,'blocked_opposite');
+assert.equal(oppositeDirection.state.primarySignalId,primary.id);
+
+const afterTp1=decideGoldExposure(activeState,{
+  now:exposureNow+2_000,officialSignals:[{...primary,status:'tp1'}],candidates:[exposureSignal('15m-after-tp1','15m','sell',90)]
+});
+assert.equal(afterTp1.state.status,'active','TP1 must keep the exposure active');
+assert.equal(afterTp1.decisions[0].decision,'confirmation','TP1 must not allow another position');
+for (const closedStatus of ['tp2','expired']) {
+  const afterClose=decideGoldExposure(activeState,{
+    now:exposureNow+3_000,officialSignals:[{...primary,status:closedStatus}],
+    candidates:[exposureSignal(`${closedStatus}-new`,'15m','buy',80)]
+  });
+  assert.equal(afterClose.decisions[0].decision,'accepted',`${closedStatus} must release the exposure`);
+  assert.equal(afterClose.state.primarySignalId,`${closedStatus}-new`);
+}
+
+const afterSl=decideGoldExposure(activeState,{
+  now:exposureNow+4_000,officialSignals:[{...primary,status:'stopped'}],
+  candidates:[exposureSignal('sl-blocked','15m','buy',90)]
+});
+assert.equal(afterSl.state.status,'cooldown');
+assert.equal(afterSl.state.cooldownUntil,exposureNow+4_000+30*60_000);
+assert.equal(afterSl.decisions[0].decision,'blocked_cooldown','SL must start a global cooldown');
+const afterCooldown=decideGoldExposure(afterSl.state,{
+  now:afterSl.state.cooldownUntil+1,officialSignals:[],candidates:[exposureSignal('post-cooldown','15m','buy',80)]
+});
+assert.equal(afterCooldown.decisions[0].decision,'accepted','a signal after the 30-minute cooldown may be accepted');
+
+const oneMinuteOnly=decideGoldExposure(null,{
+  now:exposureNow,officialSignals:[],candidates:[exposureSignal('1m-info','1m','sell',99)]
+});
+assert.equal(oneMinuteOnly.state.status,'flat');
+assert.equal(oneMinuteOnly.decisions[0].decision,'informational','1m must never open an exposure');
+const oneMinuteConfirmation=decideGoldExposure(activeState,{
+  now:exposureNow+2_000,officialSignals:[primary],candidates:[exposureSignal('1m-confirm','1m','sell',99)]
+});
+assert.equal(oneMinuteConfirmation.decisions[0].decision,'confirmation','1m may only confirm an active exposure');
+assert.equal(oneMinuteConfirmation.state.primarySignalId,primary.id);
+
+const bootstrapExposure=decideGoldExposure(null,{
+  now:exposureNow,officialSignals:[
+    exposureSignal('legacy-5m','5m','sell',88,'tp1'),
+    exposureSignal('legacy-15m','15m','sell',72,'active'),
+    exposureSignal('legacy-30m','30m','sell',87,'active')
+  ],candidates:[]
+});
+assert.equal(bootstrapExposure.state.primarySignalId,'legacy-5m','existing correlated signals must bootstrap into one primary exposure');
+assert.equal(bootstrapExposure.state.confirmations.length,2,'other existing same-direction signals must become linked confirmations');
+
+function makeTransactionalExposureStorage() {
+  const values=new Map();
+  let tail=Promise.resolve();
+  return {
+    get:async keys=>Array.isArray(keys)
+      ? new Map(keys.filter(key=>values.has(key)).map(key=>[key,values.get(key)]))
+      : values.get(keys),
+    put:async valuesToPut=>Object.entries(valuesToPut).forEach(([key,value])=>values.set(key,value)),
+    getAlarm:async()=>null,setAlarm:async()=>{},
+    transaction(callback) {
+      const run=tail.then(()=>callback({
+        get:async key=>values.get(key),
+        put:async (key,value)=>values.set(key,value)
+      }));
+      tail=run.catch(()=>{});
+      return run;
+    }
+  };
+}
+const atomicStorage=makeTransactionalExposureStorage();
+const atomicCtx={storage:atomicStorage,blockConcurrencyWhile(fn){this.ready=fn();},getWebSockets:()=>[]};
+const atomicFeed=new GoldFeed(atomicCtx,{});
+await atomicCtx.ready;
+const concurrentResults=await Promise.all([
+  atomicFeed.manageGoldExposure({now:exposureNow,officialSignals:[],candidates:[exposureSignal('concurrent-5m','5m','sell',88)]}),
+  atomicFeed.manageGoldExposure({now:exposureNow,officialSignals:[],candidates:[exposureSignal('concurrent-15m','15m','sell',87)]})
+]);
+assert.equal(
+  concurrentResults.flatMap(result=>result.decisions).filter(item=>item.decision==='accepted').length,
+  1,
+  'two concurrent Durable Object admissions must never accept more than one exposure'
+);
+assert.equal((await atomicFeed.goldExposureStatus()).status,'active');
 
 const allowedOrigin='https://skyeagle123.github.io';
 const writeToken='unit-test-write-token';
