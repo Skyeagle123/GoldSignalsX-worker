@@ -165,14 +165,18 @@ const recentTicks=[
   {ts:tickNow-10_000,price:4700.4},
   {ts:tickNow-5_000,price:4700.2}
 ];
-for (const [index,tick] of recentTicks.entries()) {
-  if (index===recentTicks.length-1) feed.lastSnapshotWriteAt=0;
-  await feed.handleProviderMessage(JSON.stringify({
-    event:'price',symbol:'XAU/USD',price:tick.price,timestamp:Math.floor(tick.ts/1000)
-  }));
-}
+feed.tickHistory=[...recentTicks];
+feed.lastSnapshotWriteAt=0;
+const providerMinuteTs=Math.floor(tickNow/60_000)*60_000;
+const receivedBefore=Date.now();
+await feed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:4700.3,timestamp:providerMinuteTs/1000
+}));
+const receivedTick=feed.tickHistory.at(-1);
+assert.ok(receivedTick.ts>=receivedBefore&&receivedTick.ts<=Date.now(),'tick ordering must use actual Worker receipt time');
+assert.notEqual(receivedTick.ts,providerMinuteTs,'provider minute timestamps must not replace actual tick receipt time');
 const signalCreatedAt=tickNow-15_000;
-const tickWindow=await feed.ticks({from:tickNow-25_000,to:tickNow,limit:20});
+const tickWindow=await feed.ticks({from:tickNow-25_000,to:Date.now(),limit:20});
 assert.equal(tickWindow.ok,true);
 assert.ok(tickWindow.ticks.length>1,'tick history must retain more than only the latest tick');
 assert.ok(tickWindow.ticks.every(tick=>Number.isFinite(tick.ts)&&Number.isFinite(tick.price)),'every tick must include timestamp and price');
