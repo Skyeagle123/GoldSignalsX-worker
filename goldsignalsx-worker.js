@@ -1,9 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  HIGHER_SIGNAL_TIMEFRAMES,
   SIGNAL_TIMEFRAMES,
   computeServerSignal,
   evaluateCandleQuality,
-  normalizeSignalFilters
+  normalizeSignalFilters,
+  runServerBacktest,
+  updateSignalLifecycleAcrossBars
 } from './signal-engine.js';
 
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
@@ -15,6 +18,7 @@ import {
 //   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
+//   POST /backtest            → محاكاة read-only بمحرك الإشارات الرسمي
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST /notify                  → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
@@ -28,7 +32,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.5';
+const APP_VERSION = '2026.08.31.6';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -46,6 +50,8 @@ const TELEGRAM_EVENT_PREFIX = 'telegram:event:v2:';
 const TELEGRAM_CURSOR_PREFIX = 'telegram:cursor:v2:';
 const TELEGRAM_EVENT_RANK = Object.freeze({news:0,new_signal:10,confirmation:20,tp1:30,tp2:40,sl:40,expired:40});
 const MAX_BARS_LIMIT = 5000;
+const MAX_BACKTEST_BARS = 12000;
+const MAX_BACKTEST_BODY_BYTES = 2 * 1024 * 1024;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
 const NEWS_CACHE_MS = 15 * 60 * 1000;
@@ -707,6 +713,34 @@ export default {
         return jsonNoStore(brief, corsHeaders, brief.ok ? 200 : 502);
       }
 
+      if (path === '/backtest') {
+        if (method!=='POST') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        if (origin&&(!allow.includes('*')&&!allow.includes(origin))) {
+          return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
+        }
+        const body=await readJsonBody(req,MAX_BACKTEST_BODY_BYTES);
+        const frames=body?.frames&&typeof body.frames==='object'?body.frames:{};
+        const totalBars=Object.values(frames).reduce(
+          (total,rows)=>total+(Array.isArray(rows)?rows.length:0),0
+        );
+        if (!totalBars||totalBars>MAX_BACKTEST_BARS) {
+          return json({ok:false,error:'bad_backtest_size'},corsHeaders,400);
+        }
+        try {
+          const result=runServerBacktest({
+            tf:String(body.tf||''),frames,filters:body.filters||{},news:body.news||null,
+            startAt:body.startAt??-Infinity,endAt:body.endAt??Infinity,
+            maxEvaluations:Math.min(2000,Math.max(1,Number(body.maxEvaluations)||2000))
+          });
+          return jsonNoStore(result,corsHeaders);
+        } catch (error) {
+          const message=String(error?.message||error);
+          const safe=['bad_backtest_tf','insufficient_backtest_bars'].includes(message)
+            ?message:'invalid_backtest';
+          return json({ok:false,error:safe},corsHeaders,400);
+        }
+      }
+
       if (path === '/signals') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const tf=url.searchParams.get('tf')||'';
@@ -1083,58 +1117,6 @@ async function currentPriceForSignals(env) {
   return {...result.data,receivedAt:Date.now()};
 }
 
-function signalExpiryMs(tf) {
-  const duration=tfToMin(tf)*60_000;
-  return Math.min(7*24*60*60*1000,Math.max(30*60*1000,duration*12));
-}
-
-function updateSignalLifecycle(signal,bar,livePrice,now) {
-  if (!signal||!['active','tp1'].includes(signal.status)) return signal;
-  const barHigh=Number(bar?.h),barLow=Number(bar?.l),price=Number(livePrice);
-  const high=Math.max(Number.isFinite(barHigh)?barHigh:-Infinity,Number.isFinite(price)?price:-Infinity);
-  const low=Math.min(Number.isFinite(barLow)?barLow:Infinity,Number.isFinite(price)?price:Infinity);
-  let status=signal.status;
-  if (signal.side==='buy') {
-    if (low<=signal.sl) status='stopped';
-    else if (high>=signal.tp2) status='tp2';
-    else if (high>=signal.tp1) status='tp1';
-  } else {
-    if (high>=signal.sl) status='stopped';
-    else if (low<=signal.tp2) status='tp2';
-    else if (low<=signal.tp1) status='tp1';
-  }
-  if (status===signal.status&&now-signal.createdAt>signalExpiryMs(signal.tf)) status='expired';
-  return {
-    ...signal,status,tp1Hit:signal.tp1Hit||status==='tp1'||status==='tp2',
-    lastPrice:Number.isFinite(price)?price:Number(signal.lastPrice),updatedAt:now,
-    ...(['tp2','stopped','expired'].includes(status)?{closedAt:now,closedBarTs:Number(bar?.t||now)}:{})
-  };
-}
-
-function updateSignalLifecycleAcrossBars(signal,bars,livePrice,now) {
-  let current={...signal};
-  const events=[];
-  const after=Number(current.lastProcessedBarTs||current.signalBarTs||0);
-  const trackingStartedAt=Number(current.createdAt||0);
-  const pending=(Array.isArray(bars)?bars:[])
-    .filter(bar=>Number(bar?.t)>after&&Number(bar.t)>=trackingStartedAt)
-    .sort((a,b)=>Number(a.t)-Number(b.t));
-  for (const bar of pending) {
-    const previous=current.status;
-    const eventAt=Math.min(now,Number(bar.t)+60_000);
-    current=updateSignalLifecycle(current,bar,Number(bar.c),eventAt);
-    current.lastProcessedBarTs=Number(bar.t);
-    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
-    if (!['active','tp1'].includes(current.status)) break;
-  }
-  if (['active','tp1'].includes(current.status)) {
-    const previous=current.status;
-    current=updateSignalLifecycle(current,null,livePrice,now);
-    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
-  }
-  return {signal:current,events};
-}
-
 function telegramIsoTime(value) {
   const timestamp=Number(value);
   return Number.isFinite(timestamp)&&timestamp>0?new Date(timestamp).toISOString():'غير متاح';
@@ -1223,7 +1205,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     currentSignals[tf]=existing||null;
 
     const frame=frames[tf];
-    const mtf=(HIGHER_SIGNAL_TF[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
+    const mtf=(HIGHER_SIGNAL_TIMEFRAMES[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
     const result=computeServerSignal(frame.bars,{
       tf,mtf,live,barsSource:'d1',news,dataQuality:frame.quality,filters
     });
@@ -1316,11 +1298,6 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     }
   }
 }
-
-const HIGHER_SIGNAL_TF={
-  '1m':['5m','15m'],'5m':['15m','60m'],'15m':['60m','240m'],
-  '30m':['60m','240m'],'60m':['240m'],'240m':[],'1d':[]
-};
 
 // ===== Helpers =====
 function parseAllow(v) {

@@ -1,12 +1,14 @@
 export const SIGNAL_TIMEFRAMES = ['1m','5m','15m','30m','60m','240m','1d'];
-const HIGHER_TF = {
+export const HIGHER_SIGNAL_TIMEFRAMES = Object.freeze({
   '1m':['5m','15m'], '5m':['15m','60m'], '15m':['60m','240m'],
   '30m':['60m','240m'], '60m':['240m'], '240m':[], '1d':[]
-};
-const TF_MS = {
+});
+export const SIGNAL_TF_MS = Object.freeze({
   '1m':60000, '5m':300000, '15m':900000, '30m':1800000,
   '60m':3600000, '240m':14400000, '1d':86400000
-};
+});
+const HIGHER_TF = HIGHER_SIGNAL_TIMEFRAMES;
+const TF_MS = SIGNAL_TF_MS;
 
 export const DEFAULT_SIGNAL_FILTERS = Object.freeze({
   nyFilterOn:true,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:0.7
@@ -85,7 +87,138 @@ function calculateDailyPivots(bars){const days=[];let cur=null;for(const b of ba
 function nearestPivot(price,p){if(!p)return null;return['P','R1','R2','R3','S1','S2','S3'].map(label=>({label,value:p[label],distance:Math.abs(price-p[label])})).sort((a,b)=>a.distance-b.distance)[0]}
 export function marketProfile(bars){const closes=bars.map(b=>b.c),{ma,upper,lower}=calcBB(closes),atr=calcATR(bars).at(-1),{ADX,plusDI,minusDI}=calcADX(bars),i=closes.length-1,C=closes[i],U=upper[i],L=lower[i],M=ma[i],adx=ADX[i],pdi=plusDI[i],mdi=minusDI[i],bw=(U-L)/C*100,atrPct=atr/C*100,slope=ma[i-1]&&M?((M-ma[i-1])/ma[i-1])*100:0,bias=pdi!=null&&mdi!=null?(pdi>mdi?'up':'down'):(slope>0?'up':'down');let state;if(bw<1.2&&atrPct<.5&&(adx==null||adx<22))state='range';else if(bw>1.8&&Math.abs(slope)>.03&&atrPct>.8&&(adx==null||adx>=22))state=`trend-${bias}`;else state=adx!=null&&adx>=22?`trend-${bias}`:'range';return{state,atr,adx,use:{ema:state.startsWith('trend'),macd:state.startsWith('trend'),rsi:true,stoch:!state.startsWith('trend'),bb:!state.startsWith('trend')}}}
 
-export function computeServerSignal(bars,{tf,mtf=[],live={},barsSource,news,dataQuality,filters:signalFilters={}}={}){const filters=normalizeSignalFilters(signalFilters);if(!Array.isArray(bars)||bars.length<40)return{side:'none',tf,reasons:['نحتاج 40 شمعة مكتملة على الأقل']};if(dataQuality?.ok===false)return{side:'none',tf,reasons:[dataQuality.reason||'جودة الشموع غير سليمة']};const closes=bars.map(b=>b.c),highs=bars.map(b=>b.h),lows=bars.map(b=>b.l),prof=marketProfile(bars),use=prof.use,eF=ema(closes,10),eS=ema(closes,34),rsi=calcRSI(closes).at(-1),stA=calcStoch(closes,highs,lows),st=stA.at(-1),stPrev=stA.at(-2),macd=calcMACD(closes),hist=macd.hist.at(-1),histPrev=macd.hist.at(-2),{ma,upper,lower}=calcBB(closes),atr=prof.atr,{ADX,plusDI,minusDI}=calcADX(bars),C=closes.at(-1),ef=eF.at(-1),es=eS.at(-1),adx=ADX.at(-1),pdi=plusDI.at(-1),mdi=minusDI.at(-1),M=ma.at(-1),U=upper.at(-1),L=lower.at(-1),pat=detectPattern(bars),reasons=[],neutral=[];if(!Number.isFinite(atr)||atr<=0)return{side:'none',tf,reasons:['ATR غير صالح']};const lastTs=bars.at(-1).t,maxAge=Math.max(TF_MS[tf]*3,420000);if(Date.now()-lastTs>maxAge)return{side:'none',tf,reasons:['بيانات الشموع قديمة'],lastTs,age:Date.now()-lastTs};const quoteTs=Number(live.ts),recv=Number(live.receivedAt||quoteTs),providerAge=Date.now()-quoteTs,receiptAge=Date.now()-recv;if(receiptAge<0||receiptAge>20000)return{side:'none',tf,reasons:['وصول السعر متوقف/قديم'],receiptAge};if(providerAge < -30000||providerAge>90000)return{side:'none',tf,reasons:['توقيت السوق متأخر'],providerAge};let bull=0,bear=0;const br=[],sr=[];const trendUp=ef>es&&C>ef,trendDown=ef<es&&C<ef;if(use.ema&&trendUp){bull+=2.5;br.push('EMA تؤكد اتجاهاً صاعداً')}if(use.ema&&trendDown){bear+=2.5;sr.push('EMA تؤكد اتجاهاً هابطاً')}if(use.macd&&Number.isFinite(hist)){if(hist>0){bull+=1.25;br.push('زخم MACD موجب')}if(hist<0){bear+=1.25;sr.push('زخم MACD سالب')}if(Number.isFinite(histPrev)&&hist>histPrev)bull+=.35;if(Number.isFinite(histPrev)&&hist<histPrev)bear+=.35}if(Number.isFinite(adx)&&adx>=18&&Number.isFinite(pdi)&&Number.isFinite(mdi)){if(pdi>mdi){bull+=1;br.push(`+DI يتفوّق مع ADX ${adx.toFixed(1)}`)}else{bear+=1;sr.push(`-DI يتفوّق مع ADX ${adx.toFixed(1)}`)}}else neutral.push('ADX ضعيف');if(use.rsi&&Number.isFinite(rsi)){if(rsi>=52&&rsi<70)bull+=.8;else if(rsi<=48&&rsi>30)bear+=.8;else if(rsi>=70||rsi<=30)neutral.push('RSI متطرف')}if(use.stoch&&Number.isFinite(st)&&Number.isFinite(stPrev)){if(st<40&&st>stPrev)bull+=.55;if(st>60&&st<stPrev)bear+=.55}if(use.bb&&Number.isFinite(M))C>M?bull+=.45:bear+=.45;if(use.bb&&Number.isFinite(U)&&C>U)bull+=.35;if(use.bb&&Number.isFinite(L)&&C<L)bear+=.35;if(pat.direction==='bullish'){bull+=pat.strength*2.5;br.push(`${pat.name}: ${pat.detail}`)}else if(pat.direction==='bearish'){bear+=pat.strength*2.5;sr.push(`${pat.name}: ${pat.detail}`)}const last=bars.at(-1),prev=bars.at(-2),range=Math.max(last.h-last.l,Number.EPSILON),body=Math.abs(last.c-last.o),bullC=(last.c>last.o&&body/range>=.52&&last.c>=last.h-range*.2)||last.c>prev.h||pat.direction==='bullish',bearC=(last.c<last.o&&body/range>=.52&&last.c<=last.l+range*.2)||last.c<prev.l||pat.direction==='bearish';if(bullC){bull+=1.15;br.push('إغلاق الشمعة يؤكد ضغطاً شرائياً')}if(bearC){bear+=1.15;sr.push('إغلاق الشمعة يؤكد ضغطاً بيعياً')}let mtfBull=0,mtfBear=0,mtfNeutral=0;for(const f of mtf){const b=timeframeBias(f.bars);if(b.direction==='bullish'){mtfBull++;bull+=1.6+.6*b.strength;br.push(`الإطار ${f.tf} صاعد`)}else if(b.direction==='bearish'){mtfBear++;bear+=1.6+.6*b.strength;sr.push(`الإطار ${f.tf} هابط`)}else mtfNeutral++}let newsBlocked=false;if(news?.ok&&!news.stale){if(news.safety?.blockTechnicalSignal){newsBlocked=true;neutral.unshift(news.safety.reason||'خبر شديد التأثير')}const dir=news.goldBias?.direction,conf=Math.max(0,Math.min(100,Number(news.goldBias?.confidence)||0)),w=Math.min(.9,Math.max(0,(conf-50)/40*.9));if(dir==='bullish'&&w>0){bull+=w;br.push(`الأخبار داعمة للذهب (${conf.toFixed(0)}%)`)}else if(dir==='bearish'&&w>0){bear+=w;sr.push(`الأخبار ضاغطة على الذهب (${conf.toFixed(0)}%)`)}}
+export function computeServerSignal(bars,{tf,mtf=[],live={},barsSource,news,dataQuality,filters:signalFilters={},evaluationAt=Date.now()}={}){const now=Number(evaluationAt);const filters=normalizeSignalFilters(signalFilters);if(!Array.isArray(bars)||bars.length<40)return{side:'none',tf,reasons:['نحتاج 40 شمعة مكتملة على الأقل']};if(dataQuality?.ok===false)return{side:'none',tf,reasons:[dataQuality.reason||'جودة الشموع غير سليمة']};const closes=bars.map(b=>b.c),highs=bars.map(b=>b.h),lows=bars.map(b=>b.l),prof=marketProfile(bars),use=prof.use,eF=ema(closes,10),eS=ema(closes,34),rsi=calcRSI(closes).at(-1),stA=calcStoch(closes,highs,lows),st=stA.at(-1),stPrev=stA.at(-2),macd=calcMACD(closes),hist=macd.hist.at(-1),histPrev=macd.hist.at(-2),{ma,upper,lower}=calcBB(closes),atr=prof.atr,{ADX,plusDI,minusDI}=calcADX(bars),C=closes.at(-1),ef=eF.at(-1),es=eS.at(-1),adx=ADX.at(-1),pdi=plusDI.at(-1),mdi=minusDI.at(-1),M=ma.at(-1),U=upper.at(-1),L=lower.at(-1),pat=detectPattern(bars),reasons=[],neutral=[];if(!Number.isFinite(atr)||atr<=0)return{side:'none',tf,reasons:['ATR غير صالح']};const lastTs=bars.at(-1).t,maxAge=Math.max(TF_MS[tf]*3,420000);if(now-lastTs>maxAge)return{side:'none',tf,reasons:['بيانات الشموع قديمة'],lastTs,age:now-lastTs};const quoteTs=Number(live.ts),recv=Number(live.receivedAt||quoteTs),providerAge=now-quoteTs,receiptAge=now-recv;if(receiptAge<0||receiptAge>20000)return{side:'none',tf,reasons:['وصول السعر متوقف/قديم'],receiptAge};if(providerAge < -30000||providerAge>90000)return{side:'none',tf,reasons:['توقيت السوق متأخر'],providerAge};let bull=0,bear=0;const br=[],sr=[];const trendUp=ef>es&&C>ef,trendDown=ef<es&&C<ef;if(use.ema&&trendUp){bull+=2.5;br.push('EMA تؤكد اتجاهاً صاعداً')}if(use.ema&&trendDown){bear+=2.5;sr.push('EMA تؤكد اتجاهاً هابطاً')}if(use.macd&&Number.isFinite(hist)){if(hist>0){bull+=1.25;br.push('زخم MACD موجب')}if(hist<0){bear+=1.25;sr.push('زخم MACD سالب')}if(Number.isFinite(histPrev)&&hist>histPrev)bull+=.35;if(Number.isFinite(histPrev)&&hist<histPrev)bear+=.35}if(Number.isFinite(adx)&&adx>=18&&Number.isFinite(pdi)&&Number.isFinite(mdi)){if(pdi>mdi){bull+=1;br.push(`+DI يتفوّق مع ADX ${adx.toFixed(1)}`)}else{bear+=1;sr.push(`-DI يتفوّق مع ADX ${adx.toFixed(1)}`)}}else neutral.push('ADX ضعيف');if(use.rsi&&Number.isFinite(rsi)){if(rsi>=52&&rsi<70)bull+=.8;else if(rsi<=48&&rsi>30)bear+=.8;else if(rsi>=70||rsi<=30)neutral.push('RSI متطرف')}if(use.stoch&&Number.isFinite(st)&&Number.isFinite(stPrev)){if(st<40&&st>stPrev)bull+=.55;if(st>60&&st<stPrev)bear+=.55}if(use.bb&&Number.isFinite(M))C>M?bull+=.45:bear+=.45;if(use.bb&&Number.isFinite(U)&&C>U)bull+=.35;if(use.bb&&Number.isFinite(L)&&C<L)bear+=.35;if(pat.direction==='bullish'){bull+=pat.strength*2.5;br.push(`${pat.name}: ${pat.detail}`)}else if(pat.direction==='bearish'){bear+=pat.strength*2.5;sr.push(`${pat.name}: ${pat.detail}`)}const last=bars.at(-1),prev=bars.at(-2),range=Math.max(last.h-last.l,Number.EPSILON),body=Math.abs(last.c-last.o),bullC=(last.c>last.o&&body/range>=.52&&last.c>=last.h-range*.2)||last.c>prev.h||pat.direction==='bullish',bearC=(last.c<last.o&&body/range>=.52&&last.c<=last.l+range*.2)||last.c<prev.l||pat.direction==='bearish';if(bullC){bull+=1.15;br.push('إغلاق الشمعة يؤكد ضغطاً شرائياً')}if(bearC){bear+=1.15;sr.push('إغلاق الشمعة يؤكد ضغطاً بيعياً')}let mtfBull=0,mtfBear=0,mtfNeutral=0;for(const f of mtf){const b=timeframeBias(f.bars);if(b.direction==='bullish'){mtfBull++;bull+=1.6+.6*b.strength;br.push(`الإطار ${f.tf} صاعد`)}else if(b.direction==='bearish'){mtfBear++;bear+=1.6+.6*b.strength;sr.push(`الإطار ${f.tf} هابط`)}else mtfNeutral++}let newsBlocked=false;if(news?.ok&&!news.stale){if(news.safety?.blockTechnicalSignal){newsBlocked=true;neutral.unshift(news.safety.reason||'خبر شديد التأثير')}const dir=news.goldBias?.direction,conf=Math.max(0,Math.min(100,Number(news.goldBias?.confidence)||0)),w=Math.min(.9,Math.max(0,(conf-50)/40*.9));if(dir==='bullish'&&w>0){bull+=w;br.push(`الأخبار داعمة للذهب (${conf.toFixed(0)}%)`)}else if(dir==='bearish'&&w>0){bear+=w;sr.push(`الأخبار ضاغطة على الذهب (${conf.toFixed(0)}%)`)}}
 const leader=bull>=bear?'buy':'sell',score=Math.max(bull,bear),opp=Math.min(bull,bear),margin=score-opp,confirm=leader==='buy'?mtfBull:mtfBear,oppositions=leader==='buy'?mtfBear:mtfBull,candle=leader==='buy'?bullC:bearC,required=Math.min(1,HIGHER_TF[tf].length),sideReasons=leader==='buy'?br:sr;if(score<7.4)neutral.unshift(`النقاط ${score.toFixed(1)} أقل من 7.4`);if(margin<2)neutral.unshift('تعارض واضح');if(!candle)neutral.unshift('لا يوجد إغلاق شمعة مؤكِّد');if(confirm<required)neutral.unshift(`تأكيد MTF غير كافٍ (${confirm}/${required})`);if(oppositions>confirm&&mtf.length)neutral.unshift('الأطر الأعلى تعاكس الإشارة');const nyBlocked=filters.nyFilterOn&&!inNyTradingWindow(live.ts,filters.nyStart,filters.nyEnd);if(nyBlocked)neutral.unshift('خارج جلسة نيويورك');const piv=calculateDailyPivots(bars),near=nearestPivot(C,piv),pivotBlocked=filters.pivotFilterOn&&(!piv||(near&&near.distance<filters.pivotDistance));if(pivotBlocked)neutral.unshift(!piv?'Pivot غير متوفر':`السعر قريب من ${near.label}`);let side=(score>=7.4&&margin>=2&&candle&&confirm>=required&&!(oppositions>confirm&&mtf.length)&&!nyBlocked&&!pivotBlocked&&!newsBlocked)?leader:'none';const livePrice=Number(live.price),gap=Math.abs(livePrice-C),aligned=gap<=Math.max(atr*.75,C*.002),stored=['d1','kv'].includes(barsSource),same=!live.source||!barsSource||live.source===barsSource||(String(live.source).startsWith('gold-ticks')&&barsSource==='gold-ticks'),consistent=same||(stored&&aligned);if(!consistent)neutral.unshift('السعر والشموع غير متوافقين');if(!aligned)neutral.unshift(`فرق السعر الحي عن آخر شمعة كبير (${gap.toFixed(2)}$)`);if(!consistent||!aligned)side='none';if(side==='none')return{side,tf,regime:prof.state,score,bull,bear,mtf:{bull:mtfBull,bear:mtfBear,neutral:mtfNeutral},reasons:[...neutral,...sideReasons.slice(0,3)],lastClose:C,atr,livePrice,lastTs};const entry=livePrice,recent=bars.slice(-6),struct=side==='buy'?Math.min(...recent.map(x=>x.l)):Math.max(...recent.map(x=>x.h)),risk=Math.min(atr*1.8,Math.max(atr,side==='buy'?entry-(struct-atr*.15):(struct+atr*.15)-entry)),sl=side==='buy'?entry-risk:entry+risk,tp1=side==='buy'?entry+risk*1.25:entry-risk*1.25,tp2=side==='buy'?entry+risk*2.1:entry-risk*2.1;let conf=55+(score-7.4)*6+confirm*5+4-Math.max(0,opp-2)*1.5;conf=Math.max(55,Math.min(88,conf));return{side,tf,regime:prof.state,score,bull,bear,mtf:{bull:mtfBull,bear:mtfBear,neutral:mtfNeutral},entry,tp1,tp2,sl,conf,reasons:[...sideReasons,...neutral].slice(0,8),lastClose:C,atr,livePrice,lastTs}}
+
+export function signalExpiryMs(tf) {
+  const duration=TF_MS[tf];
+  return Math.min(7*24*60*60*1000,Math.max(30*60*1000,duration*12));
+}
+
+export function updateSignalLifecycle(signal,bar,livePrice,now) {
+  if (!signal||!['active','tp1'].includes(signal.status)) return signal;
+  const barHigh=Number(bar?.h),barLow=Number(bar?.l),price=Number(livePrice);
+  const high=Math.max(Number.isFinite(barHigh)?barHigh:-Infinity,Number.isFinite(price)?price:-Infinity);
+  const low=Math.min(Number.isFinite(barLow)?barLow:Infinity,Number.isFinite(price)?price:Infinity);
+  let status=signal.status;
+  if (signal.side==='buy') {
+    if (low<=signal.sl) status='stopped';
+    else if (high>=signal.tp2) status='tp2';
+    else if (high>=signal.tp1) status='tp1';
+  } else {
+    if (high>=signal.sl) status='stopped';
+    else if (low<=signal.tp2) status='tp2';
+    else if (low<=signal.tp1) status='tp1';
+  }
+  if (status===signal.status&&now-signal.createdAt>signalExpiryMs(signal.tf)) status='expired';
+  return {
+    ...signal,status,tp1Hit:signal.tp1Hit||status==='tp1'||status==='tp2',
+    lastPrice:Number.isFinite(price)?price:Number(signal.lastPrice),updatedAt:now,
+    ...(['tp2','stopped','expired'].includes(status)?{closedAt:now,closedBarTs:Number(bar?.t||now)}:{})
+  };
+}
+
+export function updateSignalLifecycleAcrossBars(signal,bars,livePrice,now,barDurationMs=60_000) {
+  let current={...signal};
+  const events=[];
+  const after=Number(current.lastProcessedBarTs||current.signalBarTs||0);
+  const trackingStartedAt=Number(current.createdAt||0);
+  const pending=(Array.isArray(bars)?bars:[])
+    .filter(bar=>Number(bar?.t)>after&&Number(bar.t)>=trackingStartedAt)
+    .sort((a,b)=>Number(a.t)-Number(b.t));
+  for (const bar of pending) {
+    const previous=current.status;
+    const eventAt=Math.min(now,Number(bar.t)+barDurationMs);
+    current=updateSignalLifecycle(current,bar,Number(bar.c),eventAt);
+    current.lastProcessedBarTs=Number(bar.t);
+    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
+    if (!['active','tp1'].includes(current.status)) break;
+  }
+  if (['active','tp1'].includes(current.status)) {
+    const previous=current.status;
+    current=updateSignalLifecycle(current,null,livePrice,now);
+    if (current.status!==previous) events.push({event:current.status,signal:{...current}});
+  }
+  return {signal:current,events};
+}
+
+function normalizeBacktestBars(value) {
+  return (Array.isArray(value)?value:[]).map(row=>({
+    t:Number(row?.t),o:Number(row?.o),h:Number(row?.h),l:Number(row?.l),c:Number(row?.c),v:Number(row?.v||0)
+  })).filter(row=>[row.t,row.o,row.h,row.l,row.c].every(Number.isFinite)&&row.h>=row.l)
+    .sort((left,right)=>left.t-right.t);
+}
+
+function closedBacktestBars(bars,tf,evaluationAt) {
+  const duration=TF_MS[tf];
+  return bars.filter(bar=>bar.t+duration<=evaluationAt);
+}
+
+export function runServerBacktest({tf,frames={},filters={},news=null,startAt=-Infinity,endAt=Infinity,maxEvaluations=2000}={}) {
+  if (!SIGNAL_TIMEFRAMES.includes(tf)) throw new Error('bad_backtest_tf');
+  const normalizedFrames=Object.fromEntries(
+    SIGNAL_TIMEFRAMES.map(frame=>[frame,normalizeBacktestBars(frames?.[frame])])
+  );
+  const primary=normalizedFrames[tf];
+  if (primary.length<40) throw new Error('insufficient_backtest_bars');
+  const trackingTf=normalizedFrames['1m'].length?'1m':tf;
+  const trackingBars=normalizedFrames[trackingTf];
+  const normalizedFilters=normalizeSignalFilters(filters);
+  const trades=[];
+  let active=null,activeIndex=-1,evaluations=0;
+
+  for (let index=39;index<primary.length&&evaluations<Math.max(1,Number(maxEvaluations)||1);index++) {
+    const signalBar=primary[index];
+    const evaluationAt=signalBar.t+TF_MS[tf];
+    if (evaluationAt<Number(startAt)||evaluationAt>Number(endAt)) continue;
+    evaluations++;
+
+    if (active&&['active','tp1'].includes(active.status)) {
+      const eligibleTracking=closedBacktestBars(trackingBars,trackingTf,evaluationAt);
+      const lifecycle=updateSignalLifecycleAcrossBars(
+        active,eligibleTracking,NaN,evaluationAt,TF_MS[trackingTf]
+      );
+      active=lifecycle.signal;
+      const record=trades[activeIndex];
+      record.outcome={status:active.status,updatedAt:active.updatedAt,closedAt:Number(active.closedAt||0)};
+      record.events.push(...lifecycle.events.map(item=>({event:item.event,eventAt:item.signal.updatedAt,price:item.signal.lastPrice})));
+      if (['active','tp1'].includes(active.status)) continue;
+      active=null;
+      activeIndex=-1;
+      continue;
+    }
+
+    const bars=closedBacktestBars(primary,tf,evaluationAt);
+    const mtf=(HIGHER_TF[tf]||[]).map(frame=>({
+      tf:frame,bars:closedBacktestBars(normalizedFrames[frame],frame,evaluationAt)
+    })).filter(frame=>evaluateCandleQuality(frame.bars,frame.tf).ok);
+    const live={price:Number(signalBar.c),ts:evaluationAt,receivedAt:evaluationAt,source:'backtest'};
+    const result=computeServerSignal(bars,{
+      tf,mtf,live,barsSource:'backtest',news,
+      dataQuality:evaluateCandleQuality(bars,tf),filters:normalizedFilters,evaluationAt
+    });
+    if (!['buy','sell'].includes(result.side)) continue;
+    active={
+      id:`${tf}:${result.lastTs}:${result.side}`,tf,side:result.side,
+      entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
+      conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
+      signalBarTs:Number(result.lastTs),lastProcessedBarTs:Number(result.lastTs),
+      createdAt:evaluationAt,updatedAt:evaluationAt,status:'active',tp1Hit:false,
+      lastPrice:Number(result.entry),origin:'backtest'
+    };
+    trades.push({signal:{...active},outcome:{status:'active',updatedAt:evaluationAt,closedAt:0},events:[]});
+    activeIndex=trades.length-1;
+  }
+
+  return {
+    ok:true,mode:'simulation',engine:'computeServerSignal',tf,filters:normalizedFilters,
+    evaluations,trades,
+    summary:trades.reduce((summary,trade)=>{
+      summary.total++;
+      summary[trade.outcome.status]=(summary[trade.outcome.status]||0)+1;
+      return summary;
+    },{total:0})
+  };
+}
 
 export { calculateDailyPivots, timeframeBias };
