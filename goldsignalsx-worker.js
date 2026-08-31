@@ -12,6 +12,7 @@ import {
 //   GET  /health             → { ok: true }
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
+//   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
@@ -27,8 +28,11 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.1';
+const APP_VERSION = '2026.08.31.2';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
+const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
+const TICK_HISTORY_MAX = 2400;
+const TICK_HISTORY_QUERY_MAX = 2400;
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -40,6 +44,27 @@ const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
 const NEWS_ALERT_MAX_AGE_MS = 45 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
+
+function pruneTickHistory(value, referenceTs = Date.now()) {
+  const cutoff = Number(referenceTs) - TICK_HISTORY_RETENTION_MS;
+  return (Array.isArray(value) ? value : [])
+    .map(tick => ({ ts:Number(tick?.ts), price:Number(tick?.price) }))
+    .filter(tick => Number.isFinite(tick.ts) && Number.isFinite(tick.price) && tick.ts >= cutoff)
+    .sort((left, right) => left.ts - right.ts)
+    .slice(-TICK_HISTORY_MAX);
+}
+
+function appendTickHistory(history, tick) {
+  const normalized = { ts:Number(tick?.ts), price:Number(tick?.price) };
+  if (!Number.isFinite(normalized.ts) || !Number.isFinite(normalized.price)) {
+    return Array.isArray(history) ? history : [];
+  }
+  const ticks = Array.isArray(history) ? [...history, normalized] : [normalized];
+  const cutoff = normalized.ts - TICK_HISTORY_RETENTION_MS;
+  let first = 0;
+  while (first < ticks.length && ticks[first].ts < cutoff) first += 1;
+  return ticks.slice(Math.max(first, ticks.length - TICK_HISTORY_MAX));
+}
 
 /**
  * One coordination point for XAU/USD. It owns the single Twelve Data
@@ -53,12 +78,14 @@ export class GoldFeed extends DurableObject {
     this.connecting = false;
     this.latestQuote = null;
     this.currentBar = null;
+    this.tickHistory = [];
     this.lastSnapshotWriteAt = 0;
     this.schemaReady = false;
     this.ctx.blockConcurrencyWhile(async () => {
-      const stored = await this.ctx.storage.get(['latestQuote', 'currentBar']);
+      const stored = await this.ctx.storage.get(['latestQuote', 'currentBar', 'tickHistory']);
       this.latestQuote = stored.get('latestQuote') || null;
       this.currentBar = stored.get('currentBar') || null;
+      this.tickHistory = pruneTickHistory(stored.get('tickHistory'), Date.now());
       const alarm = await this.ctx.storage.getAlarm();
       if (alarm == null) await this.ctx.storage.setAlarm(Date.now() + 1000);
     });
@@ -84,6 +111,27 @@ export class GoldFeed extends DurableObject {
       latestQuote: this.latestQuote,
       currentBar: this.currentBar,
       clients: this.ctx.getWebSockets().length
+    };
+  }
+
+  async ticks(options = {}) {
+    const to = Number.isFinite(Number(options.to)) ? Number(options.to) : Date.now();
+    const requestedFrom = Number.isFinite(Number(options.from)) ? Number(options.from) : to - 5 * 60_000;
+    const from = Math.max(requestedFrom, to - TICK_HISTORY_RETENTION_MS);
+    const limit = Math.max(1, Math.min(TICK_HISTORY_QUERY_MAX, Number(options.limit) || 600));
+    this.tickHistory = pruneTickHistory(this.tickHistory, Date.now());
+    const ticks = this.tickHistory
+      .filter(tick => tick.ts >= from && tick.ts <= to)
+      .slice(-limit);
+    return {
+      ok: true,
+      provider: 'twelve-data',
+      retentionMs: TICK_HISTORY_RETENTION_MS,
+      maxTicks: TICK_HISTORY_MAX,
+      from,
+      to,
+      count: ticks.length,
+      ticks
     };
   }
 
@@ -149,10 +197,15 @@ export class GoldFeed extends DurableObject {
       };
     }
     this.latestQuote = message;
+    this.tickHistory = appendTickHistory(this.tickHistory, message);
 
     const now = Date.now();
     if (now - this.lastSnapshotWriteAt >= 15_000) {
-      await this.ctx.storage.put({ latestQuote:this.latestQuote, currentBar:this.currentBar });
+      await this.ctx.storage.put({
+        latestQuote:this.latestQuote,
+        currentBar:this.currentBar,
+        tickHistory:this.tickHistory
+      });
       this.lastSnapshotWriteAt = now;
     }
     this.broadcast(message);
@@ -265,6 +318,29 @@ export default {
           receivedAt: Date.now(),
           ageMs: Math.max(0, Date.now() - data.ts)
         }, corsHeaders);
+      }
+
+      if (path === '/ticks') {
+        if (method !== 'GET') return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
+        if (!env.GOLD_FEED || !isTwelveDataConfigured(env)) {
+          return json({ ok:false, error:'tick_history_unavailable' }, corsHeaders, 503);
+        }
+        const rawFrom = url.searchParams.get('from');
+        const rawTo = url.searchParams.get('to');
+        const rawLimit = url.searchParams.get('limit');
+        const to = rawTo === null ? Date.now() : Number(rawTo);
+        const from = rawFrom === null ? to - 5 * 60_000 : Number(rawFrom);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+          return json({ ok:false, error:'bad_tick_range' }, corsHeaders, 400);
+        }
+        const limit = parseLimit(rawLimit, 600, TICK_HISTORY_QUERY_MAX);
+        try {
+          const result = await env.GOLD_FEED.getByName('xau-usd').ticks({ from, to, limit });
+          return jsonNoStore(result, corsHeaders);
+        } catch (error) {
+          logProviderError('central-feed-ticks', error);
+          return json({ ok:false, error:'tick_history_failed' }, corsHeaders, 502);
+        }
       }
 
       if (path === '/news') {
@@ -1975,5 +2051,6 @@ async function upsertCompletedBarRollups(env,bar) {
 export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters
+  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
+  pruneTickHistory
 };
