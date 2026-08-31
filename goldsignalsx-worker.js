@@ -28,7 +28,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.4';
+const APP_VERSION = '2026.08.31.5';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -40,6 +40,11 @@ const GOLD_EXPOSURE_TIMEFRAMES = ['5m','15m','30m','60m','240m','1d'];
 const GOLD_EXPOSURE_TF_RANK = Object.freeze({'5m':1,'15m':2,'30m':3,'60m':4,'240m':5,'1d':6});
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
+const TELEGRAM_EVENT_SCHEMA = 2;
+const TELEGRAM_EVENT_MAX_AGE_MS = 15 * 60 * 1000;
+const TELEGRAM_EVENT_PREFIX = 'telegram:event:v2:';
+const TELEGRAM_CURSOR_PREFIX = 'telegram:cursor:v2:';
+const TELEGRAM_EVENT_RANK = Object.freeze({news:0,new_signal:10,confirmation:20,tp1:30,tp2:40,sl:40,expired:40});
 const MAX_BARS_LIMIT = 5000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
@@ -115,6 +120,66 @@ function closeGoldExposure(state,status,now) {
     closeReason:stopped?'sl':status,cooldownUntil:stopped?now+GOLD_EXPOSURE_COOLDOWN_MS:0,
     lastPrimarySignalId:state.primarySignalId,lastPrimaryTf:state.primaryTf,
     primarySignalId:'',primaryTf:'',side:''
+  };
+}
+
+function canonicalTelegramEvent(event) {
+  const value=String(event||'');
+  if (value==='created'||value==='new_signal'||value==='manual') return 'new_signal';
+  if (value==='stopped'||value==='sl') return 'sl';
+  if (['confirmation','tp1','tp2','expired','news'].includes(value)) return value;
+  return '';
+}
+
+function telegramEventStorageKey(eventId) {
+  return `${TELEGRAM_EVENT_PREFIX}${String(eventId)}`;
+}
+
+function telegramCursorStorageKey(rootSignalId) {
+  return `${TELEGRAM_CURSOR_PREFIX}${String(rootSignalId)}`;
+}
+
+function telegramEventSequence(value) {
+  return {
+    eventAt:Number(value?.eventAt)||0,
+    rank:Number.isFinite(Number(value?.rank))
+      ? Number(value.rank)
+      : Number(TELEGRAM_EVENT_RANK[value?.kind]||0),
+    eventId:String(value?.eventId||'')
+  };
+}
+
+function compareTelegramSequence(left,right) {
+  const a=telegramEventSequence(left),b=telegramEventSequence(right);
+  return a.eventAt-b.eventAt||a.rank-b.rank||a.eventId.localeCompare(b.eventId);
+}
+
+function telegramEventTerminal(status) {
+  return ['sent','dropped','failed','failed_ambiguous'].includes(String(status||''));
+}
+
+function makeTelegramEventRecord(signal,event,text,options={}) {
+  const kind=canonicalTelegramEvent(event);
+  const signalId=String(signal?.id||'');
+  if (!kind||!signalId) return null;
+  const rootSignalId=String(options.rootSignalId||options.primarySignalId||signalId);
+  const eventAt=Number(options.eventAt)||(
+    kind==='new_signal'?Number(signal?.createdAt):
+    ['tp2','sl','expired'].includes(kind)?Number(signal?.closedAt||signal?.updatedAt):
+    Number(signal?.updatedAt||signal?.createdAt)
+  )||Date.now();
+  const eventId=kind==='confirmation'
+    ? `trade:${rootSignalId}:confirmation:${signalId}`
+    : kind==='news'
+      ? `news:${signalId}`
+      : `trade:${signalId}:${kind}`;
+  const now=Date.now();
+  return {
+    schema:TELEGRAM_EVENT_SCHEMA,eventId,rootSignalId,signalId,
+    tf:String(signal?.tf||''),kind,event:kind,status:'pending',attempts:0,
+    eventAt,signalCreatedAt:Number(options.signalCreatedAt||signal?.createdAt)||0,
+    queuedAt:now,createdAt:now,updatedAt:now,nextAttemptAt:now,
+    queuedVersion:APP_VERSION,text:String(text||'')
   };
 }
 
@@ -216,6 +281,8 @@ export class GoldFeed extends DurableObject {
     this.tickHistory = [];
     this.lastSnapshotWriteAt = 0;
     this.schemaReady = false;
+    this.telegramDrainPromise = null;
+    this.telegramDrainRequested = false;
     this.ctx.blockConcurrencyWhile(async () => {
       const stored = await this.ctx.storage.get(['latestQuote', 'currentBar', 'tickHistory']);
       this.latestQuote = stored.get('latestQuote') || null;
@@ -301,6 +368,130 @@ export class GoldFeed extends DurableObject {
       await transaction.put(GOLD_EXPOSURE_KEY,cancelled);
       return cancelled;
     });
+  }
+
+  async queueTelegramEvent(input = {}) {
+    const eventId=String(input?.eventId||'');
+    const rootSignalId=String(input?.rootSignalId||'');
+    const kind=canonicalTelegramEvent(input?.kind||input?.event);
+    if (!eventId||!rootSignalId||!kind||!Number.isFinite(Number(input?.eventAt))) {
+      return {ok:false,error:'invalid_telegram_event'};
+    }
+    const key=telegramEventStorageKey(eventId);
+    await this.ctx.storage.transaction(async transaction => {
+      const existing=await transaction.get(key);
+      if (existing) return;
+      const now=Date.now();
+      await transaction.put(key,{
+        ...input,schema:TELEGRAM_EVENT_SCHEMA,eventId,rootSignalId,kind,event:kind,
+        status:'pending',attempts:0,queuedAt:Number(input.queuedAt)||now,
+        createdAt:Number(input.createdAt)||now,updatedAt:now,nextAttemptAt:now,
+        queuedVersion:String(input.queuedVersion||APP_VERSION)
+      });
+    });
+    await this.drainTelegramEvents();
+    return await this.ctx.storage.get(key);
+  }
+
+  async processTelegramEvents() {
+    await this.drainTelegramEvents();
+    return {ok:true};
+  }
+
+  async drainTelegramEvents() {
+    this.telegramDrainRequested=true;
+    if (this.telegramDrainPromise) return this.telegramDrainPromise;
+    this.telegramDrainPromise=(async()=>{
+      while (this.telegramDrainRequested) {
+        this.telegramDrainRequested=false;
+        await this.drainTelegramEventsOnce();
+      }
+    })().finally(()=>{ this.telegramDrainPromise=null; });
+    return this.telegramDrainPromise;
+  }
+
+  async drainTelegramEventsOnce() {
+    const listed=await this.ctx.storage.list({prefix:TELEGRAM_EVENT_PREFIX,limit:1000});
+    const groups=new Map();
+    for (const [key,record] of listed) {
+      if (!record||typeof record!=='object') continue;
+      const root=String(record.rootSignalId||record.signalId||'');
+      if (!root) continue;
+      if (!groups.has(root)) groups.set(root,[]);
+      groups.get(root).push({key,record});
+    }
+    const now=Date.now();
+    for (const [root,items] of groups) {
+      items.sort((left,right)=>compareTelegramSequence(left.record,right.record));
+      let cursor=await this.ctx.storage.get(telegramCursorStorageKey(root));
+      for (const item of items) {
+        let record=item.record;
+        if (telegramEventTerminal(record.status)) continue;
+        let dropReason='';
+        if (Number(record.schema)!==TELEGRAM_EVENT_SCHEMA) dropReason='legacy_schema';
+        else if (String(record.queuedVersion||'')!==APP_VERSION) dropReason='previous_deployment';
+        else if (now-Number(record.eventAt||0)>TELEGRAM_EVENT_MAX_AGE_MS) dropReason='stale_event';
+        else if (record.status==='sending') dropReason='ambiguous_restart';
+        else if (cursor&&compareTelegramSequence(record,cursor)<=0) dropReason='delayed_event';
+        if (dropReason) {
+          record={...record,status:'dropped',dropReason,updatedAt:now,nextAttemptAt:0};
+          cursor=telegramEventSequence(record);
+          await this.persistTelegramEvent(item.key,record,cursor);
+          continue;
+        }
+        if (record.status!=='pending'||Number(record.nextAttemptAt||0)>now) break;
+
+        const sending={...record,status:'sending',updatedAt:Date.now()};
+        await this.ctx.storage.put(item.key,sending);
+        const result=await sendTelegramText(this.env,sending.text);
+        const attempts=Number(sending.attempts||0)+1;
+        const completedAt=Date.now();
+        if (result.ok) {
+          record={
+            ...sending,status:'sent',attempts,updatedAt:completedAt,sentAt:completedAt,
+            nextAttemptAt:0,lastStatus:Number(result.status||0),lastError:'',dropReason:''
+          };
+          cursor=telegramEventSequence(record);
+          await this.persistTelegramEvent(item.key,record,cursor);
+          continue;
+        }
+        if (result.ambiguous) {
+          record={
+            ...sending,status:'failed_ambiguous',attempts,updatedAt:completedAt,nextAttemptAt:0,
+            lastStatus:Number(result.status||0),lastError:String(result.error||'telegram_ambiguous'),
+            dropReason:'ambiguous_delivery'
+          };
+          cursor=telegramEventSequence(record);
+          await this.persistTelegramEvent(item.key,record,cursor);
+          continue;
+        }
+        const exhausted=attempts>=TELEGRAM_MAX_ATTEMPTS;
+        record={
+          ...sending,status:exhausted?'failed':'pending',attempts,updatedAt:completedAt,
+          lastStatus:Number(result.status||0),lastError:String(result.error||'telegram_api_error'),
+          nextAttemptAt:exhausted?0:completedAt+telegramRetryDelayMs(attempts)
+        };
+        if (exhausted) {
+          cursor=telegramEventSequence(record);
+          await this.persistTelegramEvent(item.key,record,cursor);
+          continue;
+        }
+        await this.persistTelegramEvent(item.key,record,null);
+        console.error(JSON.stringify({
+          message:'telegram delivery failed',eventId:record.eventId,signalId:record.signalId,
+          event:record.kind,attempts,status:record.lastStatus,error:record.lastError
+        }));
+        break;
+      }
+    }
+  }
+
+  async persistTelegramEvent(key,record,cursor) {
+    await this.ctx.storage.transaction(async transaction => {
+      await transaction.put(key,record);
+      if (cursor) await transaction.put(telegramCursorStorageKey(record.rootSignalId),cursor);
+    });
+    await persistTelegramDelivery(this.env,telegramDeliveryKeyFromEventId(record.eventId),record);
   }
 
   async ensureProvider() {
@@ -944,17 +1135,47 @@ function updateSignalLifecycleAcrossBars(signal,bars,livePrice,now) {
   return {signal:current,events};
 }
 
-function signalTelegramText(signal,event='created') {
+function telegramIsoTime(value) {
+  const timestamp=Number(value);
+  return Number.isFinite(timestamp)&&timestamp>0?new Date(timestamp).toISOString():'غير متاح';
+}
+
+function signalTelegramText(signal,event='created',options={}) {
+  const kind=canonicalTelegramEvent(event);
   const side=signal.side==='buy'?'شراء':'بيع';
-  if (event!=='created') {
-    const status=signal.status==='tp1'?'تحقق TP1':signal.status==='tp2'?'تحقق TP2':signal.status==='stopped'?'ضُرب SL':'انتهت صلاحية الإشارة';
-    return [`🔔 تحديث إشارة ${side} — ${signal.tf}`,status,`السعر: ${Number(signal.lastPrice).toFixed(2)}`,`Entry: ${signal.entry.toFixed(2)} • TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`].join('\n');
+  const eventAt=Number(options.eventAt)||(
+    kind==='new_signal'?Number(signal.createdAt):
+    ['tp2','sl','expired'].includes(kind)?Number(signal.closedAt||signal.updatedAt):
+    Number(signal.updatedAt||signal.createdAt)
+  );
+  const signalCreatedAt=Number(options.signalCreatedAt||signal.createdAt);
+  if (kind==='confirmation') {
+    return [
+      `🔵 تأكيد ${side} للصفقة الحالية — ${signal.tf}`,
+      `الصفقة الأساسية: ${String(options.primaryTf||'—')}`,
+      'هذا تأكيد مرتبط وليس صفقة جديدة ولا يزيد التعرّض.',
+      `درجة الثقة: ${Number(signal.conf||0).toFixed(0)}%`,
+      `وقت الحدث: ${telegramIsoTime(eventAt)}`,
+      `وقت إنشاء الصفقة الأساسية: ${telegramIsoTime(signalCreatedAt)}`
+    ].join('\n');
+  }
+  if (kind!=='new_signal') {
+    const status=kind==='tp1'?'تحقق TP1':kind==='tp2'?'تحقق TP2':kind==='sl'?'ضُرب SL':'انتهت صلاحية الإشارة';
+    return [
+      `🔔 تحديث إشارة ${side} — ${signal.tf}`,status,
+      `السعر: ${Number(signal.lastPrice).toFixed(2)}`,
+      `Entry: ${signal.entry.toFixed(2)} • TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`,
+      `وقت الحدث: ${telegramIsoTime(eventAt)}`,
+      `وقت إنشاء الإشارة: ${telegramIsoTime(signalCreatedAt)}`
+    ].join('\n');
   }
   return [
     `🟢 إشارة ${side} مؤكدة — ${signal.tf}`,
     `Entry: ${signal.entry.toFixed(2)}`,
     `TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`,
     `درجة الثقة: ${signal.conf.toFixed(0)}%`,
+    `وقت الحدث: ${telegramIsoTime(eventAt)}`,
+    `وقت إنشاء الإشارة: ${telegramIsoTime(signalCreatedAt)}`,
     ...signal.reasons.slice(0,6).map(reason=>`• ${reason}`),
     'إشارة آلية لإدارة المخاطر وليست ضماناً للربح.'
   ].join('\n');
@@ -1073,6 +1294,25 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
         await exposureStub.cancelGoldExposureReservation({signalId:signal.id,now:Date.now()}).catch(()=>null);
       }
       throw error;
+    }
+  }
+  if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
+    const signalsById=new Map([...officialSignals,...candidates].map(signal=>[signal.id,signal]));
+    for (const signal of candidates) {
+      const decision=decisions.get(signal.id);
+      if (decision?.decision!=='confirmation') continue;
+      const primarySignalId=String(decision.primarySignalId||exposureResult.state?.primarySignalId||'');
+      const primary=signalsById.get(primarySignalId)||null;
+      const options={
+        rootSignalId:primarySignalId,
+        primarySignalId,
+        primaryTf:String(primary?.tf||exposureResult.state?.primaryTf||''),
+        signalCreatedAt:Number(primary?.createdAt||exposureResult.state?.openedAt)||0,
+        eventAt:Number(signal.createdAt)||now
+      };
+      await queueTelegramDelivery(
+        env,signal,'confirmation',signalTelegramText(signal,'confirmation',options),options
+      );
     }
   }
 }
@@ -2001,23 +2241,37 @@ async function maybeNotifyHighImpactNews(env, brief) {
     item.url,
     'تنبيه: الخبر لا يُستخدم وحده كإشارة تداول.'
   ].join('\n');
-  const delivery=await queueTelegramDelivery(env,{id:`news:${id}`,tf:'news'},'created',text);
+  const delivery=await queueTelegramDelivery(
+    env,{id:`news:${id}`,tf:'news',createdAt:Number(item.publishedAt)||Date.now()},'news',text,
+    {eventAt:Number(item.publishedAt)||Date.now()}
+  );
   if (delivery?.status==='sent') await env.GSX_KV.put(key,String(Date.now()),{expirationTtl:24*60*60});
 }
 
 // ---------- Telegram ----------
+function telegramDeliveryKeyFromEventId(eventId) {
+  return `telegram:delivery:v2:${String(eventId)}`;
+}
+
 function telegramDeliveryKey(signalId,event) {
-  return `telegram:delivery:${String(signalId)}:${String(event)}`;
+  const kind=canonicalTelegramEvent(event);
+  return telegramDeliveryKeyFromEventId(
+    kind==='news'?`news:${String(signalId)}`:`trade:${String(signalId)}:${kind}`
+  );
 }
 
 function publicTelegramDelivery(record) {
   if (!record) return null;
   return {
-    signalId:String(record.signalId||''),tf:String(record.tf||''),event:String(record.event||''),
+    eventId:String(record.eventId||''),rootSignalId:String(record.rootSignalId||''),
+    signalId:String(record.signalId||''),tf:String(record.tf||''),
+    event:String(record.kind||record.event||''),eventAt:Number(record.eventAt||0),
+    signalCreatedAt:Number(record.signalCreatedAt||0),queuedVersion:String(record.queuedVersion||''),
     status:String(record.status||'pending'),attempts:Number(record.attempts||0),
     createdAt:Number(record.createdAt||0),updatedAt:Number(record.updatedAt||0),
     sentAt:Number(record.sentAt||0),nextAttemptAt:Number(record.nextAttemptAt||0),
-    lastStatus:Number(record.lastStatus||0),lastError:String(record.lastError||'')
+    lastStatus:Number(record.lastStatus||0),lastError:String(record.lastError||''),
+    dropReason:String(record.dropReason||'')
   };
 }
 
@@ -2037,7 +2291,7 @@ function safeTelegramError(value) {
 async function sendTelegramText(env, text) {
   const token = env.TELEGRAM_TOKEN;
   const chat = env.TELEGRAM_CHAT;
-  if (!token || !chat) return {ok:false,status:0,error:'telegram_not_configured'};
+  if (!token || !chat) return {ok:false,status:0,error:'telegram_not_configured',ambiguous:false};
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method:'POST',
@@ -2049,10 +2303,11 @@ async function sendTelegramText(env, text) {
     return {
       ok:response.ok&&body?.ok!==false,
       status:response.status,
-      error:response.ok&&body?.ok!==false?'':safeTelegramError(body?.description||`HTTP ${response.status}`)
+      error:response.ok&&body?.ok!==false?'':safeTelegramError(body?.description||`HTTP ${response.status}`),
+      ambiguous:false
     };
   } catch (error) {
-    return {ok:false,status:0,error:safeTelegramError(error?.message||error)};
+    return {ok:false,status:0,error:safeTelegramError(error?.message||error),ambiguous:true};
   }
 }
 
@@ -2068,51 +2323,62 @@ async function persistTelegramDelivery(env,key,record) {
   ]);
 }
 
-async function deliverTelegramRecord(env,key,record) {
-  if (!env.GSX_KV||record?.status==='sent') return record;
-  const result=await sendTelegramText(env,record.text);
-  const attempts=Number(record.attempts||0)+1;
-  const updated={
-    ...record,attempts,updatedAt:Date.now(),lastStatus:Number(result.status||0),
-    lastError:result.ok?'':String(result.error||'telegram_api_error'),
-    status:result.ok?'sent':attempts>=TELEGRAM_MAX_ATTEMPTS?'failed':'pending',
-    ...(result.ok?{sentAt:Date.now(),nextAttemptAt:0}:{nextAttemptAt:Date.now()+telegramRetryDelayMs(attempts)})
-  };
-  await persistTelegramDelivery(env,key,updated);
-  if (!result.ok) console.error(JSON.stringify({message:'telegram delivery failed',signalId:record.signalId,event:record.event,attempts,status:result.status||0,error:updated.lastError}));
-  return updated;
-}
-
-async function queueTelegramDelivery(env,signal,event,text) {
+async function queueTelegramDelivery(env,signal,event,text,options={}) {
   if (!env.GSX_KV) return {ok:false,error:'signals_storage_unavailable'};
-  const key=telegramDeliveryKey(signal.id,event);
-  const existing=await readKvJson(env,key);
-  if (existing?.status==='sent') return existing;
-  const now=Date.now();
-  const record=existing||{
-    signalId:signal.id,tf:signal.tf,event,status:'pending',attempts:0,
-    createdAt:now,updatedAt:now,nextAttemptAt:now,text:String(text||'')
-  };
-  await persistTelegramDelivery(env,key,record);
-  return deliverTelegramRecord(env,key,record);
+  const record=makeTelegramEventRecord(signal,event,text,options);
+  if (!record) return {ok:false,error:'invalid_telegram_event'};
+  if (!env.GOLD_FEED) {
+    const failed={
+      ...record,status:'failed',lastError:'telegram_coordinator_unavailable',
+      updatedAt:Date.now(),nextAttemptAt:0
+    };
+    await persistTelegramDelivery(env,telegramDeliveryKeyFromEventId(record.eventId),failed);
+    return failed;
+  }
+  try {
+    return await env.GOLD_FEED.getByName('xau-usd').queueTelegramEvent(record);
+  } catch (error) {
+    const failed={
+      ...record,status:'failed_ambiguous',lastError:'telegram_coordinator_unavailable',
+      dropReason:'coordinator_error',updatedAt:Date.now(),nextAttemptAt:0
+    };
+    await persistTelegramDelivery(env,telegramDeliveryKeyFromEventId(record.eventId),failed);
+    console.error(JSON.stringify({
+      message:'telegram coordinator failed',eventId:record.eventId,
+      error:error instanceof Error?error.message:String(error)
+    }));
+    return failed;
+  }
 }
 
 async function processTelegramOutbox(env) {
   if (!env.GSX_KV) return;
+  if (env.GOLD_FEED) {
+    await env.GOLD_FEED.getByName('xau-usd').processTelegramEvents().catch(error=>{
+      console.error(JSON.stringify({
+        message:'telegram coordinator processing failed',
+        error:error instanceof Error?error.message:String(error)
+      }));
+    });
+  }
   let cursor;
-  let processed=0;
+  let dropped=0;
   do {
     const page=await env.GSX_KV.list({prefix:'telegram:delivery:',limit:100,...(cursor?{cursor}:{})});
     for (const item of page.keys||[]) {
-      if (processed>=100) return;
+      if (dropped>=100) return;
+      if (item.name.startsWith('telegram:delivery:v2:')) continue;
       const record=await readKvJson(env,item.name);
-      if (record?.status==='pending'&&Number(record.nextAttemptAt||0)<=Date.now()) {
-        await deliverTelegramRecord(env,item.name,record);
-        processed++;
+      if (record?.status==='pending') {
+        await env.GSX_KV.put(item.name,JSON.stringify({
+          ...record,status:'dropped',updatedAt:Date.now(),nextAttemptAt:0,
+          dropReason:'legacy_pre_v2_event'
+        }),{expirationTtl:TELEGRAM_DELIVERY_TTL});
+        dropped++;
       }
     }
     cursor=page.list_complete?undefined:page.cursor;
-  } while (cursor&&processed<100);
+  } while (cursor&&dropped<100);
 }
 
 async function refreshTelegramHealth(env) {
@@ -2166,7 +2432,8 @@ async function handleNotify(req, env) {
   if (!SIGNAL_TIMEFRAMES.includes(tf)||!signalId) return {ok:false,error:'official_signal_required'};
   const signal=await readKvJson(env,`signal:state:${tf}`);
   if (!signal||signal.id!==signalId||!['active','tp1'].includes(signal.status)) return {ok:false,error:'official_signal_not_active'};
-  const delivery=await queueTelegramDelivery(env,signal,'manual',signalTelegramText(signal,'created'));
+  const event=signal.status==='tp1'?'tp1':'created';
+  const delivery=await queueTelegramDelivery(env,signal,event,signalTelegramText(signal,event));
   return {ok:delivery?.status==='sent',delivery:publicTelegramDelivery(delivery),error:delivery?.lastError||''};
 }
 
@@ -2281,6 +2548,7 @@ async function upsertCompletedBarRollups(env,bar) {
 export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
+  signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure
 };

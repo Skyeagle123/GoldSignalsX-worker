@@ -28,6 +28,7 @@ const {
 const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
+  signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure
 } = worker;
@@ -295,10 +296,17 @@ function makeTransactionalExposureStorage() {
   const values=new Map();
   let tail=Promise.resolve();
   return {
+    values,
     get:async keys=>Array.isArray(keys)
       ? new Map(keys.filter(key=>values.has(key)).map(key=>[key,values.get(key)]))
       : values.get(keys),
-    put:async valuesToPut=>Object.entries(valuesToPut).forEach(([key,value])=>values.set(key,value)),
+    put:async (keyOrValues,value)=>{
+      if (typeof keyOrValues==='string') values.set(keyOrValues,value);
+      else Object.entries(keyOrValues||{}).forEach(([key,item])=>values.set(key,item));
+    },
+    list:async ({prefix='',limit=1000}={})=>new Map(
+      [...values.entries()].filter(([key])=>key.startsWith(prefix)).slice(0,limit)
+    ),
     getAlarm:async()=>null,setAlarm:async()=>{},
     transaction(callback) {
       const run=tail.then(()=>callback({
@@ -522,35 +530,192 @@ const ambiguous=updateSignalLifecycleAcrossBars(lifecycleSignal,[
 assert.equal(ambiguous.signal.status,'stopped','SL must win conservatively when one minute touches target and stop');
 
 assert.equal((await sendTelegramText({},'test')).error,'telegram_not_configured');
-const telegramStore=new Map();
-const telegramKv={
-  get:async (key,type)=>{
-    const value=telegramStore.get(key);
-    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
-  },
-  put:async (key,value)=>telegramStore.set(key,value),
-  list:async ({prefix})=>({keys:[...telegramStore.keys()].filter(key=>key.startsWith(prefix)).map(name=>({name})),list_complete:true})
+
+function makeTelegramKv() {
+  const store=new Map();
+  return {
+    store,
+    get:async (key,type)=>{
+      const value=store.get(key);
+      return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+    },
+    put:async (key,value)=>store.set(key,value),
+    list:async ({prefix})=>({
+      keys:[...store.keys()].filter(key=>key.startsWith(prefix)).map(name=>({name})),
+      list_complete:true
+    })
+  };
+}
+
+async function makeTelegramHarness() {
+  const storage=makeTransactionalExposureStorage();
+  const kv=makeTelegramKv();
+  const doEnv={GSX_KV:kv,TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'};
+  const ctx={storage,blockConcurrencyWhile(fn){this.ready=fn();},getWebSockets:()=>[]};
+  const feed=new GoldFeed(ctx,doEnv);
+  await ctx.ready;
+  const binding={getByName:()=>feed};
+  return {storage,kv,feed,env:{...doEnv,GOLD_FEED:binding},binding};
+}
+
+let telegramNow=fixedNow;
+Date.now=()=>telegramNow;
+let telegramCalls=[];
+globalThis.fetch=async (_url,init)=>{
+  telegramCalls.push(JSON.parse(init.body));
+  return {ok:true,status:200,json:async()=>({ok:true,result:{message_id:telegramCalls.length}})};
 };
-globalThis.fetch=async ()=>({ok:false,status:401,json:async()=>({ok:false,description:'Unauthorized'})});
-const pendingDelivery=await queueTelegramDelivery({GSX_KV:telegramKv,TELEGRAM_TOKEN:'invalid',TELEGRAM_CHAT:'chat'},lifecycleSignal,'created','test');
+
+const telegramHarness=await makeTelegramHarness();
+const officialSignal={...lifecycleSignal,id:'5m:official:buy',tf:'5m',createdAt:telegramNow-1_000,updatedAt:telegramNow-1_000};
+const duplicateResults=await Promise.all([
+  queueTelegramDelivery(telegramHarness.env,officialSignal,'created','new official signal'),
+  queueTelegramDelivery(telegramHarness.env,officialSignal,'created','new official signal')
+]);
+assert.equal(telegramCalls.length,1,'duplicate official event calls must produce one Telegram send');
+assert.equal(duplicateResults[0].eventId,duplicateResults[1].eventId,'eventId must be stable');
+assert.equal(duplicateResults[0].status,'sent');
+
+telegramNow+=1_000;
+const confirmation={...officialSignal,id:'1m:confirmation:buy',tf:'1m',createdAt:telegramNow,updatedAt:telegramNow,conf:91};
+const confirmationDelivery=await queueTelegramDelivery(
+  telegramHarness.env,confirmation,'confirmation',signalTelegramText(confirmation,'confirmation',{
+    primaryTf:officialSignal.tf,signalCreatedAt:officialSignal.createdAt,eventAt:telegramNow
+  }),{rootSignalId:officialSignal.id,signalCreatedAt:officialSignal.createdAt,eventAt:telegramNow}
+);
+assert.equal(confirmationDelivery.status,'sent');
+assert.match(confirmationDelivery.eventId,/confirmation/);
+assert.match(telegramCalls.at(-1).text,/ليست صفقة جديدة|ليس صفقة جديدة/,'confirmation must be clearly distinguished from a new trade');
+assert.match(telegramCalls.at(-1).text,/وقت الحدث:/,'confirmation must include the real eventAt');
+
+telegramNow+=1_000;
+const tp1Signal={...officialSignal,status:'tp1',tp1Hit:true,updatedAt:telegramNow,lastPrice:101};
+const tp1Text=signalTelegramText(tp1Signal,'tp1');
+const tp1Delivery=await queueTelegramDelivery(telegramHarness.env,tp1Signal,'tp1',tp1Text);
+telegramNow+=1_000;
+const tp2Signal={...tp1Signal,status:'tp2',updatedAt:telegramNow,closedAt:telegramNow,lastPrice:102};
+const tp2Text=signalTelegramText(tp2Signal,'tp2');
+const tp2Delivery=await queueTelegramDelivery(telegramHarness.env,tp2Signal,'tp2',tp2Text);
+assert.equal(tp1Delivery.status,'sent');
+assert.equal(tp2Delivery.status,'sent');
+assert.match(telegramCalls.at(-2).text,/تحقق TP1/);
+assert.match(telegramCalls.at(-1).text,/تحقق TP2/,'TP1 must be delivered before TP2');
+assert.match(telegramCalls.at(-1).text,/وقت الحدث:/);
+assert.match(telegramCalls.at(-1).text,/وقت إنشاء الإشارة:/);
+
+const callsBeforeDelayed=telegramCalls.length;
+const delayedConfirmation={...confirmation,id:'15m:delayed:buy',tf:'15m'};
+const delayedDelivery=await queueTelegramDelivery(
+  telegramHarness.env,delayedConfirmation,'confirmation','delayed confirmation',
+  {rootSignalId:officialSignal.id,signalCreatedAt:officialSignal.createdAt,eventAt:telegramNow-500}
+);
+assert.equal(delayedDelivery.status,'dropped');
+assert.equal(delayedDelivery.dropReason,'delayed_event');
+assert.equal(telegramCalls.length,callsBeforeDelayed,'a delayed event must not be sent after a newer state');
+
+const slHarness=await makeTelegramHarness();
+telegramNow+=1_000;
+const slPrimary={...officialSignal,id:'15m:official:sell',tf:'15m',side:'sell',createdAt:telegramNow,updatedAt:telegramNow};
+await queueTelegramDelivery(slHarness.env,slPrimary,'created','SL trade created');
+telegramNow+=1_000;
+const slDelivery=await queueTelegramDelivery(
+  slHarness.env,{...slPrimary,status:'stopped',closedAt:telegramNow,updatedAt:telegramNow},'stopped','SL'
+);
+assert.equal(slDelivery.status,'sent');
+assert.equal(slDelivery.event,'sl');
+
+const retryHarness=await makeTelegramHarness();
+let retryCalls=0;
+globalThis.fetch=async ()=>{
+  retryCalls+=1;
+  return retryCalls===1
+    ? {ok:false,status:503,json:async()=>({ok:false,description:'temporarily unavailable'})}
+    : {ok:true,status:200,json:async()=>({ok:true,result:{message_id:2}})};
+};
+telegramNow+=1_000;
+const retrySignal={...officialSignal,id:'30m:retry:buy',tf:'30m',createdAt:telegramNow,updatedAt:telegramNow};
+retryHarness.kv.store.set('signal:state:30m',JSON.stringify(retrySignal));
+const retryStateBefore=retryHarness.kv.store.get('signal:state:30m');
+const pendingDelivery=await queueTelegramDelivery(retryHarness.env,retrySignal,'created','retry once');
 assert.equal(pendingDelivery.status,'pending');
 assert.equal(pendingDelivery.attempts,1);
-assert.equal(pendingDelivery.lastError,'invalid_bot_token');
-globalThis.fetch=async ()=>({ok:true,status:200,json:async()=>({ok:true})});
-const sentDelivery=await queueTelegramDelivery({GSX_KV:telegramKv,TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'},lifecycleSignal,'created','test');
+telegramNow+=60_001;
+await retryHarness.feed.processTelegramEvents();
+const retryKey=`telegram:event:v2:${pendingDelivery.eventId}`;
+const sentDelivery=await retryHarness.storage.get(retryKey);
 assert.equal(sentDelivery.status,'sent');
 assert.equal(sentDelivery.attempts,2);
-telegramStore.set('signal:state:1m',JSON.stringify(lifecycleSignal));
+assert.equal(sentDelivery.eventAt,retrySignal.createdAt,'retry must preserve the real eventAt');
+assert.ok(sentDelivery.sentAt>sentDelivery.eventAt,'Telegram send time must remain separate from eventAt');
+await queueTelegramDelivery(retryHarness.env,retrySignal,'created','retry once');
+assert.equal(retryCalls,2,'retry plus a repeated cycle must not duplicate a sent event');
+assert.equal(retryHarness.kv.store.get('signal:state:30m'),retryStateBefore,'Telegram retry must not mutate signal state');
+
+const staleHarness=await makeTelegramHarness();
+let staleCalls=0;
+globalThis.fetch=async ()=>{ staleCalls+=1; return {ok:true,status:200,json:async()=>({ok:true})}; };
+const staleSignal={...officialSignal,id:'60m:stale:buy',tf:'60m',createdAt:telegramNow-16*60_000,updatedAt:telegramNow-16*60_000};
+const staleDelivery=await queueTelegramDelivery(staleHarness.env,staleSignal,'created','old event');
+assert.equal(staleDelivery.status,'dropped');
+assert.equal(staleDelivery.dropReason,'stale_event');
+assert.equal(staleCalls,0,'an old accumulated event must be dropped without a Telegram call');
+
+const legacyKv=makeTelegramKv();
+legacyKv.store.set('telegram:delivery:legacy-signal:created',JSON.stringify({
+  signalId:'legacy-signal',event:'created',status:'pending',nextAttemptAt:0,text:'legacy message'
+}));
+await processTelegramOutbox({GSX_KV:legacyKv});
+const droppedLegacy=JSON.parse(legacyKv.store.get('telegram:delivery:legacy-signal:created'));
+assert.equal(droppedLegacy.status,'dropped');
+assert.equal(droppedLegacy.dropReason,'legacy_pre_v2_event');
+assert.equal(staleCalls,0,'a legacy pre-deploy outbox record must never be sent');
+
+const restartHarness=await makeTelegramHarness();
+const restartEventId='trade:240m:restart:buy:new_signal';
+restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
+  schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
+  tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.5',
+  status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
+});
+const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
+restartHarness.storage.values.set(`telegram:event:v2:${deploymentEventId}`,{
+  schema:2,eventId:deploymentEventId,rootSignalId:'1d:old-deploy:buy',signalId:'1d:old-deploy:buy',
+  tf:'1d',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.4',
+  status:'pending',attempts:0,nextAttemptAt:telegramNow,text:'previous deployment event'
+});
+await restartHarness.feed.processTelegramEvents();
+assert.equal((await restartHarness.storage.get(`telegram:event:v2:${restartEventId}`)).dropReason,'ambiguous_restart');
+assert.equal((await restartHarness.storage.get(`telegram:event:v2:${deploymentEventId}`)).dropReason,'previous_deployment');
+assert.equal(staleCalls,0,'restart/deploy cleanup must not send ambiguous or previous-version events');
+
+const expiredHarness=await makeTelegramHarness();
+globalThis.fetch=async ()=>({ok:true,status:200,json:async()=>({ok:true})});
+telegramNow+=1_000;
+const expiringSignal={...officialSignal,id:'60m:expired:sell',tf:'60m',side:'sell',createdAt:telegramNow,updatedAt:telegramNow};
+await queueTelegramDelivery(expiredHarness.env,expiringSignal,'created','expired trade created');
+telegramNow+=1_000;
+const expiredDelivery=await queueTelegramDelivery(
+  expiredHarness.env,{...expiringSignal,status:'expired',closedAt:telegramNow,updatedAt:telegramNow},'expired','Expired'
+);
+assert.equal(expiredDelivery.status,'sent');
+assert.equal(expiredDelivery.event,'expired');
+
+const notifyHarness=await makeTelegramHarness();
+globalThis.fetch=async ()=>({ok:true,status:200,json:async()=>({ok:true})});
+notifyHarness.kv.store.set('signal:state:1m',JSON.stringify(lifecycleSignal));
 const authorizedNotify=await worker.default.fetch(new Request('https://example.com/notify',{
   method:'POST',
   headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken},
   body:JSON.stringify({tf:'1m',signalId:lifecycleSignal.id})
 }),{
-  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:telegramKv,
-  TELEGRAM_TOKEN:'valid',TELEGRAM_CHAT:'chat'
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,
+  ...notifyHarness.env
 },{});
 assert.equal(authorizedNotify.status,200,'an authorized official-signal notification must succeed');
 assert.equal((await authorizedNotify.json()).ok,true);
+Date.now=realDateNow;
 globalThis.fetch=originalFetch;
 
 const storedSignal={...serverSignal,id:'test-signal',createdAt:fixedNow,updatedAt:Date.now(),status:'active',tp1Hit:false,lastPrice:serverSignal.entry,signalBarTs:serverSignal.lastTs};
