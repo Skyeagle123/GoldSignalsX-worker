@@ -28,7 +28,8 @@ const {
 const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters
+  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
+  pruneTickHistory
 } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
@@ -120,11 +121,14 @@ const untrustedBrief = buildNewsBrief([{
 assert.equal(untrustedBrief.safety.blockTechnicalSignal, false, 'untrusted news must not block a technical signal');
 
 const persistedBars = [];
+const storageValues = new Map();
 const fakeStorage = {
-  get: async keys => Array.isArray(keys) ? new Map() : null,
+  get: async keys => Array.isArray(keys)
+    ? new Map(keys.filter(key=>storageValues.has(key)).map(key=>[key,storageValues.get(key)]))
+    : storageValues.get(keys),
   getAlarm: async () => null,
   setAlarm: async () => {},
-  put: async () => {}
+  put: async values => Object.entries(values).forEach(([key,value])=>storageValues.set(key,value))
 };
 const fakeCtx = {
   storage: fakeStorage,
@@ -154,6 +158,46 @@ await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD
 await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD', price:4601, timestamp:Math.floor(Date.UTC(2026,7,27,9,1,1)/1000) }));
 assert.equal(persistedBars.length, 1, 'one completed minute must be persisted');
 assert.deepEqual(persistedBars[0].slice(1,5), [4600,4602,4600,4602], 'OHLC must be built from the shared live stream');
+
+const tickNow=Date.now();
+const recentTicks=[
+  {ts:tickNow-20_000,price:4700.1},
+  {ts:tickNow-10_000,price:4700.4},
+  {ts:tickNow-5_000,price:4700.2}
+];
+for (const [index,tick] of recentTicks.entries()) {
+  if (index===recentTicks.length-1) feed.lastSnapshotWriteAt=0;
+  await feed.handleProviderMessage(JSON.stringify({
+    event:'price',symbol:'XAU/USD',price:tick.price,timestamp:Math.floor(tick.ts/1000)
+  }));
+}
+const signalCreatedAt=tickNow-15_000;
+const tickWindow=await feed.ticks({from:tickNow-25_000,to:tickNow,limit:20});
+assert.equal(tickWindow.ok,true);
+assert.ok(tickWindow.ticks.length>1,'tick history must retain more than only the latest tick');
+assert.ok(tickWindow.ticks.every(tick=>Number.isFinite(tick.ts)&&Number.isFinite(tick.price)),'every tick must include timestamp and price');
+assert.ok(tickWindow.ticks.some(tick=>tick.ts<signalCreatedAt),'ticks before signal.createdAt must be retrievable');
+assert.ok(tickWindow.ticks.some(tick=>tick.ts>=signalCreatedAt),'ticks at or after signal.createdAt must be retrievable');
+assert.ok(storageValues.get('tickHistory')?.length>1,'batched Durable Object snapshot must persist tick history');
+assert.equal(pruneTickHistory([
+  {ts:tickNow-60*60_000-1,price:1},
+  {ts:tickNow-1,price:2}
+],tickNow).length,1,'ticks older than the retention window must be pruned');
+assert.equal(pruneTickHistory(Array.from({length:2405},(_,index)=>({
+  ts:tickNow-2405+index,price:4700+index/1000
+})),tickNow).length,2400,'tick history must be capped');
+
+const ticksResponse=await worker.default.fetch(new Request(
+  `https://example.com/ticks?from=${tickNow-25_000}&to=${tickNow}&limit=20`
+),{
+  TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>({ticks:options=>feed.ticks(options)})}
+},{});
+assert.equal(ticksResponse.status,200);
+const ticksBody=await ticksResponse.json();
+assert.ok(ticksBody.count>1,'the read endpoint must return historical ticks');
+assert.equal(ticksBody.retentionMs,60*60_000);
+assert.equal(ticksBody.maxTicks,2400);
 
 const allowedOrigin='https://skyeagle123.github.io';
 const writeToken='unit-test-write-token';
