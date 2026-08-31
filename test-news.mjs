@@ -512,12 +512,20 @@ assert.deepEqual(
   {
     side:simulatedSignal.side,entry:simulatedSignal.entry,tp1:simulatedSignal.tp1,
     tp2:simulatedSignal.tp2,sl:simulatedSignal.sl,createdAt:simulatedSignal.createdAt,
-    signalBarTs:simulatedSignal.signalBarTs
+    signalBarTs:simulatedSignal.signalBarTs,score:simulatedSignal.score,
+    bull:simulatedSignal.bull,bear:simulatedSignal.bear,mtf:simulatedSignal.mtf,
+    regime:simulatedSignal.regime,atr:simulatedSignal.atr,
+    lastClose:simulatedSignal.lastClose,livePrice:simulatedSignal.livePrice,
+    conf:simulatedSignal.conf,reasons:simulatedSignal.reasons
   },
   {
     side:directParity.side,entry:directParity.entry,tp1:directParity.tp1,
     tp2:directParity.tp2,sl:directParity.sl,createdAt:parityAt,
-    signalBarTs:directParity.lastTs
+    signalBarTs:directParity.lastTs,score:directParity.score,
+    bull:directParity.bull,bear:directParity.bear,mtf:directParity.mtf,
+    regime:directParity.regime,atr:directParity.atr,
+    lastClose:directParity.lastClose,livePrice:directParity.livePrice,
+    conf:directParity.conf,reasons:directParity.reasons
   },
   'backtest and server must return the same decision and levels for identical closed candles and settings'
 );
@@ -526,24 +534,53 @@ assert.equal(
   'a still-forming candle must not affect the backtest entry'
 );
 
+Date.now=()=>parityAt;
+const defaultAsOfBacktest=runServerBacktest({
+  tf:'1m',frames:{
+    ...parityFrames,
+    '1m':[...parityFrames['1m'],{t:parityAt,o:9000,h:9001,l:8990,c:8991,v:1}]
+  },
+  filters:parityFilters,news:parityNews,startAt:parityAt
+});
+Date.now=realDateNow;
+assert.equal(defaultAsOfBacktest.trades.length,1);
+assert.equal(
+  defaultAsOfBacktest.trades[0].signal.entry,parityFrames['1m'].at(-1).c,
+  'the default backtest as-of time must exclude a currently forming candle'
+);
+
 const backtestResponse=await worker.default.fetch(new Request('https://example.com/backtest',{
   method:'POST',headers:{Origin:allowedOrigin,'content-type':'application/json'},
   body:JSON.stringify({
-    tf:'1m',frames:parityFrames,filters:parityFilters,news:parityNews,
+    tf:'1m',frames:parityFrames,
+    filters:{nyFilterOn:true,pivotFilterOn:true,pivotDistance:50},
+    news:{ok:true,safety:{blockTechnicalSignal:true}},
     startAt:parityAt,endAt:parityAt
   })
 }),{
   ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),
-  get GSX_KV(){throw new Error('backtest_must_not_read_or_write_kv');},
+  GSX_KV:{
+    async get(key){
+      assert.equal(key,'system:signal-filters');
+      return parityFilters;
+    },
+    async put(){throw new Error('backtest_must_not_write_kv');},
+    async delete(){throw new Error('backtest_must_not_delete_kv');}
+  },
   get GSX_DB(){throw new Error('backtest_must_not_read_or_write_d1');},
   get GOLD_FEED(){throw new Error('backtest_must_not_touch_exposure_or_ticks');}
 },{});
 assert.equal(backtestResponse.status,200,'the read-only backtest endpoint must succeed without production bindings');
 const backtestPayload=await backtestResponse.json();
+assert.equal(backtestPayload.settingsSource,'official-server');
+assert.equal(backtestPayload.newsMode,'disabled-historical');
+assert.deepEqual(backtestPayload.filters,normalizeSignalFilters(parityFilters));
 assert.equal(backtestPayload.trades[0].signal.entry,directParity.entry);
 assert.equal(backtestPayload.trades[0].signal.tp1,directParity.tp1);
 assert.equal(backtestPayload.trades[0].signal.tp2,directParity.tp2);
 assert.equal(backtestPayload.trades[0].signal.sl,directParity.sl);
+assert.equal(backtestPayload.trades[0].signal.score,directParity.score);
+assert.equal(backtestPayload.trades[0].signal.conf,directParity.conf);
 
 const lifecycleSignal={
   id:'1m:test:buy',tf:'1m',side:'buy',entry:100,tp1:101,tp2:102,sl:99,
@@ -740,14 +777,14 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.6',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.7',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${deploymentEventId}`,{
   schema:2,eventId:deploymentEventId,rootSignalId:'1d:old-deploy:buy',signalId:'1d:old-deploy:buy',
   tf:'1d',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.5',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.6',
   status:'pending',attempts:0,nextAttemptAt:telegramNow,text:'previous deployment event'
 });
 await restartHarness.feed.processTelegramEvents();

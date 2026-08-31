@@ -154,7 +154,7 @@ function closedBacktestBars(bars,tf,evaluationAt) {
   return bars.filter(bar=>bar.t+duration<=evaluationAt);
 }
 
-export function runServerBacktest({tf,frames={},filters={},news=null,startAt=-Infinity,endAt=Infinity,maxEvaluations=2000}={}) {
+export function runServerBacktest({tf,frames={},filters={},news=null,startAt=-Infinity,endAt=Date.now(),maxEvaluations=2000}={}) {
   if (!SIGNAL_TIMEFRAMES.includes(tf)) throw new Error('bad_backtest_tf');
   const normalizedFrames=Object.fromEntries(
     SIGNAL_TIMEFRAMES.map(frame=>[frame,normalizeBacktestBars(frames?.[frame])])
@@ -201,6 +201,9 @@ export function runServerBacktest({tf,frames={},filters={},news=null,startAt=-In
     active={
       id:`${tf}:${result.lastTs}:${result.side}`,tf,side:result.side,
       entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
+      score:Number(result.score),bull:Number(result.bull),bear:Number(result.bear),
+      mtf:result.mtf?{...result.mtf}:null,regime:String(result.regime||''),
+      atr:Number(result.atr),lastClose:Number(result.lastClose),livePrice:Number(result.livePrice),
       conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
       signalBarTs:Number(result.lastTs),lastProcessedBarTs:Number(result.lastTs),
       createdAt:evaluationAt,updatedAt:evaluationAt,status:'active',tp1Hit:false,
