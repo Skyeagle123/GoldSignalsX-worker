@@ -23,7 +23,7 @@ const testSource = source.replace(
 ).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl));
 const worker = await import(`data:text/javascript;base64,${Buffer.from(testSource).toString('base64')}`);
 const {
-  computeServerSignal,evaluateCandleQuality,normalizeSignalFilters
+  computeServerSignal,evaluateCandleQuality,normalizeSignalFilters,runServerBacktest
 } = await import(signalEngineUrl);
 const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
@@ -480,6 +480,71 @@ Date.now=realDateNow;
 assert.equal(serverSignal.side,'buy','server signal engine must reproduce a strong confirmed buy');
 assert.ok(serverSignal.conf>=60);
 
+const parityAt=Date.UTC(2026,7,27,16,0,0);
+const parityFrames={
+  '1m':makeTrend('up',120,60_000,parityAt-60_000),
+  '5m':makeTrend('up',80,300_000,parityAt-300_000),
+  '15m':makeTrend('up',60,900_000,parityAt-900_000)
+};
+const parityFilters={nyFilterOn:false,pivotFilterOn:false};
+const parityNews={ok:true,stale:false,goldBias:{direction:'neutral',confidence:0},safety:{blockTechnicalSignal:false}};
+const directParity=computeServerSignal(parityFrames['1m'],{
+  tf:'1m',
+  mtf:[{tf:'5m',bars:parityFrames['5m']},{tf:'15m',bars:parityFrames['15m']}],
+  live:{price:parityFrames['1m'].at(-1).c,ts:parityAt,receivedAt:parityAt,source:'backtest'},
+  barsSource:'backtest',dataQuality:evaluateCandleQuality(parityFrames['1m'],'1m'),
+  filters:parityFilters,news:parityNews,evaluationAt:parityAt
+});
+assert.equal(directParity.side,'buy','the fixed parity dataset must produce a server signal');
+
+const backtestParity=runServerBacktest({
+  tf:'1m',frames:{
+    ...parityFrames,
+    '1m':[...parityFrames['1m'],{t:parityAt,o:9000,h:9001,l:8990,c:8991,v:1}]
+  },
+  filters:parityFilters,news:parityNews,startAt:parityAt,endAt:parityAt
+});
+assert.equal(backtestParity.mode,'simulation');
+assert.equal(backtestParity.engine,'computeServerSignal');
+assert.equal(backtestParity.trades.length,1);
+const simulatedSignal=backtestParity.trades[0].signal;
+assert.deepEqual(
+  {
+    side:simulatedSignal.side,entry:simulatedSignal.entry,tp1:simulatedSignal.tp1,
+    tp2:simulatedSignal.tp2,sl:simulatedSignal.sl,createdAt:simulatedSignal.createdAt,
+    signalBarTs:simulatedSignal.signalBarTs
+  },
+  {
+    side:directParity.side,entry:directParity.entry,tp1:directParity.tp1,
+    tp2:directParity.tp2,sl:directParity.sl,createdAt:parityAt,
+    signalBarTs:directParity.lastTs
+  },
+  'backtest and server must return the same decision and levels for identical closed candles and settings'
+);
+assert.equal(
+  simulatedSignal.entry,parityFrames['1m'].at(-1).c,
+  'a still-forming candle must not affect the backtest entry'
+);
+
+const backtestResponse=await worker.default.fetch(new Request('https://example.com/backtest',{
+  method:'POST',headers:{Origin:allowedOrigin,'content-type':'application/json'},
+  body:JSON.stringify({
+    tf:'1m',frames:parityFrames,filters:parityFilters,news:parityNews,
+    startAt:parityAt,endAt:parityAt
+  })
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),
+  get GSX_KV(){throw new Error('backtest_must_not_read_or_write_kv');},
+  get GSX_DB(){throw new Error('backtest_must_not_read_or_write_d1');},
+  get GOLD_FEED(){throw new Error('backtest_must_not_touch_exposure_or_ticks');}
+},{});
+assert.equal(backtestResponse.status,200,'the read-only backtest endpoint must succeed without production bindings');
+const backtestPayload=await backtestResponse.json();
+assert.equal(backtestPayload.trades[0].signal.entry,directParity.entry);
+assert.equal(backtestPayload.trades[0].signal.tp1,directParity.tp1);
+assert.equal(backtestPayload.trades[0].signal.tp2,directParity.tp2);
+assert.equal(backtestPayload.trades[0].signal.sl,directParity.sl);
+
 const lifecycleSignal={
   id:'1m:test:buy',tf:'1m',side:'buy',entry:100,tp1:101,tp2:102,sl:99,
   signalBarTs:fixedNow-4*60000,lastProcessedBarTs:fixedNow-4*60000,
@@ -675,14 +740,14 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.5',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.6',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${deploymentEventId}`,{
   schema:2,eventId:deploymentEventId,rootSignalId:'1d:old-deploy:buy',signalId:'1d:old-deploy:buy',
   tf:'1d',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.4',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.5',
   status:'pending',attempts:0,nextAttemptAt:telegramNow,text:'previous deployment event'
 });
 await restartHarness.feed.processTelegramEvents();
