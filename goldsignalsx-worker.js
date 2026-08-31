@@ -32,7 +32,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.6';
+const APP_VERSION = '2026.08.31.7';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -727,12 +727,17 @@ export default {
           return json({ok:false,error:'bad_backtest_size'},corsHeaders,400);
         }
         try {
+          const officialFilters=await readSignalFilters(env);
+          const requestedEndAt=Number(body.endAt);
           const result=runServerBacktest({
-            tf:String(body.tf||''),frames,filters:body.filters||{},news:body.news||null,
-            startAt:body.startAt??-Infinity,endAt:body.endAt??Infinity,
+            tf:String(body.tf||''),frames,filters:officialFilters,news:null,
+            startAt:body.startAt??-Infinity,
+            endAt:Number.isFinite(requestedEndAt)?Math.min(requestedEndAt,Date.now()):Date.now(),
             maxEvaluations:Math.min(2000,Math.max(1,Number(body.maxEvaluations)||2000))
           });
-          return jsonNoStore(result,corsHeaders);
+          return jsonNoStore({
+            ...result,settingsSource:'official-server',newsMode:'disabled-historical'
+          },corsHeaders);
         } catch (error) {
           const message=String(error?.message||error);
           const safe=['bad_backtest_tf','insufficient_backtest_bars'].includes(message)
