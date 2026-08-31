@@ -28,11 +28,16 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.3';
+const APP_VERSION = '2026.08.31.4';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
 const TICK_HISTORY_QUERY_MAX = 2400;
+const GOLD_EXPOSURE_KEY = 'exposure:XAUUSD';
+const GOLD_EXPOSURE_COOLDOWN_MS = 30 * 60 * 1000;
+const GOLD_EXPOSURE_MAX_RECORDS = 50;
+const GOLD_EXPOSURE_TIMEFRAMES = ['5m','15m','30m','60m','240m','1d'];
+const GOLD_EXPOSURE_TF_RANK = Object.freeze({'5m':1,'15m':2,'30m':3,'60m':4,'240m':5,'1d':6});
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -66,6 +71,134 @@ function appendTickHistory(history, tick) {
   let first = 0;
   while (first < ticks.length && ticks[first].ts < cutoff) first += 1;
   return ticks.slice(Math.max(first, ticks.length - TICK_HISTORY_MAX));
+}
+
+function normalizedExposureSignal(value) {
+  const tf=String(value?.tf||'');
+  const side=String(value?.side||'');
+  const id=String(value?.id||'');
+  if (!id||!SIGNAL_TIMEFRAMES.includes(tf)||!['buy','sell'].includes(side)) return null;
+  return {
+    id,tf,side,conf:Number.isFinite(Number(value?.conf))?Number(value.conf):0,
+    signalBarTs:Number(value?.signalBarTs)||0,createdAt:Number(value?.createdAt)||0,
+    status:String(value?.status||'')
+  };
+}
+
+function compareExposureCandidates(left,right) {
+  const confidence=Number(right?.conf||0)-Number(left?.conf||0);
+  if (confidence) return confidence;
+  const timeframe=Number(GOLD_EXPOSURE_TF_RANK[right?.tf]||0)-Number(GOLD_EXPOSURE_TF_RANK[left?.tf]||0);
+  if (timeframe) return timeframe;
+  const barTime=Number(right?.signalBarTs||0)-Number(left?.signalBarTs||0);
+  return barTime||String(left?.id||'').localeCompare(String(right?.id||''));
+}
+
+function appendExposureRecord(records,record) {
+  const list=Array.isArray(records)?records.filter(item=>item?.signalId!==record.signalId):[];
+  return [...list,record].slice(-GOLD_EXPOSURE_MAX_RECORDS);
+}
+
+function activeExposureFromSignal(signal,now,source='admission') {
+  return {
+    symbol:'XAUUSD',status:'active',side:signal.side,maxPositions:1,
+    primarySignalId:signal.id,primaryTf:signal.tf,openedAt:Number(signal.createdAt)||now,
+    updatedAt:now,cooldownUntil:0,closeReason:'',closedAt:0,
+    confirmations:[],blocked:[],source
+  };
+}
+
+function closeGoldExposure(state,status,now) {
+  const stopped=status==='stopped';
+  return {
+    ...state,status:stopped?'cooldown':'flat',updatedAt:now,closedAt:now,
+    closeReason:stopped?'sl':status,cooldownUntil:stopped?now+GOLD_EXPOSURE_COOLDOWN_MS:0,
+    lastPrimarySignalId:state.primarySignalId,lastPrimaryTf:state.primaryTf,
+    primarySignalId:'',primaryTf:'',side:''
+  };
+}
+
+function decideGoldExposure(previous,input={}) {
+  const now=Number(input.now)||Date.now();
+  const officialSignals=(Array.isArray(input.officialSignals)?input.officialSignals:[])
+    .map(normalizedExposureSignal).filter(Boolean);
+  const candidates=(Array.isArray(input.candidates)?input.candidates:[])
+    .map(normalizedExposureSignal).filter(Boolean);
+  let state=previous&&typeof previous==='object'?{...previous}:null;
+  let justClosed=false;
+
+  if (state?.status==='active'&&state.primarySignalId) {
+    const primary=officialSignals.find(signal=>signal.id===state.primarySignalId);
+    if (primary&&['tp2','stopped','expired'].includes(primary.status)) {
+      state=closeGoldExposure(state,primary.status,now);
+      justClosed=true;
+    } else {
+      state={...state,updatedAt:now};
+    }
+  }
+  if (state?.status==='cooldown'&&now>=Number(state.cooldownUntil||0)) {
+    state={...state,status:'flat',updatedAt:now,cooldownUntil:0};
+  }
+
+  // On the first deployment, fold already-open timeframe signals into one
+  // market exposure without rewriting their historical TP/SL state.
+  if (!state) {
+    const activeOfficial=officialSignals
+      .filter(signal=>GOLD_EXPOSURE_TIMEFRAMES.includes(signal.tf)&&['active','tp1'].includes(signal.status))
+      .sort(compareExposureCandidates);
+    if (activeOfficial.length) {
+      const primary=activeOfficial[0];
+      state=activeExposureFromSignal(primary,now,'bootstrap');
+      for (const signal of activeOfficial.slice(1)) {
+        const record={signalId:signal.id,tf:signal.tf,side:signal.side,conf:signal.conf,observedAt:now,source:'bootstrap'};
+        if (signal.side===primary.side) state.confirmations=appendExposureRecord(state.confirmations,record);
+        else state.blocked=appendExposureRecord(state.blocked,{...record,reason:'opposite'});
+      }
+    } else {
+      state={symbol:'XAUUSD',status:'flat',side:'',maxPositions:1,primarySignalId:'',primaryTf:'',openedAt:0,updatedAt:now,closedAt:0,closeReason:'',cooldownUntil:0,confirmations:[],blocked:[],source:'initialized'};
+    }
+  }
+
+  const decisions=[];
+  const decideAgainstActive=candidate=>{
+    const sameDirection=candidate.side===state.side;
+    const decision=sameDirection?'confirmation':'blocked_opposite';
+    const record={signalId:candidate.id,tf:candidate.tf,side:candidate.side,conf:candidate.conf,observedAt:now,source:'candidate'};
+    if (sameDirection) state.confirmations=appendExposureRecord(state.confirmations,record);
+    else state.blocked=appendExposureRecord(state.blocked,{...record,reason:'opposite'});
+    decisions.push({signalId:candidate.id,tf:candidate.tf,decision,primarySignalId:state.primarySignalId});
+  };
+
+  if (state.status==='active') {
+    for (const candidate of candidates) decideAgainstActive(candidate);
+  } else if (state.status==='cooldown'&&now<Number(state.cooldownUntil||0)) {
+    for (const candidate of candidates) {
+      const decision=candidate.tf==='1m'?'informational_cooldown':'blocked_cooldown';
+      state.blocked=appendExposureRecord(state.blocked,{
+        signalId:candidate.id,tf:candidate.tf,side:candidate.side,conf:candidate.conf,
+        observedAt:now,source:'candidate',reason:'cooldown'
+      });
+      decisions.push({signalId:candidate.id,tf:candidate.tf,decision,cooldownUntil:state.cooldownUntil});
+    }
+  } else {
+    const eligible=candidates.filter(candidate=>GOLD_EXPOSURE_TIMEFRAMES.includes(candidate.tf)).sort(compareExposureCandidates);
+    const winner=eligible[0]||null;
+    if (winner) {
+      state=activeExposureFromSignal({...winner,createdAt:now},now,justClosed?'post-close':'admission');
+      decisions.push({signalId:winner.id,tf:winner.tf,decision:'accepted',primarySignalId:winner.id});
+      for (const candidate of candidates) {
+        if (candidate.id===winner.id) continue;
+        decideAgainstActive(candidate);
+      }
+    } else {
+      for (const candidate of candidates) {
+        decisions.push({signalId:candidate.id,tf:candidate.tf,decision:'informational'});
+      }
+    }
+  }
+
+  state={...state,updatedAt:now,maxPositions:1};
+  return {state,decisions};
 }
 
 /**
@@ -135,6 +268,39 @@ export class GoldFeed extends DurableObject {
       count: ticks.length,
       ticks
     };
+  }
+
+  async manageGoldExposure(input = {}) {
+    return this.ctx.storage.transaction(async transaction => {
+      const previous=await transaction.get(GOLD_EXPOSURE_KEY);
+      const result=decideGoldExposure(previous,input);
+      await transaction.put(GOLD_EXPOSURE_KEY,result.state);
+      return result;
+    });
+  }
+
+  async goldExposureStatus() {
+    const state=await this.ctx.storage.get(GOLD_EXPOSURE_KEY);
+    return state||{
+      symbol:'XAUUSD',status:'flat',side:'',maxPositions:1,
+      primarySignalId:'',primaryTf:'',cooldownUntil:0
+    };
+  }
+
+  async cancelGoldExposureReservation(input = {}) {
+    const signalId=String(input.signalId||'');
+    const now=Number(input.now)||Date.now();
+    return this.ctx.storage.transaction(async transaction => {
+      const state=await transaction.get(GOLD_EXPOSURE_KEY);
+      if (!state||state.status!=='active'||state.primarySignalId!==signalId) return state||null;
+      const cancelled={
+        ...state,status:'flat',side:'',primarySignalId:'',primaryTf:'',
+        updatedAt:now,closedAt:now,closeReason:'admission_failed',cooldownUntil:0,
+        lastPrimarySignalId:signalId
+      };
+      await transaction.put(GOLD_EXPOSURE_KEY,cancelled);
+      return cancelled;
+    });
   }
 
   async ensureProvider() {
@@ -377,13 +543,16 @@ export default {
 
       if (path === '/diagnostics') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
-        const [cycle,history,telegram,filters]=await Promise.all([
+        const [cycle,history,telegram,filters,exposure]=await Promise.all([
           readKvJson(env,'system:signal-cycle'),
           readKvJson(env,'system:history-status'),
           readTelegramDiagnostics(env),
-          readSignalFilters(env)
+          readSignalFilters(env),
+          env.GOLD_FEED
+            ? env.GOLD_FEED.getByName('xau-usd').goldExposureStatus().catch(()=>null)
+            : Promise.resolve(null)
         ]);
-        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram,filters},corsHeaders);
+        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram,filters,exposure},corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -813,6 +982,9 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     frames[tf]={tf,bars,quality:evaluateCandleQuality(bars,tf),provider:String(bars.at(-1)?.provider||'')};
   }));
   const trackingBars=frames['1m'].bars;
+  const currentSignals={};
+  const candidates=[];
+  const evaluations=new Map();
 
   for (const tf of SIGNAL_TIMEFRAMES) {
     const existing=await readKvJson(env,`signal:state:${tf}`);
@@ -824,8 +996,10 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       } else if (JSON.stringify(lifecycle.events.at(-1).signal)!==JSON.stringify(lifecycle.signal)) {
         await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(lifecycle.signal),{expirationTtl:90*24*60*60});
       }
+      currentSignals[tf]=lifecycle.signal;
       continue;
     }
+    currentSignals[tf]=existing||null;
 
     const frame=frames[tf];
     const mtf=(HIGHER_SIGNAL_TF[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
@@ -833,7 +1007,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       tf,mtf,live,barsSource:'d1',news,dataQuality:frame.quality,filters
     });
     const evaluation={...result,provider:frame.provider,quality:frame.quality,evaluatedAt:now};
-    await env.GSX_KV.put(`signal:evaluation:${tf}`,JSON.stringify(evaluation),{expirationTtl:24*60*60});
+    evaluations.set(tf,evaluation);
     if (!['buy','sell'].includes(result.side)) continue;
     const signalBarTs=Number(result.lastTs||frame.bars.at(-1)?.t||now);
     if (existing&&signalBarTs<=Number(existing.closedBarTs||existing.signalBarTs||0)) continue;
@@ -845,7 +1019,61 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       origin:'server',
       provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters
     };
-    await saveSignalState(env,signal,'created');
+    candidates.push(signal);
+  }
+
+  const officialSignals=GOLD_EXPOSURE_TIMEFRAMES
+    .map(tf=>currentSignals[tf]).filter(Boolean);
+  let exposureResult;
+  let exposureStub=null;
+  if (env.GOLD_FEED) {
+    exposureStub=env.GOLD_FEED.getByName('xau-usd');
+    try {
+      exposureResult=await exposureStub.manageGoldExposure({now,officialSignals,candidates});
+    } catch (error) {
+      console.error(JSON.stringify({
+        message:'gold exposure admission failed',
+        error:error instanceof Error?error.message:String(error)
+      }));
+    }
+  }
+  if (!exposureResult) {
+    exposureResult={
+      state:{symbol:'XAUUSD',status:'unavailable',maxPositions:1},
+      decisions:candidates.map(signal=>({
+        signalId:signal.id,tf:signal.tf,decision:'blocked_manager_unavailable'
+      }))
+    };
+  }
+
+  const decisions=new Map(exposureResult.decisions.map(decision=>[decision.signalId,decision]));
+  const candidateByTf=new Map(candidates.map(signal=>[signal.tf,signal]));
+  for (const [tf,evaluation] of evaluations) {
+    const candidate=candidateByTf.get(tf);
+    const decision=candidate?decisions.get(candidate.id):null;
+    const stored=decision?{
+      ...evaluation,
+      exposure:{
+        decision:decision.decision,
+        primarySignalId:decision.primarySignalId||exposureResult.state?.primarySignalId||'',
+        maxPositions:1,
+        cooldownUntil:Number(decision.cooldownUntil||exposureResult.state?.cooldownUntil||0)
+      }
+    }:evaluation;
+    await env.GSX_KV.put(`signal:evaluation:${tf}`,JSON.stringify(stored),{expirationTtl:24*60*60});
+  }
+
+  for (const signal of candidates) {
+    const decision=decisions.get(signal.id);
+    if (decision?.decision!=='accepted') continue;
+    try {
+      await saveSignalState(env,signal,'created');
+    } catch (error) {
+      if (exposureStub) {
+        await exposureStub.cancelGoldExposureReservation({signalId:signal.id,now:Date.now()}).catch(()=>null);
+      }
+      throw error;
+    }
   }
 }
 
@@ -2054,5 +2282,5 @@ export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory
+  pruneTickHistory,decideGoldExposure
 };
