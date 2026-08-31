@@ -22,14 +22,30 @@ const testSource = source.replace(
   'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }'
 ).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl));
 const worker = await import(`data:text/javascript;base64,${Buffer.from(testSource).toString('base64')}`);
-const { computeServerSignal, evaluateCandleQuality } = await import(signalEngineUrl);
+const {
+  computeServerSignal,evaluateCandleQuality,normalizeSignalFilters
+} = await import(signalEngineUrl);
 const {
   GoldFeed,classifyNewsArticle,buildNewsBrief,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars,closedBarsOnly
+  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters
 } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
+assert.deepEqual(normalizeSignalFilters(),{
+  nyFilterOn:true,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:0.7
+});
+assert.deepEqual(normalizeSignalFilters({
+  nyFilterOn:false,nyStart:'09:15',nyEnd:'16:45',pivotFilterOn:false,pivotDistance:1.25
+}),{
+  nyFilterOn:false,nyStart:'09:15',nyEnd:'16:45',pivotFilterOn:false,pivotDistance:1.25
+});
+const parsedFilters=signalFiltersFromSearchParams(new URL('https://example.com/signals?tf=1m&nyFilterOn=0&nyStart=09%3A15&nyEnd=16%3A45&pivotFilterOn=1&pivotDistance=1.25').searchParams);
+assert.equal(parsedFilters.ok,true);
+assert.deepEqual(parsedFilters.filters,{
+  nyFilterOn:false,nyStart:'09:15',nyEnd:'16:45',pivotFilterOn:true,pivotDistance:1.25
+});
+assert.equal(signalFiltersFromSearchParams(new URL('https://example.com/signals?nyFilterOn=0').searchParams).ok,false);
 const seen = '20260827T075500Z';
 assert.equal(parseGdeltSeenDate(seen), Date.UTC(2026, 7, 27, 7, 55, 0));
 
@@ -235,6 +251,53 @@ const serverSignal=computeServerSignal(signalBars,{
   dataQuality:signalQuality,
   news:{ok:true,stale:false,goldBias:{direction:'neutral',confidence:0},safety:{blockTechnicalSignal:false}}
 });
+const outsideNyNow=Date.UTC(2026,7,27,6,0,0);
+Date.now=()=>outsideNyNow;
+const outsideNyBars=makeTrend('up',3000,60000,outsideNyNow-120000);
+const outsideNyOptions={
+  tf:'1m',
+  mtf:[
+    {tf:'5m',bars:makeTrend('up',600,300000,outsideNyNow-600000)},
+    {tf:'15m',bars:makeTrend('up',240,900000,outsideNyNow-1800000)}
+  ],
+  live:{price:outsideNyBars.at(-1).c,ts:outsideNyNow-1000,receivedAt:outsideNyNow-1000,source:'d1'},
+  barsSource:'d1',
+  dataQuality:evaluateCandleQuality(outsideNyBars,'1m'),
+  news:{ok:true,stale:false,goldBias:{direction:'neutral',confidence:0},safety:{blockTechnicalSignal:false}}
+};
+const nyFilterOn=computeServerSignal(outsideNyBars,{
+  ...outsideNyOptions,filters:{nyFilterOn:true,pivotFilterOn:false}
+});
+assert.equal(nyFilterOn.side,'none','New York filter ON must block an otherwise valid signal outside the configured window');
+assert.ok(nyFilterOn.reasons.includes('خارج جلسة نيويورك'));
+const nyFilterOff=computeServerSignal(outsideNyBars,{
+  ...outsideNyOptions,filters:{nyFilterOn:false,pivotFilterOn:false}
+});
+assert.equal(nyFilterOff.side,'buy','New York filter OFF must allow an otherwise valid signal outside the configured window');
+assert.ok(!nyFilterOff.reasons.includes('خارج جلسة نيويورك'));
+
+function makeNearPivotTrend(count,end) {
+  return Array.from({length:count},(_,index)=>{
+    const recent=index>=count-45;
+    const o=recent?2390+(index-(count-45))*0.8:2400;
+    const c=recent?o+0.7:2400;
+    return {t:end-(count-1-index)*60000,o,h:Math.max(o,c)+0.1,l:Math.min(o,c)-0.1,c,v:10};
+  });
+}
+const pivotBars=makeNearPivotTrend(3000,outsideNyNow-120000);
+const pivotOptions={
+  ...outsideNyOptions,
+  live:{...outsideNyOptions.live,price:pivotBars.at(-1).c},
+  dataQuality:evaluateCandleQuality(pivotBars,'1m'),
+  filters:{nyFilterOn:false,pivotFilterOn:false,pivotDistance:50}
+};
+const pivotFilterOff=computeServerSignal(pivotBars,pivotOptions);
+assert.equal(pivotFilterOff.side,'buy','Pivot filter OFF must not veto an otherwise valid signal');
+const pivotFilterOn=computeServerSignal(pivotBars,{
+  ...pivotOptions,filters:{nyFilterOn:false,pivotFilterOn:true,pivotDistance:50}
+});
+assert.equal(pivotFilterOn.side,'none','Pivot filter ON must use the configured distance');
+assert.ok(pivotFilterOn.reasons.some(reason=>reason.startsWith('السعر قريب من')));
 Date.now=realDateNow;
 assert.equal(serverSignal.side,'buy','server signal engine must reproduce a strong confirmed buy');
 assert.ok(serverSignal.conf>=60);
@@ -330,6 +393,39 @@ const snapshotResponse=await worker.default.fetch(new Request('https://example.c
 assert.equal(snapshotResponse.status,200);
 const snapshot=await snapshotResponse.json();
 assert.equal(snapshot.signals[0].state.id,'test-signal');
+
+const filterStore=new Map([
+  ['system:signal-cycle',JSON.stringify({status:'running',startedAt:Date.now()})]
+]);
+const filterKv={
+  get:async (key,type)=>{
+    const value=filterStore.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  },
+  put:async (key,value)=>filterStore.set(key,value)
+};
+const syncFiltersResponse=await worker.default.fetch(new Request(
+  'https://example.com/signals?tf=5m&nyFilterOn=0&nyStart=08%3A00&nyEnd=17%3A00&pivotFilterOn=1&pivotDistance=1.25',
+  {headers:{Origin:allowedOrigin}}
+),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:filterKv
+},{waitUntil:()=>{}});
+assert.equal(syncFiltersResponse.status,200,'an allowed PWA origin must be able to synchronize bounded signal filters');
+const syncedPayload=await syncFiltersResponse.json();
+assert.deepEqual(syncedPayload.filters,{
+  nyFilterOn:false,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:1.25
+});
+assert.deepEqual(await readSignalFilters({GSX_KV:filterKv}),syncedPayload.filters);
+
+const beforeRejectedSync=filterStore.get('system:signal-filters');
+const rejectedFilterSync=await worker.default.fetch(new Request(
+  'https://example.com/signals?tf=5m&nyFilterOn=1&nyStart=08%3A00&nyEnd=17%3A00&pivotFilterOn=0&pivotDistance=0.7',
+  {headers:{Origin:'https://attacker.example'}}
+),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:filterKv
+},{waitUntil:()=>{}});
+assert.equal(rejectedFilterSync.status,403,'a disallowed browser origin must not change signal filters');
+assert.equal(filterStore.get('system:signal-filters'),beforeRejectedSync);
 
 let aiCalls = 0;
 const translated = await enrichNewsBriefArabic({

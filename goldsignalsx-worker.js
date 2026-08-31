@@ -1,5 +1,10 @@
 import { DurableObject } from 'cloudflare:workers';
-import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from './signal-engine.js';
+import {
+  SIGNAL_TIMEFRAMES,
+  computeServerSignal,
+  evaluateCandleQuality,
+  normalizeSignalFilters
+} from './signal-engine.js';
 
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
@@ -22,7 +27,8 @@ import { SIGNAL_TIMEFRAMES, computeServerSignal, evaluateCandleQuality } from '.
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.28.4';
+const APP_VERSION = '2026.08.31.1';
+const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TELEGRAM_DELIVERY_TTL = 90 * 24 * 60 * 60;
 const TELEGRAM_MAX_ATTEMPTS = 8;
 const MAX_BARS_LIMIT = 5000;
@@ -270,20 +276,36 @@ export default {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const tf=url.searchParams.get('tf')||'';
         if (tf&&!SIGNAL_TIMEFRAMES.includes(tf)) return json({ok:false,error:'bad_tf'},corsHeaders,400);
+        const requested=signalFiltersFromSearchParams(url.searchParams);
+        if (!requested.ok) return json({ok:false,error:'bad_signal_filters'},corsHeaders,400);
+        let filters=await readSignalFilters(env);
+        let filtersChanged=false;
+        if (requested.provided) {
+          if (!origin||(!allow.includes('*')&&!allow.includes(origin))) {
+            return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
+          }
+          if (!env.GSX_KV||KV_OFF) return json({ok:false,error:'signals_storage_unavailable'},corsHeaders,503);
+          filtersChanged=JSON.stringify(filters)!==JSON.stringify(requested.filters);
+          if (filtersChanged) {
+            filters=requested.filters;
+            await env.GSX_KV.put(SIGNAL_FILTERS_KEY,JSON.stringify({...filters,updatedAt:Date.now()}));
+          }
+        }
         const snapshot=await readSignalSnapshot(env,tf||null);
         const stale=Date.now()-Number(snapshot.updatedAt||0)>6*60_000;
-        if (stale&&ctx?.waitUntil) ctx.waitUntil(runScheduledTasksGuarded(env,'signals-read'));
-        return jsonNoStore({...snapshot,refreshing:stale},corsHeaders);
+        if ((stale||filtersChanged)&&ctx?.waitUntil) ctx.waitUntil(runScheduledTasksGuarded(env,'signals-read'));
+        return jsonNoStore({...snapshot,filters,refreshing:stale||filtersChanged},corsHeaders);
       }
 
       if (path === '/diagnostics') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
-        const [cycle,history,telegram]=await Promise.all([
+        const [cycle,history,telegram,filters]=await Promise.all([
           readKvJson(env,'system:signal-cycle'),
           readKvJson(env,'system:history-status'),
-          readTelegramDiagnostics(env)
+          readTelegramDiagnostics(env),
+          readSignalFilters(env)
         ]);
-        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram},corsHeaders);
+        return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram,filters},corsHeaders);
       }
 
       // CSV import -> D1 seed fast
@@ -469,7 +491,10 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
   const historyPromise=isTwelveDataConfigured(env)
     ? backfillTwelveDataHistory(env)
     : backfillSignalRollups(env);
-  tasks.push(historyPromise.then(()=>newsPromise).then(news=>runSignalCycle(env,news)));
+  tasks.push(historyPromise.then(()=>newsPromise).then(async news=>{
+    const filters=await readSignalFilters(env);
+    return runSignalCycle(env,news,filters);
+  }));
   const results = await Promise.allSettled(tasks);
   const errors=[];
   results.filter(result => result.status === 'rejected').forEach(result => {
@@ -550,6 +575,33 @@ async function readKvJson(env,key) {
   } catch {
     return null;
   }
+}
+
+function signalFiltersFromSearchParams(searchParams) {
+  const names=['nyFilterOn','nyStart','nyEnd','pivotFilterOn','pivotDistance'];
+  const provided=names.some(name=>searchParams.has(name));
+  if (!provided) return {ok:true,provided:false,filters:null};
+  if (!names.every(name=>searchParams.has(name))) return {ok:false,provided:true,filters:null};
+  const parseBoolean=value=>value==='1'||value==='true'?true:value==='0'||value==='false'?false:null;
+  const nyFilterOn=parseBoolean(searchParams.get('nyFilterOn'));
+  const pivotFilterOn=parseBoolean(searchParams.get('pivotFilterOn'));
+  const nyStart=String(searchParams.get('nyStart')||'');
+  const nyEnd=String(searchParams.get('nyEnd')||'');
+  const pivotDistance=Number(searchParams.get('pivotDistance'));
+  const validClock=value=>/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if (nyFilterOn===null||pivotFilterOn===null||!validClock(nyStart)||!validClock(nyEnd)||
+      !Number.isFinite(pivotDistance)||pivotDistance<0||pivotDistance>50) {
+    return {ok:false,provided:true,filters:null};
+  }
+  return {
+    ok:true,
+    provided:true,
+    filters:normalizeSignalFilters({nyFilterOn,nyStart,nyEnd,pivotFilterOn,pivotDistance})
+  };
+}
+
+async function readSignalFilters(env) {
+  return normalizeSignalFilters(await readKvJson(env,SIGNAL_FILTERS_KEY)||{});
 }
 
 async function readSignalSnapshot(env,tf=null) {
@@ -670,7 +722,7 @@ async function saveSignalState(env,signal,event) {
   }
 }
 
-async function runSignalCycle(env,news) {
+async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   if (String(env.SIGNALS_ENABLED||'1').trim()==='0'||!env.GSX_DB||!env.GSX_KV) return;
   const live=await currentPriceForSignals(env);
   if (!live) return;
@@ -700,7 +752,7 @@ async function runSignalCycle(env,news) {
     const frame=frames[tf];
     const mtf=(HIGHER_SIGNAL_TF[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
     const result=computeServerSignal(frame.bars,{
-      tf,mtf,live,barsSource:'d1',news,dataQuality:frame.quality
+      tf,mtf,live,barsSource:'d1',news,dataQuality:frame.quality,filters
     });
     const evaluation={...result,provider:frame.provider,quality:frame.quality,evaluatedAt:now};
     await env.GSX_KV.put(`signal:evaluation:${tf}`,JSON.stringify(evaluation),{expirationTtl:24*60*60});
@@ -713,7 +765,7 @@ async function runSignalCycle(env,news) {
       conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
       signalBarTs,lastProcessedBarTs:signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
       origin:'server',
-      provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral'
+      provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters
     };
     await saveSignalState(env,signal,'created');
   }
@@ -1923,5 +1975,5 @@ async function upsertCompletedBarRollups(env,bar) {
 export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
-  updateSignalLifecycleAcrossBars,closedBarsOnly
+  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters
 };
