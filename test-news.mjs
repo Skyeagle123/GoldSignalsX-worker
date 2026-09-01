@@ -18,11 +18,16 @@ if (typeof globalThis.crypto.subtle.timingSafeEqual !== 'function') {
 
 const source = await fs.readFile(new URL('./goldsignalsx-worker.js', import.meta.url), 'utf8');
 const signalEngineUrl = new URL('./signal-engine.js', import.meta.url).href;
+const economicCalendarUrl = new URL('./economic-calendar.js', import.meta.url).href;
 const testSource = source.replace(
   "import { DurableObject } from 'cloudflare:workers';",
   'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }'
-).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl));
-const worker = await import(`data:text/javascript;base64,${Buffer.from(testSource).toString('base64')}`);
+).replace("'./signal-engine.js'", JSON.stringify(signalEngineUrl))
+  .replace("'./economic-calendar.js'", JSON.stringify(economicCalendarUrl));
+const generatedWorkerUrl=new URL('./.test-worker.generated.mjs',import.meta.url);
+await fs.writeFile(generatedWorkerUrl,testSource);
+const worker = await import(`${generatedWorkerUrl.href}?v=${Date.now()}`);
+await fs.unlink(generatedWorkerUrl);
 const {
   computeServerSignal,evaluateCandleQuality,normalizeSignalFilters,runServerBacktest
 } = await import(signalEngineUrl);
@@ -33,8 +38,15 @@ const {
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
-  readProductionPerformance,buildPerformanceSummary,signalResultR
+  readProductionPerformance,buildPerformanceSummary,signalResultR,
+  ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
+  persistCalendarEvents,persistNewsEvents
 } = worker;
+const {
+  normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
+  parseCensusScheduleHtml,parseIsmCalendarHtml,enrichCalendarActuals,
+  calendarRiskSnapshot,extractOfficialActual
+}=await import(economicCalendarUrl);
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
 assert.deepEqual(normalizeSignalFilters(),{
@@ -106,8 +118,8 @@ const brief = buildNewsBrief([{
   seendate: seen
 }], now);
 assert.equal(brief.goldBias.direction, 'bullish');
-assert.equal(brief.safety.blockTechnicalSignal, true);
-assert.equal(brief.safety.blockUntil, Date.UTC(2026, 7, 27, 8, 10, 0));
+assert.equal(brief.safety.blockTechnicalSignal, false,'one headline must never block trading');
+assert.equal(brief.safety.blockUntil, null);
 
 const untrusted = classifyNewsArticle({
   title: 'Gold surges as war and sanctions trigger safe haven demand',
@@ -780,7 +792,7 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.1',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.2',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
@@ -1081,5 +1093,114 @@ assert.equal(performancePayload.storage,'D1');
 const emptySummary=buildPerformanceSummary([]);
 assert.equal(emptySummary.signals,0);
 assert.equal(emptySummary.maxDrawdownR,0);
+
+// Point 8: official calendar parsers, risk policy and context-only news.
+const calendarSettings=normalizeCalendarSettings({});
+assert.deepEqual(calendarSettings,{
+  macroBeforeMinutes:30,macroAfterMinutes:15,fomcBeforeMinutes:60,fomcAfterMinutes:30,
+  claimsBeforeMinutes:15,claimsAfterMinutes:10,geopoliticalAfterMinutes:15,localTimeZone:'Asia/Beirut'
+});
+const blsEvents=parseBlsIcs(`BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:cpi-202609\nDTSTART;TZID=America/New_York:20260910T083000\nSUMMARY:Consumer Price Index\nEND:VEVENT\nBEGIN:VEVENT\nUID:jobs-202609\nDTSTART;TZID=America/New_York:20260904T083000\nSUMMARY:Employment Situation\nEND:VEVENT\nEND:VCALENDAR`,calendarSettings,Date.UTC(2026,8,1));
+assert.deepEqual(blsEvents.map(event=>event.type),['cpi','core_cpi','nfp','unemployment_rate']);
+assert.equal(blsEvents[0].eventAt,Date.UTC(2026,8,10,12,30),'BLS Eastern release time must convert to UTC');
+assert.equal(blsEvents[0].forecast,null,'officially unavailable forecasts must stay null');
+assert.equal(extractOfficialActual('cpi','The Consumer Price Index increased 0.3 percent in August.'),'0.3%');
+assert.equal(extractOfficialActual('core_cpi','The all items less food and energy index rose 0.2 percent.'),'0.2%');
+assert.equal(extractOfficialActual('nfp','Total nonfarm payroll employment increased by 145,000 in August.'),'145000');
+assert.equal(extractOfficialActual('pce','The PCE price index increased 0.2 percent.'),'0.2%');
+assert.equal(extractOfficialActual('ism','PMI was 52.1'),null,'unsupported official values must remain null');
+
+const beaEvents=parseBeaScheduleHtml(`<h1>Year 2026</h1><table><tr><td><div class="release-date">September 25, 2026</div><small class="text-muted">8:30 AM</small></td><td class="release-title">Personal Income and Outlays, August 2026</td></tr><tr><td><div class="release-date">September 30, 2026</div><small>8:30 AM</small></td><td class="release-title">Gross Domestic Product, 2nd Quarter 2026</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
+assert.deepEqual(beaEvents.map(event=>event.type),['pce','core_pce','gdp']);
+const fedEvents=parseFedCalendarHtml(`<h1>September 2026</h1><div class="panel"><div class="col-xs-2"><p>2:00 p.m.</p></div><div class="col-xs-7">FOMC Meeting</div><div class="col-xs-3"><p>16</p></div></div><div class="panel"><div class="col-xs-2"><p>10:00 a.m.</p></div><div class="col-xs-7">Speech - Chair Jerome H. Powell on monetary policy and inflation</div><div class="col-xs-3"><p>22</p></div></div>`,`https://www.federalreserve.gov/newsevents/2026-september.htm`,calendarSettings,Date.UTC(2026,8,1));
+assert.deepEqual(fedEvents.map(event=>event.type),['fomc_decision','powell_monetary_speech']);
+assert.equal(fedEvents[0].riskBeforeMinutes,60);
+const censusEvents=parseCensusScheduleHtml(`<table><tr><td>Advance Monthly Sales for Retail and Food Services</td><td>September 16, 2026 8:30 AM</td><td>A202609160001</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
+assert.equal(censusEvents[0].type,'retail_sales');
+const ismEvents=parseIsmCalendarHtml(`<table><tr><td>September 2026</td><td>1</td><td>3</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
+assert.deepEqual(ismEvents.map(event=>event.type),['ism_manufacturing','ism_services']);
+assert.ok(ismEvents.every(event=>event.actual===null&&event.forecast===null&&event.previous===null));
+
+const riskEvent={...blsEvents[0],eventAt:Date.UTC(2026,8,10,12,30)};
+assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt-30*60_000,calendarSettings).active,true);
+assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt+15*60_000,calendarSettings).active,true);
+assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt+15*60_000+1,calendarSettings).active,false);
+
+const geopoliticalAt=Date.UTC(2026,8,1,10,0);
+const confirmedNews=buildNewsBrief([
+  {title:'Gold surges as war airstrikes escalate safe haven demand',url:'https://www.reuters.com/world/confirmed-a',seenAt:geopoliticalAt-60_000},
+  {title:'Gold rises as war missiles escalate safe haven demand',url:'https://apnews.com/article/confirmed-b',seenAt:geopoliticalAt-90_000}
+],geopoliticalAt);
+assert.equal(confirmedNews.safety.blockTechnicalSignal,true,'two independent trusted sources must confirm exceptional geopolitical risk');
+assert.equal(confirmedNews.safety.corroboratedDomains.length,2);
+const conflictingNews=buildNewsBrief([
+  {title:'Gold surges as war airstrikes escalate safe haven demand',url:'https://www.reuters.com/world/conflict-a',seenAt:geopoliticalAt-60_000},
+  {title:'Gold rises as missile escalation drives safe haven demand',url:'https://apnews.com/article/conflict-b',seenAt:geopoliticalAt-70_000},
+  {title:'Gold falls as ceasefire agreed while Treasury yields rise and dollar strengthens',url:'https://www.bbc.com/news/conflict-c',seenAt:geopoliticalAt-80_000},
+  {title:'Gold drops as ceasefire holds while yields rise and dollar strengthens',url:'https://www.cnbc.com/conflict-d',seenAt:geopoliticalAt-90_000}
+],geopoliticalAt);
+assert.equal(conflictingNews.goldBias.direction,'mixed');
+assert.equal(conflictingNews.safety.classification,'mixed/conflicting');
+assert.equal(conflictingNews.safety.blockUntil,geopoliticalAt-60_000+15*60_000,'conflicting-news risk must be capped at 15 minutes after the latest item');
+
+const noNewsScore=computeServerSignal(parityFrames['1m'],{
+  tf:'1m',mtf:[{tf:'5m',bars:parityFrames['5m']},{tf:'15m',bars:parityFrames['15m']}],
+  live:{price:parityFrames['1m'].at(-1).c,ts:parityAt,receivedAt:parityAt,source:'backtest'},
+  barsSource:'backtest',dataQuality:evaluateCandleQuality(parityFrames['1m'],'1m'),filters:parityFilters,
+  news:{ok:true,stale:false,goldBias:{direction:'informational',confidence:0},safety:{blockTechnicalSignal:false}},evaluationAt:parityAt
+});
+const bullishContextScore=computeServerSignal(parityFrames['1m'],{
+  tf:'1m',mtf:[{tf:'5m',bars:parityFrames['5m']},{tf:'15m',bars:parityFrames['15m']}],
+  live:{price:parityFrames['1m'].at(-1).c,ts:parityAt,receivedAt:parityAt,source:'backtest'},
+  barsSource:'backtest',dataQuality:evaluateCandleQuality(parityFrames['1m'],'1m'),filters:parityFilters,
+  news:{ok:true,stale:false,goldBias:{direction:'bullish',confidence:92},safety:{blockTechnicalSignal:false}},evaluationAt:parityAt
+});
+assert.deepEqual(
+  {side:bullishContextScore.side,score:bullishContextScore.score,bull:bullishContextScore.bull,bear:bullishContextScore.bear,entry:bullishContextScore.entry,tp1:bullishContextScore.tp1,tp2:bullishContextScore.tp2,sl:bullishContextScore.sl},
+  {side:noNewsScore.side,score:noNewsScore.score,bull:noNewsScore.bull,bear:noNewsScore.bear,entry:noNewsScore.entry,tp1:noNewsScore.tp1,tp2:noNewsScore.tp2,sl:noNewsScore.sl},
+  'positive news context must not add score or change any official signal level'
+);
+const blockedContext=mergeSignalRiskContext({ok:true,stale:false,goldBias:{direction:'informational',confidence:0},safety:{blockTechnicalSignal:false}},{ok:true,stale:false,events:[riskEvent]},riskEvent.eventAt);
+assert.equal(blockedContext.safety.blockTechnicalSignal,true);
+const calendarBlockedSignal=computeServerSignal(parityFrames['1m'],{
+  tf:'1m',mtf:[{tf:'5m',bars:parityFrames['5m']},{tf:'15m',bars:parityFrames['15m']}],
+  live:{price:parityFrames['1m'].at(-1).c,ts:parityAt,receivedAt:parityAt,source:'backtest'},barsSource:'backtest',
+  dataQuality:evaluateCandleQuality(parityFrames['1m'],'1m'),filters:parityFilters,news:blockedContext,evaluationAt:parityAt
+});
+assert.equal(calendarBlockedSignal.side,'none','calendar risk may only veto an otherwise technical signal');
+
+const calendarDb=new MemoryD1();
+await ensureNewsCalendarSchema({GSX_DB:calendarDb});
+const storedCalendar={ok:true,events:[riskEvent]};
+await persistCalendarEvents({GSX_DB:calendarDb},storedCalendar);
+await persistCalendarEvents({GSX_DB:calendarDb},storedCalendar);
+assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM economic_calendar_events').get().count,1,'calendar persistence must be idempotent');
+await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
+await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
+assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM news_context_events').get().count,2,'news persistence must deduplicate stable event IDs');
+
+const endpointCache=new Map([
+  ['calendar:official:v1',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
+  ['news:brief:v2',JSON.stringify({...confirmedNews,updatedAt:Date.now()})]
+]);
+const endpointKv={get:async(key,type)=>type==='json'?safeJson(endpointCache.get(key)):endpointCache.get(key)??null,put:async(key,value)=>endpointCache.set(key,value)};
+function safeJson(value){try{return JSON.parse(value)}catch{return null}}
+const calendarGet=await worker.default.fetch(new Request('https://example.com/calendar'),{GSX_KV:endpointKv,ALLOW_ORIGINS:'["*"]'},{});
+assert.equal(calendarGet.status,200);
+const calendarPayload=await calendarGet.json();
+assert.equal(calendarPayload.readOnly,true);assert.equal(calendarPayload.decisionOwner,'worker');assert.equal(calendarPayload.createsOfficialSignals,false);
+assert.equal((await worker.default.fetch(new Request('https://example.com/calendar',{method:'POST'}),{},{})).status,405);
+assert.equal((await worker.default.fetch(new Request('https://example.com/news',{method:'POST'}),{},{})).status,405);
+
+const calendarTelegramNow=Date.UTC(2026,8,10,12,5);
+Date.now=()=>calendarTelegramNow;
+const calendarHarness=await makeTelegramHarness();
+let calendarTelegramCalls=0;
+globalThis.fetch=async()=>{calendarTelegramCalls+=1;return {ok:true,status:200,json:async()=>({ok:true})};};
+const upcomingCalendar={ok:true,events:[{...riskEvent,eventAt:calendarTelegramNow+20*60_000}]};
+await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
+await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
+assert.equal(calendarTelegramCalls,1,'stable calendar event IDs must prevent duplicate Telegram alerts');
+Date.now=realDateNow;globalThis.fetch=originalFetch;
 
 console.log('news intelligence tests passed');
