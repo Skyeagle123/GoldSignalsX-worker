@@ -77,3 +77,46 @@ CREATE TABLE IF NOT EXISTS production_signal_events (
 
 CREATE INDEX IF NOT EXISTS idx_production_events_signal_time
   ON production_signal_events(signal_id, event_at, event_type);
+
+-- Permanent official economic calendar. KV is only a short-lived response cache.
+CREATE TABLE IF NOT EXISTS economic_calendar_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  event_at INTEGER NOT NULL,
+  country TEXT NOT NULL DEFAULT 'United States',
+  currency TEXT NOT NULL DEFAULT 'USD',
+  impact TEXT NOT NULL,
+  actual TEXT,
+  forecast TEXT,
+  previous TEXT,
+  source TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  last_updated INTEGER NOT NULL,
+  risk_before_min INTEGER NOT NULL DEFAULT 0,
+  risk_after_min INTEGER NOT NULL DEFAULT 0,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economic_calendar_time
+  ON economic_calendar_events(event_at, event_id);
+
+-- Permanent context-only news ledger. It never creates production signals.
+CREATE TABLE IF NOT EXISTS news_context_events (
+  event_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  published_at INTEGER NOT NULL,
+  direction TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0,
+  importance INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  trusted INTEGER NOT NULL DEFAULT 0,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_news_context_published
+  ON news_context_events(published_at DESC, event_id);

@@ -8,6 +8,12 @@ import {
   runServerBacktest,
   updateSignalLifecycleAcrossBars
 } from './signal-engine.js';
+import {
+  calendarRiskSnapshot,
+  fetchOfficialCalendar,
+  formatCalendarEvent,
+  normalizeCalendarSettings
+} from './economic-calendar.js';
 
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
@@ -17,7 +23,8 @@ import {
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
 //   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
-//   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
+//   GET  /news                → سياق إخباري مقروء فقط (GDELT)
+//   GET  /calendar            → الرزنامة الاقتصادية الرسمية + نافذة المخاطر
 //   POST /backtest            → محاكاة read-only بمحرك الإشارات الرسمي
 //   GET  /performance         → سجل أداء Production الحقيقي (read-only)
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
@@ -33,7 +40,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.09.01.1';
+const APP_VERSION = '2026.09.01.2';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -62,7 +69,9 @@ const MAX_IMPORT_ROWS = 700;
 const NEWS_CACHE_MS = 15 * 60 * 1000;
 const NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
-const NEWS_ALERT_MAX_AGE_MS = 45 * 60 * 1000;
+const NEWS_ALERT_MAX_AGE_MS = 15 * 60 * 1000;
+const CALENDAR_CACHE_KEY = 'calendar:official:v1';
+const CALENDAR_CACHE_MS = 15 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
 
@@ -714,8 +723,28 @@ export default {
       }
 
       if (path === '/news') {
+        if (method !== 'GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const brief = await getGoldNewsBrief(env, { notify: false });
         return jsonNoStore(brief, corsHeaders, brief.ok ? 200 : 502);
+      }
+
+      if (path === '/calendar') {
+        if (method !== 'GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        const calendar=await getOfficialCalendar(env);
+        const settings=normalizeCalendarSettings(env);
+        const now=Date.now();
+        const from=Number(url.searchParams.get('from')??now-24*60*60_000);
+        const to=Number(url.searchParams.get('to')??now+120*24*60*60_000);
+        const limit=parseLimit(url.searchParams.get('limit'),100,500);
+        if (!Number.isFinite(from)||!Number.isFinite(to)||from>to) {
+          return json({ok:false,error:'bad_calendar_range'},corsHeaders,400);
+        }
+        const events=(calendar.events||[]).filter(event=>event.eventAt>=from&&event.eventAt<=to).slice(0,limit);
+        return jsonNoStore({
+          ...calendar,events:events.map(event=>formatCalendarEvent(event,settings.localTimeZone)),
+          risk:calendarRiskSnapshot(calendar.events,now,settings),settings,
+          readOnly:true,decisionOwner:'worker',createsOfficialSignals:false
+        },corsHeaders,calendar.ok?200:503);
       }
 
       if (path === '/backtest') {
@@ -984,16 +1013,21 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
     // Compatibility fallback for deployments that have not added GOLD_FEED yet.
     tasks.push(refreshStoredPrice(env));
   }
+  const calendarPromise=getOfficialCalendar(env,{refresh:true}).then(async calendar=>{
+    await maybeNotifyCalendarEvents(env,calendar);
+    return calendar;
+  });
   const newsPromise=getGoldNewsBrief(env,{notify:true});
+  tasks.push(calendarPromise);
   tasks.push(newsPromise);
   tasks.push(processTelegramOutbox(env));
   tasks.push(refreshTelegramHealth(env));
   const historyPromise=isTwelveDataConfigured(env)
     ? backfillTwelveDataHistory(env)
     : backfillSignalRollups(env);
-  tasks.push(historyPromise.then(()=>newsPromise).then(async news=>{
+  tasks.push(historyPromise.then(()=>Promise.all([newsPromise,calendarPromise])).then(async ([news,calendar])=>{
     const filters=await readSignalFilters(env);
-    return runSignalCycle(env,news,filters);
+    return runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
   }));
   const results = await Promise.allSettled(tasks);
   const errors=[];
@@ -2193,6 +2227,125 @@ async function d1Bars(env, tf, limit, { allowLegacy = true } = {}) {
   return resample(b1m, tfMin).slice(-limit);
 }
 
+// ---------- Official economic calendar ----------
+async function readCalendarCache(env) {
+  if (!env.GSX_KV) return null;
+  try { return await env.GSX_KV.get(CALENDAR_CACHE_KEY,'json'); }
+  catch { return null; }
+}
+
+async function persistCalendarEvents(env,calendar) {
+  if (!env.GSX_DB||!Array.isArray(calendar?.events)) return;
+  await ensureNewsCalendarSchema(env);
+  const now=Date.now();
+  const statements=calendar.events.map(event=>env.GSX_DB.prepare(`
+    INSERT INTO economic_calendar_events(
+      event_id,event_type,name,event_at,country,currency,impact,actual,forecast,previous,
+      source,source_url,last_updated,risk_before_min,risk_after_min,metadata_json,created_at,updated_at
+    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+    ON CONFLICT(event_id) DO UPDATE SET
+      name=excluded.name,event_at=excluded.event_at,impact=excluded.impact,
+      actual=COALESCE(excluded.actual,economic_calendar_events.actual),
+      forecast=COALESCE(excluded.forecast,economic_calendar_events.forecast),
+      previous=COALESCE(excluded.previous,economic_calendar_events.previous),
+      source_url=excluded.source_url,last_updated=excluded.last_updated,
+      risk_before_min=excluded.risk_before_min,risk_after_min=excluded.risk_after_min,
+      metadata_json=excluded.metadata_json,updated_at=excluded.updated_at
+  `).bind(
+    event.id,event.type,event.name,event.eventAt,event.country,event.currency,event.impact,
+    event.actual,event.forecast,event.previous,event.source,event.sourceUrl,event.lastUpdated,
+    event.riskBeforeMinutes,event.riskAfterMinutes,JSON.stringify(event.metadata||{}),now,now
+  ));
+  await runD1StatementBatches(env,statements);
+}
+
+async function readCalendarD1(env) {
+  if (!env.GSX_DB) return null;
+  try {
+    await ensureNewsCalendarSchema(env);
+    const {results}=await env.GSX_DB.prepare(`
+      SELECT * FROM economic_calendar_events
+      WHERE event_at>=?1 ORDER BY event_at ASC LIMIT 1000
+    `).bind(Date.now()-45*24*60*60_000).all();
+    const events=(results||[]).map(row=>({
+      id:row.event_id,type:row.event_type,name:row.name,eventAt:Number(row.event_at),
+      eventAtUtc:new Date(Number(row.event_at)).toISOString(),country:row.country,currency:row.currency,
+      impact:row.impact,actual:row.actual,forecast:row.forecast,previous:row.previous,
+      source:row.source,sourceUrl:row.source_url,lastUpdated:Number(row.last_updated),
+      riskBeforeMinutes:Number(row.risk_before_min),riskAfterMinutes:Number(row.risk_after_min),
+      metadata:safeJsonParse(row.metadata_json,{})
+    }));
+    return events.length?{ok:true,updatedAt:Math.max(...events.map(event=>event.lastUpdated)),source:'d1-official-calendar',events,sourceStatus:{},cache:'d1'}:null;
+  } catch (error) {
+    console.error(JSON.stringify({message:'calendar d1 read failed',error:String(error?.message||error)}));
+    return null;
+  }
+}
+
+async function getOfficialCalendar(env,{refresh=false}={}) {
+  const now=Date.now(),settings=normalizeCalendarSettings(env),cached=await readCalendarCache(env);
+  const age=cached?now-Number(cached.updatedAt||0):Infinity;
+  if (cached&&age<CALENDAR_CACHE_MS) return {...cached,cache:'hit',ageMs:age};
+  try {
+    const calendar=await fetchOfficialCalendar(settings,now);
+    if (!calendar.ok) throw new Error('official_calendar_empty');
+    await persistCalendarEvents(env,calendar).catch(error=>console.error(JSON.stringify({message:'calendar d1 persistence failed',error:String(error?.message||error)})));
+    if (env.GSX_KV) await env.GSX_KV.put(CALENDAR_CACHE_KEY,JSON.stringify(calendar),{expirationTtl:6*60*60});
+    return {...calendar,cache:refresh?'cron-refreshed':'refreshed',ageMs:0};
+  } catch (error) {
+    console.error(JSON.stringify({message:'official calendar refresh failed',error:String(error?.message||error)}));
+    if (cached) return {...cached,stale:true,cache:'stale-fallback',ageMs:age,refreshError:'calendar_refresh_failed'};
+    const stored=await readCalendarD1(env);
+    return stored||{ok:false,stale:true,updatedAt:null,source:'official-multi-source',events:[],sourceStatus:{},error:'calendar_unavailable'};
+  }
+}
+
+function mergeSignalRiskContext(news,calendar,now=Date.now()) {
+  const settings=normalizeCalendarSettings({}),calendarRisk=calendarRiskSnapshot(calendar?.events,now,settings);
+  const newsSafety=news?.safety||{};
+  const calendarBlocks=calendar?.ok&&!calendar?.stale&&calendarRisk.blockTechnicalSignal;
+  const newsBlocks=news?.ok&&!news?.stale&&newsSafety.blockTechnicalSignal;
+  const blockTechnicalSignal=Boolean(calendarBlocks||newsBlocks);
+  return {
+    ...(news||{ok:true,stale:false,goldBias:{direction:'informational',confidence:0}}),
+    safety:{
+      ...newsSafety,blockTechnicalSignal,
+      reason:calendarBlocks?calendarRisk.reason:(newsBlocks?newsSafety.reason:''),
+      blockUntil:Math.max(Number(calendarBlocks?calendarRisk.blockUntil:0),Number(newsBlocks?newsSafety.blockUntil:0))||null,
+      calendarRisk
+    }
+  };
+}
+
+function calendarTelegramText(event,kind,settings) {
+  const local=formatCalendarEvent(event,settings.localTimeZone);
+  const released=kind==='released';
+  return [
+    released?'📊 صدور حدث اقتصادي — GoldSignalsX':'📅 تنبيه رزنامة اقتصادية — GoldSignalsX',
+    event.name,`Impact: ${event.impact}`,`UTC: ${local.eventAtUtc}`,`${settings.localTimeZone}: ${local.eventAtLocal}`,
+    `Actual: ${event.actual??'—'} | Forecast: ${event.forecast??'—'} | Previous: ${event.previous??'—'}`,
+    `Source: ${event.source}`,event.sourceUrl,'هذا News Alert وليس Trading Signal.'
+  ].join('\n');
+}
+
+async function maybeNotifyCalendarEvents(env,calendar,now=Date.now()) {
+  if (String(env.NEWS_ALERTS_ENABLED||'1').trim()==='0'||!calendar?.ok) return;
+  const settings=normalizeCalendarSettings(env);
+  for (const event of calendar.events||[]) {
+    if (event.impact!=='high') continue;
+    const preStart=event.eventAt-Number(event.riskBeforeMinutes||0)*60_000;
+    if (now>=preStart&&now<event.eventAt) {
+      const id=`calendar:${event.id}:upcoming`;
+      await queueTelegramDelivery(env,{id,tf:'calendar',createdAt:event.eventAt},'news',calendarTelegramText(event,'upcoming',settings),{eventAt:event.eventAt});
+    }
+    const actualAt=Number(event.metadata?.actualAt||event.lastUpdated||event.eventAt);
+    if (event.actual!=null&&now>=event.eventAt&&now-event.eventAt<=Number(event.riskAfterMinutes||0)*60_000) {
+      const id=`calendar:${event.id}:released`;
+      await queueTelegramDelivery(env,{id,tf:'calendar',createdAt:event.eventAt},'news',calendarTelegramText(event,'released',settings),{eventAt:actualAt,signalCreatedAt:event.eventAt});
+    }
+  }
+}
+
 // ---------- Gold news intelligence ----------
 const NEWS_QUERY = [
   'gold', 'bullion', 'XAUUSD', '"Federal Reserve"', 'FOMC', 'inflation',
@@ -2231,6 +2384,10 @@ function normalizeHeadline(value) {
   return ` ${String(value || '').toLowerCase().replace(/[^a-z0-9%]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
 }
 
+function newsSlug(value) {
+  return String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
+}
+
 function hasAnyPhrase(text, phrases) {
   return phrases.some(phrase => text.includes(` ${phrase.toLowerCase()} `));
 }
@@ -2245,7 +2402,12 @@ function parseGdeltSeenDate(value) {
   const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (match) return Date.UTC(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +match[6]);
   const parsed = Date.parse(raw);
-  return Number.isFinite(parsed) ? parsed : Date.now();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function safeJsonParse(value,fallback=null) {
+  try { return JSON.parse(String(value??'')); }
+  catch { return fallback; }
 }
 
 function safeNewsUrl(value) {
@@ -2282,7 +2444,9 @@ function classifyNewsArticle(article, now = Date.now()) {
   const text = normalizeHeadline(title);
   const domain = newsDomain(url, article?.domain);
   const trusted = trustedNewsDomain(domain);
-  const seenAt = parseGdeltSeenDate(article?.seendate || article?.seenAt);
+  const publishedRaw=article?.publishedAt||article?.pubDate||article?.date||article?.datetime||article?.seendate||article?.seenAt;
+  const seenAt = parseGdeltSeenDate(publishedRaw);
+  if (!Number.isFinite(seenAt)) return null;
   const ageMs = Math.max(0, now - seenAt);
   if (ageMs > NEWS_MAX_AGE_MS) return null;
 
@@ -2300,7 +2464,7 @@ function classifyNewsArticle(article, now = Date.now()) {
   const delta = bull.score - bear.score;
   const direction = delta >= 0.75 ? 'bullish' : delta <= -0.75 ? 'bearish' : 'neutral';
   const criticalMacro = hasAnyPhrase(text, ['fomc','federal reserve','rate cut','rate hike','cpi','pce','payrolls','jobs report']);
-  const criticalRisk = hasAnyPhrase(text, ['war','airstrike','missile','invasion','sanctions','trade war','bank crisis']);
+  const criticalRisk = hasAnyPhrase(text, ['war','airstrike','missile','invasion','sanctions','trade war','bank crisis','ceasefire','peace deal','de-escalation']);
   // Only a trusted publisher can create a market-blocking level-3 event.
   // Untrusted headlines remain visible for context but never stop trading.
   const importance = trusted && (criticalMacro || (goldRelated && criticalRisk)) ? 3 : (goldRelated || macroRelated || trusted ? 2 : 1);
@@ -2311,11 +2475,12 @@ function classifyNewsArticle(article, now = Date.now()) {
   const reasons = [...new Set(direction === 'bullish' ? bull.reasons : direction === 'bearish' ? bear.reasons : [])];
 
   return {
-    id: '', title, url, domain,
+    id:`gdelt:${domain}:${newsSlug(url)}`, title, url, domain,
     source: domain || String(article?.sourcecountry || 'news'),
-    seenAt, ageMs, importance, direction, confidence,
+    seenAt, publishedAt:seenAt, ageMs, importance, direction, confidence,
     reason: reasons[0] || 'الأثر غير محسوم ويحتاج تأكيداً من حركة السعر',
-    trusted
+    trusted,geopolitical,macroRelated,goldRelated,publishedAtSource:article?.publishedAt||article?.pubDate||article?.date||article?.datetime?'publisher-field':'gdelt-seendate',
+    classification:direction==='neutral'?'informational':direction
   };
 }
 
@@ -2323,15 +2488,19 @@ function uniqueNewsArticles(items) {
   const seen = new Set();
   const out = [];
   for (const item of items) {
-    const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
+    const titleKey=item.title.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    let urlKey='';
+    try { const url=new URL(item.url);url.hash='';['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(key=>url.searchParams.delete(key));urlKey=url.toString(); }
+    catch {}
+    const titleDomainKey=`${item.domain}:${titleKey}`,key=urlKey||titleDomainKey;
+    if (!key||seen.has(key)||seen.has(titleDomainKey)) continue;
+    seen.add(key);seen.add(titleDomainKey);
     out.push(item);
   }
   return out;
 }
 
-function buildNewsBrief(rawArticles, now = Date.now()) {
+function buildNewsBrief(rawArticles, now = Date.now(), riskSettings = {}) {
   const items = uniqueNewsArticles((Array.isArray(rawArticles) ? rawArticles : [])
     .map(article => classifyNewsArticle(article, now))
     .filter(Boolean))
@@ -2350,16 +2519,22 @@ function buildNewsBrief(rawArticles, now = Date.now()) {
   }
   const total = bullWeight + bearWeight;
   const score = total ? (bullWeight - bearWeight) / total : 0;
-  const direction = score >= 0.18 ? 'bullish' : score <= -0.18 ? 'bearish' : 'neutral';
+  let direction = score >= 0.18 ? 'bullish' : score <= -0.18 ? 'bearish' : 'informational';
   const confidence = total ? Math.min(90, Math.round(52 + Math.abs(score) * 36 + Math.min(8, total))) : 0;
-  const freshCritical = items.find(item => item.trusted && item.importance === 3 && item.direction !== 'neutral' && item.ageMs <= 15 * 60 * 1000);
-  const hasBullCritical = items.some(item => item.trusted && item.importance === 3 && item.direction === 'bullish');
-  const hasBearCritical = items.some(item => item.trusted && item.importance === 3 && item.direction === 'bearish');
-  const conflictingCritical = hasBullCritical && hasBearCritical;
-  const blockTechnicalSignal = Boolean(freshCritical || conflictingCritical);
-  const blockReason = freshCritical
-    ? 'خبر شديد التأثير صدر خلال آخر 15 دقيقة؛ ننتظر استقرار السعر قبل الدخول'
-    : conflictingCritical ? 'الأخبار الشديدة متعارضة؛ تم تعليق الدخول حتى تتضح الحركة' : '';
+  const windowMs=Math.min(15,Math.max(0,Number(riskSettings.geopoliticalAfterMinutes)||15))*60_000;
+  const critical=items.filter(item=>item.trusted&&item.geopolitical&&item.importance===3&&item.direction!=='neutral'&&item.ageMs<=windowMs);
+  const byDirection=side=>critical.filter(item=>item.direction===side);
+  const distinctDomains=list=>new Set(list.map(item=>item.domain)).size;
+  const bullish=byDirection('bullish'),bearish=byDirection('bearish');
+  const confirmedBull=distinctDomains(bullish)>=2,confirmedBear=distinctDomains(bearish)>=2;
+  const conflictingCritical=confirmedBull&&confirmedBear;
+  if (conflictingCritical) direction='mixed';
+  const confirmed=conflictingCritical?[...bullish,...bearish]:(confirmedBull?bullish:confirmedBear?bearish:[]);
+  const blockTechnicalSignal=confirmed.length>0;
+  const latestConfirmedAt=confirmed.length?Math.max(...confirmed.map(item=>item.publishedAt)):0;
+  const blockReason=conflictingCritical
+    ? 'أخبار جيوسياسية مؤكدة متعارضة من مصدرين مستقلين؛ نافذة حذر 15 دقيقة'
+    : confirmed.length?'خبر جيوسياسي مؤكد من مصدرين مستقلين؛ نافذة حذر 15 دقيقة':'';
   const advice = blockTechnicalSignal
     ? 'انتظار — لا دخول أثناء صدمة الخبر'
     : direction === 'bullish' ? 'ميل شرائي مشروط بتأكيد الشارت'
@@ -2380,9 +2555,11 @@ function buildNewsBrief(rawArticles, now = Date.now()) {
       reasons: [...new Set(biasReasons)].slice(0, 4)
     },
     safety: {
-      blockTechnicalSignal,
+      blockTechnicalSignal,classification:conflictingCritical?'mixed/conflicting':confirmed.length?'confirmed-geopolitical':'context-only',
       reason: blockReason,
-      blockUntil: freshCritical ? freshCritical.seenAt + 15 * 60 * 1000 : null
+      blockUntil: latestConfirmedAt?latestConfirmedAt+windowMs:null,
+      corroboratedEventIds:confirmed.map(item=>item.id).filter(Boolean),
+      corroboratedDomains:[...new Set(confirmed.map(item=>item.domain))]
     }
   };
 }
@@ -2502,6 +2679,25 @@ async function writeNewsCache(env, brief) {
   await env.GSX_KV.put('news:brief:v2', JSON.stringify(brief), { expirationTtl: 6 * 60 * 60 });
 }
 
+async function persistNewsEvents(env,brief) {
+  if (!env.GSX_DB||!Array.isArray(brief?.items)) return;
+  await ensureNewsCalendarSchema(env);
+  const now=Date.now(),statements=brief.items.map(item=>env.GSX_DB.prepare(`
+    INSERT INTO news_context_events(
+      event_id,title,url,domain,published_at,direction,confidence,importance,source,trusted,metadata_json,created_at,updated_at
+    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+    ON CONFLICT(event_id) DO UPDATE SET
+      title=excluded.title,url=excluded.url,direction=excluded.direction,
+      confidence=excluded.confidence,importance=excluded.importance,
+      metadata_json=excluded.metadata_json,updated_at=excluded.updated_at
+  `).bind(
+    item.id,item.title,item.url,item.domain,item.publishedAt,item.direction,item.confidence,
+    item.importance,item.source,item.trusted?1:0,
+    JSON.stringify({reason:item.reason,classification:item.classification,geopolitical:item.geopolitical}),now,now
+  ));
+  await runD1StatementBatches(env,statements);
+}
+
 async function getGoldNewsBrief(env, { notify = false } = {}) {
   const now = Date.now();
   const cached = await readNewsCache(env);
@@ -2514,7 +2710,8 @@ async function getGoldNewsBrief(env, { notify = false } = {}) {
   }
   try {
     const articles = await fetchGdeltGoldNews(now);
-    const brief = await enrichNewsBriefArabic(env, buildNewsBrief(articles, now));
+    const brief = await enrichNewsBriefArabic(env, buildNewsBrief(articles, now, normalizeCalendarSettings(env)));
+    await persistNewsEvents(env,brief).catch(error=>console.error(JSON.stringify({message:'news d1 persistence failed',error:String(error?.message||error)})));
     await writeNewsCache(env, brief);
     if (notify) await maybeNotifyHighImpactNews(env, brief);
     return { ...brief, stale: false, ageMs: 0, cache: 'refreshed' };
@@ -2547,12 +2744,15 @@ function newsDirectionArabic(direction) {
 
 async function maybeNotifyHighImpactNews(env, brief) {
   if (String(env.NEWS_ALERTS_ENABLED || '1').trim() === '0' || !env.GSX_KV) return;
-  const item = (brief?.items || []).find(candidate =>
-    candidate.trusted && candidate.importance === 3 && candidate.direction !== 'neutral' &&
-    candidate.confidence >= 65 && Date.now() - candidate.seenAt <= NEWS_ALERT_MAX_AGE_MS
+  if (!brief?.safety?.blockTechnicalSignal) return;
+  const corroborated=new Set(brief.safety.corroboratedEventIds||[]);
+  const items=(brief.items||[]).filter(candidate=>
+    corroborated.has(candidate.id)&&candidate.trusted&&candidate.importance===3&&candidate.geopolitical&&
+    Date.now()-candidate.publishedAt<=NEWS_ALERT_MAX_AGE_MS
   );
-  if (!item) return;
-  const id = await hashNewsId(item.url || item.title);
+  if (new Set(items.map(item=>item.domain)).size<2) return;
+  const item=items.sort((a,b)=>b.publishedAt-a.publishedAt)[0];
+  const id = await hashNewsId(`${brief.safety.classification}:${items.map(value=>value.id).sort().join('|')}`);
   const key = `news:sent:${id}`;
   if (await env.GSX_KV.get(key)) return;
   const text = [
@@ -2562,13 +2762,14 @@ async function maybeNotifyHighImpactNews(env, brief) {
     `التأثير المتوقع: ${newsDirectionArabic(item.direction)} (${item.confidence}%)`,
     `السبب: ${item.reason}`,
     brief?.safety?.blockTechnicalSignal ? 'النصيحة: انتظار 15 دقيقة ومراقبة تأكيد الشارت' : `النصيحة: ${brief?.goldBias?.advice || 'مراقبة الشارت'}`,
+    `تأكيد من ${new Set(items.map(value=>value.domain)).size} مصدرين مستقلين`,
     `المصدر: ${item.source}`,
     item.url,
     'تنبيه: الخبر لا يُستخدم وحده كإشارة تداول.'
   ].join('\n');
   const delivery=await queueTelegramDelivery(
-    env,{id:`news:${id}`,tf:'news',createdAt:Number(item.publishedAt)||Date.now()},'news',text,
-    {eventAt:Number(item.publishedAt)||Date.now()}
+    env,{id:`news:${id}`,tf:'news',createdAt:Number(item.publishedAt)},'news',text,
+    {eventAt:Number(item.publishedAt)}
   );
   if (delivery?.status==='sent') await env.GSX_KV.put(key,String(Date.now()),{expirationTtl:24*60*60});
 }
@@ -2780,6 +2981,7 @@ async function maybeEnsureD1(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_v2_tf_t ON bars_v2(tf,t);');
   await env.GSX_DB.exec("INSERT OR IGNORE INTO bars_v2(tf,t,o,h,l,c,v,provider) SELECT COALESCE(tf,1),t,o,h,l,c,COALESCE(v,0),COALESCE(provider,'legacy') FROM bars;");
   await ensurePerformanceSchema(env);
+  await ensureNewsCalendarSchema(env);
 }
 
 async function ensurePerformanceSchema(env) {
@@ -2789,6 +2991,14 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created ON production_signals(timeframe,created_at DESC);');
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
+}
+
+async function ensureNewsCalendarSchema(env) {
+  if (!env.GSX_DB) return;
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS economic_calendar_events (event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, name TEXT NOT NULL, event_at INTEGER NOT NULL, country TEXT NOT NULL DEFAULT 'United States', currency TEXT NOT NULL DEFAULT 'USD', impact TEXT NOT NULL, actual TEXT, forecast TEXT, previous TEXT, source TEXT NOT NULL, source_url TEXT NOT NULL, last_updated INTEGER NOT NULL, risk_before_min INTEGER NOT NULL DEFAULT 0, risk_after_min INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_economic_calendar_time ON economic_calendar_events(event_at,event_id);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS news_context_events (event_id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, domain TEXT NOT NULL, published_at INTEGER NOT NULL, direction TEXT NOT NULL, confidence REAL NOT NULL DEFAULT 0, importance INTEGER NOT NULL DEFAULT 1, source TEXT NOT NULL, trusted INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_news_context_published ON news_context_events(published_at DESC,event_id);');
 }
 
 async function refreshStoredPrice(env) {
@@ -2887,5 +3097,7 @@ export {
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
-  readProductionPerformance,buildPerformanceSummary,signalResultR
+  readProductionPerformance,buildPerformanceSummary,signalResultR,
+  ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
+  maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents
 };
