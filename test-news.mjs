@@ -44,7 +44,8 @@ const {
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
-  parseCensusScheduleHtml,parseIsmCalendarHtml,enrichCalendarActuals,
+  parseCensusScheduleHtml,parseBlsApiPayload,parseBlsDownloadDataset,buildBlsActualSnapshot,
+  applyBlsActuals,parseJoblessClaimsXml,buildJoblessClaimsEvents,buildIsmDerivedSchedule,
   calendarRiskSnapshot,extractOfficialActual
 }=await import(economicCalendarUrl);
 
@@ -792,7 +793,7 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.2',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.3',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
@@ -1103,12 +1104,31 @@ assert.deepEqual(calendarSettings,{
 const blsEvents=parseBlsIcs(`BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:cpi-202609\nDTSTART;TZID=America/New_York:20260910T083000\nSUMMARY:Consumer Price Index\nEND:VEVENT\nBEGIN:VEVENT\nUID:jobs-202609\nDTSTART;TZID=America/New_York:20260904T083000\nSUMMARY:Employment Situation\nEND:VEVENT\nEND:VCALENDAR`,calendarSettings,Date.UTC(2026,8,1));
 assert.deepEqual(blsEvents.map(event=>event.type),['cpi','core_cpi','nfp','unemployment_rate']);
 assert.equal(blsEvents[0].eventAt,Date.UTC(2026,8,10,12,30),'BLS Eastern release time must convert to UTC');
+assert.equal(parseBlsIcs(`BEGIN:VEVENT\nDTSTART;TZID=US-Eastern:20260910T083000\nSUMMARY:Consumer Price Index\nEND:VEVENT`,calendarSettings)[0].eventAt,Date.UTC(2026,8,10,12,30),'the official BLS US-Eastern timezone alias must convert to UTC');
 assert.equal(blsEvents[0].forecast,null,'officially unavailable forecasts must stay null');
 assert.equal(extractOfficialActual('cpi','The Consumer Price Index increased 0.3 percent in August.'),'0.3%');
 assert.equal(extractOfficialActual('core_cpi','The all items less food and energy index rose 0.2 percent.'),'0.2%');
 assert.equal(extractOfficialActual('nfp','Total nonfarm payroll employment increased by 145,000 in August.'),'145000');
 assert.equal(extractOfficialActual('pce','The PCE price index increased 0.2 percent.'),'0.2%');
 assert.equal(extractOfficialActual('ism','PMI was 52.1'),null,'unsupported official values must remain null');
+
+const blsApiSeries=parseBlsApiPayload({status:'REQUEST_SUCCEEDED',Results:{series:[
+  {seriesID:'CUSR0000SA0',data:[{year:'2026',period:'M07',value:'102'},{year:'2026',period:'M06',value:'100'},{year:'2026',period:'M05',value:'99'}]},
+  {seriesID:'CUSR0000SA0L1E',data:[{year:'2026',period:'M07',value:'201'},{year:'2026',period:'M06',value:'200'},{year:'2026',period:'M05',value:'199'}]},
+  {seriesID:'CES0000000001',data:[{year:'2026',period:'M07',value:'159000'},{year:'2026',period:'M06',value:'158800'},{year:'2026',period:'M05',value:'158700'}]},
+  {seriesID:'LNS14000000',data:[{year:'2026',period:'M07',value:'4.3'},{year:'2026',period:'M06',value:'4.2'}]}
+]}});
+const blsSnapshot=buildBlsActualSnapshot(blsApiSeries,Object.fromEntries(Object.keys(blsApiSeries).map(id=>[id,'BLS Public Data API v1'])));
+assert.deepEqual({actual:blsSnapshot.cpi.actual,previous:blsSnapshot.cpi.previous}, {actual:'2',previous:'1'});
+assert.deepEqual({actual:blsSnapshot.nfp.actual,previous:blsSnapshot.nfp.previous}, {actual:'200',previous:'100'});
+assert.deepEqual({actual:blsSnapshot.unemployment_rate.actual,previous:blsSnapshot.unemployment_rate.previous}, {actual:'4.3',previous:'4.2'});
+const downloadedBls=parseBlsDownloadDataset('series_id year period value footnote_codes\nCUSR0000SA0 2026 M07 102\nCUSR0000SA0 2026 M06 100\n',['CUSR0000SA0']);
+assert.equal(downloadedBls.CUSR0000SA0[0].value,102,'official downloadable BLS datasets must be a usable fallback');
+const enrichedBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,12));
+assert.deepEqual(enrichedBls.map(event=>event.actual),['2','0.5','200','4.3']);
+assert.ok(enrichedBls.every(event=>event.metadata.scheduleSource==='fetched-official-ical'&&event.metadata.dataMode==='fetched'));
+const upcomingBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,1));
+assert.deepEqual(upcomingBls.map(event=>event.previous),['2','0.5','200','4.3'],'next BLS releases must expose only the officially known previous values');
 
 const beaEvents=parseBeaScheduleHtml(`<h1>Year 2026</h1><table><tr><td><div class="release-date">September 25, 2026</div><small class="text-muted">8:30 AM</small></td><td class="release-title">Personal Income and Outlays, August 2026</td></tr><tr><td><div class="release-date">September 30, 2026</div><small>8:30 AM</small></td><td class="release-title">Gross Domestic Product, 2nd Quarter 2026</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
 assert.deepEqual(beaEvents.map(event=>event.type),['pce','core_pce','gdp']);
@@ -1117,9 +1137,23 @@ assert.deepEqual(fedEvents.map(event=>event.type),['fomc_decision','powell_monet
 assert.equal(fedEvents[0].riskBeforeMinutes,60);
 const censusEvents=parseCensusScheduleHtml(`<table><tr><td>Advance Monthly Sales for Retail and Food Services</td><td>September 16, 2026 8:30 AM</td><td>A202609160001</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
 assert.equal(censusEvents[0].type,'retail_sales');
-const ismEvents=parseIsmCalendarHtml(`<table><tr><td>September 2026</td><td>1</td><td>3</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
-assert.deepEqual(ismEvents.map(event=>event.type),['ism_manufacturing','ism_services']);
+const ismEvents=buildIsmDerivedSchedule(calendarSettings,Date.UTC(2026,0,1),Date.UTC(2026,0,1),Date.UTC(2026,11,31));
+assert.equal(ismEvents.find(event=>event.type==='ism_manufacturing'&&new Date(event.eventAt).getUTCMonth()===0).eventAt,Date.UTC(2026,0,5,15),'January Manufacturing must use the second NYSE business day');
+assert.equal(ismEvents.find(event=>event.type==='ism_services'&&new Date(event.eventAt).getUTCMonth()===0).eventAt,Date.UTC(2026,0,7,15),'January Services must use the fourth NYSE business day');
+assert.equal(ismEvents.find(event=>event.type==='ism_services'&&new Date(event.eventAt).getUTCMonth()===3).eventAt,Date.UTC(2026,3,6,14),'NYSE Good Friday must not count as an ISM business day');
+assert.equal(ismEvents.find(event=>event.type==='ism_services'&&new Date(event.eventAt).getUTCMonth()===6).eventAt,Date.UTC(2026,6,6,14),'observed Independence Day closure must not count as an ISM business day');
 assert.ok(ismEvents.every(event=>event.actual===null&&event.forecast===null&&event.previous===null));
+assert.ok(ismEvents.every(event=>event.metadata.scheduleSource==='derived-official-rule'&&event.metadata.dataAvailability==='schedule-only'));
+assert.equal(buildIsmDerivedSchedule(calendarSettings,Date.UTC(2029,0,1),Date.UTC(2029,0,1),Date.UTC(2029,0,31)).length,0,'unverified NYSE years must fail closed');
+
+const dolXml=`<r539cyNational rundate="11/25/2026"><week><weekEnded>11/14/2026</weekEnded><InitialClaims><SA>218,000</SA></InitialClaims></week><week><weekEnded>11/21/2026</weekEnded><InitialClaims><SA>225,000</SA></InitialClaims></week></r539cyNational>`;
+assert.deepEqual(parseJoblessClaimsXml(dolXml).map(row=>row.actual),[218000,225000]);
+const claimsEvents=buildJoblessClaimsEvents(dolXml,calendarSettings,Date.UTC(2026,10,25));
+const thanksgivingClaims=claimsEvents.find(event=>event.metadata.weekEnded==='11/21/2026');
+assert.equal(thanksgivingClaims.eventAt,Date.UTC(2026,10,25,13,30),'a Thursday federal holiday must move DOL release to preceding Wednesday at 08:30 ET');
+assert.equal(thanksgivingClaims.actual,'225000');assert.equal(thanksgivingClaims.previous,'218000');
+assert.equal(thanksgivingClaims.metadata.scheduleSource,'derived-official-rule');
+assert.equal(thanksgivingClaims.riskBeforeMinutes,15);assert.equal(thanksgivingClaims.riskAfterMinutes,10);
 
 const riskEvent={...blsEvents[0],eventAt:Date.UTC(2026,8,10,12,30)};
 assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt-30*60_000,calendarSettings).active,true);
@@ -1180,7 +1214,7 @@ await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM news_context_events').get().count,2,'news persistence must deduplicate stable event IDs');
 
 const endpointCache=new Map([
-  ['calendar:official:v1',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
+  ['calendar:official:v2',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
   ['news:brief:v2',JSON.stringify({...confirmedNews,updatedAt:Date.now()})]
 ]);
 const endpointKv={get:async(key,type)=>type==='json'?safeJson(endpointCache.get(key)):endpointCache.get(key)??null,put:async(key,value)=>endpointCache.set(key,value)};
@@ -1189,6 +1223,8 @@ const calendarGet=await worker.default.fetch(new Request('https://example.com/ca
 assert.equal(calendarGet.status,200);
 const calendarPayload=await calendarGet.json();
 assert.equal(calendarPayload.readOnly,true);assert.equal(calendarPayload.decisionOwner,'worker');assert.equal(calendarPayload.createsOfficialSignals,false);
+assert.equal(calendarPayload.events[0].scheduleSource,'fetched-official-ical');
+assert.equal(calendarPayload.events[0].scheduleMode,'fetched');
 assert.equal((await worker.default.fetch(new Request('https://example.com/calendar',{method:'POST'}),{},{})).status,405);
 assert.equal((await worker.default.fetch(new Request('https://example.com/news',{method:'POST'}),{},{})).status,405);
 

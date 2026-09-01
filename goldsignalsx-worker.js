@@ -40,7 +40,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.09.01.2';
+const APP_VERSION = '2026.09.01.3';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -70,7 +70,7 @@ const NEWS_CACHE_MS = 15 * 60 * 1000;
 const NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
 const NEWS_ALERT_MAX_AGE_MS = 15 * 60 * 1000;
-const CALENDAR_CACHE_KEY = 'calendar:official:v1';
+const CALENDAR_CACHE_KEY = 'calendar:official:v2';
 const CALENDAR_CACHE_MS = 15 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
