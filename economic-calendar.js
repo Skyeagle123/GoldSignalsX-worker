@@ -1,3 +1,5 @@
+import { BLS_OFFICIAL_SNAPSHOT } from './bls-official-snapshot.js';
+
 const SOURCE_URLS = Object.freeze({
   bls:'https://www.bls.gov/schedule/news_release/bls.ics',
   blsApi:'https://api.bls.gov/publicAPI/v1/timeseries/data/',
@@ -260,11 +262,31 @@ export function applyBlsActuals(events,snapshot={},now=Date.now()) {
     return {...event,actual:isLatestPast?data.actual:null,forecast:null,previous:isLatestPast?data.previous:data.actual,metadata:{...event.metadata,
       seriesId:data.seriesId,referencePeriod:data.referencePeriod,unit:data.unit,
       dataSource:data.dataSource,dataSourceUrl:data.dataSourceUrl,dataMode:data.dataMode,
+      ...(data.snapshotGeneratedAt?{dataSnapshotGeneratedAt:data.snapshotGeneratedAt}:{}),
       ...(isNextFuture?{previousReferencePeriod:data.referencePeriod}:{}),
       actualMethod:event.type==='nfp'?'latest SA level minus prior SA level':
         (event.type==='unemployment_rate'?'latest SA rate':'latest SA index versus prior SA index')
     }};
   });
+}
+
+export function readBundledBlsFallback(settings=DEFAULT_RISK_SETTINGS,updatedAt=Date.now()) {
+  if (Number(BLS_OFFICIAL_SNAPSHOT?.schema)!==1||!BLS_OFFICIAL_SNAPSHOT?.scheduleIcs) return {ok:false,events:[],snapshot:{}};
+  const events=parseBlsIcs(BLS_OFFICIAL_SNAPSHOT.scheduleIcs,settings,updatedAt).map(event=>({...event,metadata:{...event.metadata,
+    scheduleSource:'official-ical-snapshot-fallback',scheduleMode:'official-snapshot-fallback',
+    scheduleSnapshotGeneratedAt:BLS_OFFICIAL_SNAPSHOT.generatedAt,
+    scheduleSourceUrl:BLS_OFFICIAL_SNAPSHOT.sources?.schedule?.url||SOURCE_URLS.bls
+  }}));
+  const sourceBySeries=Object.fromEntries(Object.values(BLS_SERIES).map(seriesId=>[
+    seriesId,'BLS Public Data API v1 via verified repository snapshot'
+  ]));
+  const snapshot=buildBlsActualSnapshot(BLS_OFFICIAL_SNAPSHOT.series||{},sourceBySeries);
+  for (const data of Object.values(snapshot)) {
+    data.dataMode='official-snapshot-fallback';data.snapshotGeneratedAt=BLS_OFFICIAL_SNAPSHOT.generatedAt;
+    data.dataSourceUrl=BLS_OFFICIAL_SNAPSHOT.sources?.actuals?.url||SOURCE_URLS.blsApi;
+  }
+  return {ok:events.length>0&&Object.keys(snapshot).length===Object.keys(BLS_SERIES).length,events,snapshot,
+    generatedAt:BLS_OFFICIAL_SNAPSHOT.generatedAt};
 }
 
 function parseMonthDay(value,year,time) {
@@ -570,8 +592,11 @@ export async function fetchOfficialCalendar(settings=DEFAULT_RISK_SETTINGS,now=D
     }
     catch (error) { return [name,{ok:false,error:String(error?.message||error),text:''}]; }
   }));
-  const result=Object.fromEntries(entries),events=[];
-  if (result.bls.ok) events.push(...parseBlsIcs(result.bls.text,settings,now));
+  const result=Object.fromEntries(entries),events=[],bundledBls=readBundledBlsFallback(settings,now);
+  let blsEvents=result.bls.ok?parseBlsIcs(result.bls.text,settings,now):[];
+  const blsScheduleFallback=blsEvents.length===0&&bundledBls.ok;
+  if (blsScheduleFallback) blsEvents=bundledBls.events;
+  events.push(...blsEvents);
   if (result.bea.ok) events.push(...parseBeaScheduleHtml(result.bea.text,settings,now));
   if (result.census.ok) events.push(...parseCensusScheduleHtml(result.census.text,settings,now));
   const ismEvents=buildIsmDerivedSchedule(settings,now,now-45*24*60*60_000,now+370*24*60*60_000);
@@ -582,7 +607,9 @@ export async function fetchOfficialCalendar(settings=DEFAULT_RISK_SETTINGS,now=D
   const feeds={
     bea:result.beaRss.text,fedMonetary:result.fedMonetary.text,fedSpeeches:result.fedSpeeches.text
   };
-  const withBls=applyBlsActuals(events,result.blsActuals.snapshot||{},now);
+  const liveBlsActuals=result.blsActuals.snapshot||{},effectiveBlsActuals={...bundledBls.snapshot,...liveBlsActuals};
+  const blsActualFallbackTypes=Object.keys(bundledBls.snapshot||{}).filter(type=>!liveBlsActuals[type]);
+  const withBls=applyBlsActuals(events,effectiveBlsActuals,now);
   const unique=[...new Map(enrichCalendarActuals(withBls,feeds).map(event=>[event.id,event])).values()]
     .filter(event=>Number.isFinite(event.eventAt)&&event.eventAt>=now-45*24*60*60*1000&&event.eventAt<=now+370*24*60*60*1000)
     .sort((a,b)=>a.eventAt-b.eventAt||a.id.localeCompare(b.id));
@@ -590,6 +617,13 @@ export async function fetchOfficialCalendar(settings=DEFAULT_RISK_SETTINGS,now=D
     name==='blsActuals'?{ok:value.ok,api:value.api,downloads:value.downloads,missing:value.missing,
       seriesSources:value.sourceBySeries}:{ok:value.ok,...(!value.ok?{error:value.error}:{})}
   ]));
+  sourceStatus.bls={ok:blsEvents.length>0,mode:blsScheduleFallback?'official-ical-snapshot-fallback':'fetched-official-ical',
+    liveFetch:{ok:result.bls.ok,...(!result.bls.ok?{error:result.bls.error}:{})},
+    ...(blsScheduleFallback?{snapshotGeneratedAt:bundledBls.generatedAt}:{})};
+  sourceStatus.blsActuals={ok:Object.keys(effectiveBlsActuals).length===Object.keys(BLS_SERIES).length,
+    mode:blsActualFallbackTypes.length?'official-snapshot-fallback':'fetched',
+    live:{api:result.blsActuals.api,downloads:result.blsActuals.downloads,missing:result.blsActuals.missing},
+    fallbackTypes:blsActualFallbackTypes,...(blsActualFallbackTypes.length?{snapshotGeneratedAt:bundledBls.generatedAt}:{})};
   sourceStatus.ism={ok:ismEvents.length>0,scheduleSource:'derived-official-rule',dataAvailability:'schedule-only',
     supportedHolidayYears:Object.keys(NYSE_HOLIDAYS).map(Number),...(!ismEvents.length?{error:'no_verified_nyse_holiday_year_in_requested_window'}:{})};
   return {ok:unique.length>0,updatedAt:now,source:'official-multi-source',events:unique,sourceStatus};
