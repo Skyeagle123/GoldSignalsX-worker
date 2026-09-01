@@ -45,7 +45,7 @@ const {
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
   parseCensusScheduleHtml,parseBlsApiPayload,parseBlsDownloadDataset,buildBlsActualSnapshot,
-  applyBlsActuals,parseJoblessClaimsXml,buildJoblessClaimsEvents,buildIsmDerivedSchedule,
+  applyBlsActuals,readBundledBlsFallback,parseJoblessClaimsXml,buildJoblessClaimsEvents,buildIsmDerivedSchedule,
   calendarRiskSnapshot,extractOfficialActual
 }=await import(economicCalendarUrl);
 
@@ -793,7 +793,7 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.3',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.4',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
@@ -1129,6 +1129,10 @@ assert.deepEqual(enrichedBls.map(event=>event.actual),['2','0.5','200','4.3']);
 assert.ok(enrichedBls.every(event=>event.metadata.scheduleSource==='fetched-official-ical'&&event.metadata.dataMode==='fetched'));
 const upcomingBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,1));
 assert.deepEqual(upcomingBls.map(event=>event.previous),['2','0.5','200','4.3'],'next BLS releases must expose only the officially known previous values');
+const bundledBls=readBundledBlsFallback(calendarSettings,Date.UTC(2026,8,1));
+assert.equal(bundledBls.ok,true);assert.ok(bundledBls.events.some(event=>event.type==='cpi'&&event.eventAt>Date.UTC(2026,8,1)));
+assert.equal(bundledBls.snapshot.nfp.dataMode,'official-snapshot-fallback');
+assert.equal(bundledBls.events[0].metadata.scheduleSource,'official-ical-snapshot-fallback');
 
 const beaEvents=parseBeaScheduleHtml(`<h1>Year 2026</h1><table><tr><td><div class="release-date">September 25, 2026</div><small class="text-muted">8:30 AM</small></td><td class="release-title">Personal Income and Outlays, August 2026</td></tr><tr><td><div class="release-date">September 30, 2026</div><small>8:30 AM</small></td><td class="release-title">Gross Domestic Product, 2nd Quarter 2026</td></tr></table>`,calendarSettings,Date.UTC(2026,8,1));
 assert.deepEqual(beaEvents.map(event=>event.type),['pce','core_pce','gdp']);
@@ -1214,7 +1218,7 @@ await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM news_context_events').get().count,2,'news persistence must deduplicate stable event IDs');
 
 const endpointCache=new Map([
-  ['calendar:official:v2',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
+  ['calendar:official:v3',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
   ['news:brief:v2',JSON.stringify({...confirmedNews,updatedAt:Date.now()})]
 ]);
 const endpointKv={get:async(key,type)=>type==='json'?safeJson(endpointCache.get(key)):endpointCache.get(key)??null,put:async(key,value)=>endpointCache.set(key,value)};
