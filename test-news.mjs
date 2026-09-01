@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 
 const originalFetch=globalThis.fetch;
 
@@ -30,7 +31,9 @@ const {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,decideGoldExposure
+  pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
+  recordProductionPerformanceEvent,recordProductionPerformanceSafely,
+  readProductionPerformance,buildPerformanceSummary,signalResultR
 } = worker;
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
@@ -777,14 +780,14 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.7',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.1',
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${deploymentEventId}`,{
   schema:2,eventId:deploymentEventId,rootSignalId:'1d:old-deploy:buy',signalId:'1d:old-deploy:buy',
   tf:'1d',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.6',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.7',
   status:'pending',attempts:0,nextAttemptAt:telegramNow,text:'previous deployment event'
 });
 await restartHarness.feed.processTelegramEvents();
@@ -937,5 +940,146 @@ const stale = classifyNewsArticle({
   seenAt: now - 25 * 60 * 60 * 1000
 }, now);
 assert.equal(stale, null);
+
+class MemoryD1Statement {
+  constructor(database,sql,values=[]) { this.database=database;this.sql=sql;this.values=values; }
+  bind(...values) { return new MemoryD1Statement(this.database,this.sql,values); }
+  async all() { return {results:this.database.prepare(this.sql).all(...this.values)}; }
+  async first() { return this.database.prepare(this.sql).get(...this.values)||null; }
+  async run() {
+    const result=this.database.prepare(this.sql).run(...this.values);
+    return {success:true,meta:{changes:Number(result.changes||0)}};
+  }
+  runSync() {
+    const result=this.database.prepare(this.sql).run(...this.values);
+    return {success:true,meta:{changes:Number(result.changes||0)}};
+  }
+}
+
+class MemoryD1 {
+  constructor(database=new DatabaseSync(':memory:')) { this.database=database; }
+  async exec(sql) { this.database.exec(sql);return {count:1}; }
+  prepare(sql) { return new MemoryD1Statement(this.database,sql); }
+  async batch(statements) {
+    this.database.exec('BEGIN');
+    try {
+      const results=statements.map(statement=>statement.runSync());
+      this.database.exec('COMMIT');
+      return results;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+const performanceDb=new MemoryD1();
+await ensurePerformanceSchema({GSX_DB:performanceDb});
+const performanceBase=Date.UTC(2026,8,1,8,0,0);
+const productionSignal=(id,createdAt,overrides={})=>({
+  id,tf:'5m',side:'buy',createdAt,signalBarTs:createdAt-300_000,
+  entry:100,tp1:112.5,tp2:121,sl:90,conf:82,score:8.75,
+  reasons:['official production reason'],origin:'server',status:'active',
+  updatedAt:createdAt,lastPrice:100,...overrides
+});
+
+const winner=productionSignal('5m:performance:win',performanceBase);
+await Promise.all([
+  recordProductionPerformanceEvent({GSX_DB:performanceDb},winner,'created'),
+  recordProductionPerformanceEvent({GSX_DB:performanceDb},winner,'created')
+]);
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+  ...winner,status:'tp1',tp1Hit:true,updatedAt:performanceBase+60_000,lastPrice:113
+},'tp1');
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+  ...winner,status:'tp2',tp1Hit:true,updatedAt:performanceBase+120_000,
+  closedAt:performanceBase+120_000,lastPrice:122
+},'tp2');
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+  ...winner,status:'tp1',tp1Hit:true,updatedAt:performanceBase+180_000,lastPrice:114
+},'tp1');
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+  ...winner,status:'stopped',updatedAt:performanceBase+240_000,
+  closedAt:performanceBase+240_000,lastPrice:89
+},'stopped');
+
+for (let index=1;index<=2;index++) {
+  const createdAt=performanceBase+index*10*60_000;
+  const loser=productionSignal(`15m:performance:loss:${index}`,createdAt,{tf:'15m',side:'sell'});
+  await recordProductionPerformanceEvent({GSX_DB:performanceDb},loser,'created');
+  await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+    ...loser,status:'stopped',updatedAt:createdAt+60_000,closedAt:createdAt+60_000,lastPrice:91
+  },'stopped');
+}
+
+const expiring=productionSignal('60m:performance:expired',performanceBase+30*60_000,{tf:'60m'});
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},expiring,'created');
+await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
+  ...expiring,status:'expired',updatedAt:expiring.createdAt+60_000,
+  closedAt:expiring.createdAt+60_000,lastPrice:105
+},'expired');
+
+assert.equal(signalResultR(winner,'tp2',122),2.1);
+assert.equal(signalResultR(winner,'sl',89),-1);
+assert.equal(signalResultR(expiring,'expired',105),0.5);
+const performance=await readProductionPerformance({GSX_DB:performanceDb},new URLSearchParams('limit=2'));
+assert.equal(performance.ok,true);
+assert.equal(performance.source,'production-official-signals');
+assert.equal(performance.simulation,false);
+assert.equal(performance.records.length,2,'performance endpoint must paginate the production ledger');
+assert.ok(performance.nextCursor,'a full performance page must expose a stable cursor');
+assert.equal(performance.summary.signals,4);
+assert.equal(performance.summary.wins,1);
+assert.equal(performance.summary.losses,2);
+assert.equal(performance.summary.expired,1);
+assert.equal(performance.summary.netR,0.6);
+assert.equal(performance.summary.averageR,0.15);
+assert.equal(performance.summary.maxDrawdownR,2);
+assert.equal(performance.summary.bestWinStreak,1);
+assert.equal(performance.summary.worstLossStreak,2);
+assert.equal(performance.summary.byTimeframe['15m'].losses,2);
+assert.equal(performance.summary.byDirection.buy.wins,1);
+
+const winnerRecord=(await readProductionPerformance(
+  {GSX_DB:performanceDb},new URLSearchParams('tf=5m&limit=10')
+)).records.find(record=>record.signalId===winner.id);
+assert.deepEqual(winnerRecord.events.map(event=>event.type),['created','tp1','tp2']);
+assert.equal(winnerRecord.finalStatus,'tp2','a later conflicting SL must not replace the first terminal event');
+assert.equal(winnerRecord.tp1At,performanceBase+60_000,'a delayed duplicate TP1 must not rewrite the first event time');
+assert.equal(winnerRecord.score,8.75);
+
+const duplicateEventCount=performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signal_events WHERE signal_id=?'
+).get(winner.id).count;
+assert.equal(duplicateEventCount,3,'duplicate/retry/restart processing must not duplicate lifecycle events');
+const restartedDb=new MemoryD1(performanceDb.database);
+await recordProductionPerformanceEvent({GSX_DB:restartedDb},winner,'created');
+assert.equal(performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signals WHERE signal_id=?'
+).get(winner.id).count,1,'the same signal after restart/deploy must remain one trade');
+
+assert.equal((await recordProductionPerformanceEvent(
+  {GSX_DB:performanceDb},{...winner,id:'1m:informational',tf:'1m'},'created'
+)).error,'official_production_signal_required','1m informational signals must not enter the official performance ledger');
+assert.equal((await recordProductionPerformanceEvent(
+  {GSX_DB:performanceDb},{...winner,id:'5m:backtest',origin:'backtest'},'created'
+)).error,'official_production_signal_required','backtest signals must never enter production performance');
+assert.equal((await recordProductionPerformanceSafely(
+  {GSX_DB:{batch:async()=>{throw new Error('D1 unavailable');},prepare:performanceDb.prepare.bind(performanceDb)}},
+  {...winner,id:'5m:storage-failure'},'created'
+)).ok,false,'performance storage failure must be isolated from the signal lifecycle');
+
+const performanceResponse=await worker.default.fetch(new Request('https://example.com/performance?limit=2'),{
+  GSX_DB:performanceDb,ALLOW_ORIGINS:JSON.stringify([allowedOrigin])
+},{});
+assert.equal(performanceResponse.status,200);
+const performancePayload=await performanceResponse.json();
+assert.equal(performancePayload.records.length,2);
+assert.equal(performancePayload.summary.netR,0.6);
+assert.equal(performancePayload.storage,'D1');
+
+const emptySummary=buildPerformanceSummary([]);
+assert.equal(emptySummary.signals,0);
+assert.equal(emptySummary.maxDrawdownR,0);
 
 console.log('news intelligence tests passed');

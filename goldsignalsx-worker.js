@@ -19,6 +19,7 @@ import {
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → أهم الأخبار المؤثرة على الذهب + الميل الإخباري
 //   POST /backtest            → محاكاة read-only بمحرك الإشارات الرسمي
+//   GET  /performance         → سجل أداء Production الحقيقي (read-only)
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST /notify                  → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
@@ -32,7 +33,7 @@ import {
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.08.31.7';
+const APP_VERSION = '2026.09.01.1';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -52,6 +53,10 @@ const TELEGRAM_EVENT_RANK = Object.freeze({news:0,new_signal:10,confirmation:20,
 const MAX_BARS_LIMIT = 5000;
 const MAX_BACKTEST_BARS = 12000;
 const MAX_BACKTEST_BODY_BYTES = 2 * 1024 * 1024;
+const PERFORMANCE_SOURCE = 'production';
+const PERFORMANCE_SYMBOL = 'XAUUSD';
+const PERFORMANCE_PAGE_DEFAULT = 50;
+const PERFORMANCE_PAGE_MAX = 100;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
 const NEWS_CACHE_MS = 15 * 60 * 1000;
@@ -746,6 +751,24 @@ export default {
         }
       }
 
+      if (path === '/performance') {
+        if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        if (!env.GSX_DB) return json({ok:false,error:'performance_storage_unavailable'},corsHeaders,503);
+        try {
+          return jsonNoStore(await readProductionPerformance(env,url.searchParams),corsHeaders);
+        } catch (error) {
+          const message=String(error?.message||error);
+          if (message==='bad_performance_query') {
+            return json({ok:false,error:message},corsHeaders,400);
+          }
+          if (message.toLowerCase().includes('no such table')) {
+            return jsonNoStore(emptyProductionPerformance(),corsHeaders);
+          }
+          console.error(JSON.stringify({message:'performance read failed',error:message}));
+          return json({ok:false,error:'performance_read_failed'},corsHeaders,500);
+        }
+      }
+
       if (path === '/signals') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const tf=url.searchParams.get('tf')||'';
@@ -1168,17 +1191,333 @@ function signalTelegramText(signal,event='created',options={}) {
   ].join('\n');
 }
 
+function canonicalPerformanceEvent(event) {
+  const value=String(event||'');
+  if (value==='created') return 'created';
+  if (value==='tp1') return 'tp1';
+  if (value==='tp2') return 'tp2';
+  if (value==='stopped'||value==='sl') return 'sl';
+  if (value==='expired') return 'expired';
+  return '';
+}
+
+function performanceEventAt(signal,event) {
+  if (event==='created') return Number(signal?.createdAt)||0;
+  if (['tp2','sl','expired'].includes(event)) return Number(signal?.closedAt||signal?.updatedAt)||0;
+  return Number(signal?.updatedAt||signal?.createdAt)||0;
+}
+
+function performanceEventPrice(signal,event) {
+  const observed=Number(signal?.lastPrice);
+  if (Number.isFinite(observed)) return observed;
+  if (event==='created') return Number(signal?.entry);
+  if (event==='tp1') return Number(signal?.tp1);
+  if (event==='tp2') return Number(signal?.tp2);
+  if (event==='sl') return Number(signal?.sl);
+  return Number(signal?.entry);
+}
+
+function performanceEventLevel(signal,event) {
+  if (event==='created'||event==='expired') return Number(signal?.entry);
+  return Number(signal?.[event]);
+}
+
+function signalResultR(signal,event,price=performanceEventPrice(signal,event)) {
+  const entry=Number(signal?.entry),sl=Number(signal?.sl),risk=Math.abs(entry-sl);
+  if (![entry,sl,risk].every(Number.isFinite)||risk<=0) return null;
+  let result;
+  if (event==='tp2') result=Math.abs(Number(signal?.tp2)-entry)/risk;
+  else if (event==='sl') result=-1;
+  else if (event==='expired'&&Number.isFinite(Number(price))) {
+    result=(signal?.side==='sell'?entry-Number(price):Number(price)-entry)/risk;
+  } else return null;
+  return Number(result.toFixed(6));
+}
+
+function productionSignalEligible(signal) {
+  return String(signal?.origin||'')==='server'&&
+    GOLD_EXPOSURE_TIMEFRAMES.includes(String(signal?.tf||''))&&
+    ['buy','sell'].includes(String(signal?.side||''))&&
+    Boolean(String(signal?.id||''))&&
+    [signal?.createdAt,signal?.entry,signal?.tp1,signal?.tp2,signal?.sl]
+      .every(value=>Number.isFinite(Number(value)));
+}
+
+async function recordProductionPerformanceEvent(env,signal,event) {
+  const eventType=canonicalPerformanceEvent(event);
+  if (!env.GSX_DB) return {ok:false,error:'performance_storage_unavailable'};
+  if (!eventType||!productionSignalEligible(signal)) return {ok:false,error:'official_production_signal_required'};
+  const signalId=String(signal.id),eventAt=performanceEventAt(signal,eventType);
+  if (!Number.isFinite(eventAt)||eventAt<Number(signal.createdAt)) return {ok:false,error:'invalid_event_time'};
+  const recordedAt=Date.now(),price=performanceEventPrice(signal,eventType);
+  const level=performanceEventLevel(signal,eventType);
+  const reasons=JSON.stringify(Array.isArray(signal.reasons)?signal.reasons.slice(0,8):[]);
+  const statements=[
+    env.GSX_DB.prepare(`
+      INSERT OR IGNORE INTO production_signals (
+        signal_id,source,symbol,timeframe,direction,created_at,signal_bar_ts,
+        entry,tp1,tp2,sl,confidence,score,reasons_json,status,recorded_at,updated_at
+      ) VALUES (?1,'production','XAUUSD',?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'active',?13,?13)
+    `).bind(
+      signalId,String(signal.tf),String(signal.side),Number(signal.createdAt),Number(signal.signalBarTs||0),
+      Number(signal.entry),Number(signal.tp1),Number(signal.tp2),Number(signal.sl),
+      Number(signal.conf||0),Number.isFinite(Number(signal.score))?Number(signal.score):null,reasons,recordedAt
+    ),
+    env.GSX_DB.prepare(`
+      INSERT OR IGNORE INTO production_signal_events
+        (event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at)
+      VALUES (?1,?2,'created',?3,?4,?4,'production_lifecycle',?5)
+    `).bind(`production:${signalId}:created`,signalId,Number(signal.createdAt),Number(signal.entry),recordedAt)
+  ];
+
+  if (eventType==='tp1'||eventType==='tp2') {
+    statements.push(
+      env.GSX_DB.prepare(`
+        UPDATE production_signals SET
+          status='tp1',tp1_at=?2,tp1_price=?3,updated_at=MAX(updated_at,?4)
+        WHERE signal_id=?1 AND final_status IS NULL AND tp1_at IS NULL
+      `).bind(signalId,eventAt,price,recordedAt),
+      env.GSX_DB.prepare(`
+        INSERT OR IGNORE INTO production_signal_events
+          (event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at)
+        SELECT ?1,signal_id,'tp1',tp1_at,tp1_price,tp1,'production_lifecycle',?4
+        FROM production_signals
+        WHERE signal_id=?2 AND tp1_at=?3
+      `).bind(`production:${signalId}:tp1`,signalId,eventAt,recordedAt)
+    );
+  }
+
+  if (['tp2','sl','expired'].includes(eventType)) {
+    const finalR=signalResultR(signal,eventType,price);
+    const timeColumn=eventType==='tp2'?'tp2_at':eventType==='sl'?'sl_at':'expired_at';
+    const priceColumn=eventType==='tp2'?'tp2_price':eventType==='sl'?'sl_price':'expired_price';
+    statements.push(
+      env.GSX_DB.prepare(`
+        UPDATE production_signals SET
+          status=?2,final_status=?2,${timeColumn}=?3,${priceColumn}=?4,
+          closed_at=?3,result_r=?5,updated_at=MAX(updated_at,?6)
+        WHERE signal_id=?1 AND final_status IS NULL
+      `).bind(signalId,eventType,eventAt,price,finalR,recordedAt),
+      env.GSX_DB.prepare(`
+        INSERT OR IGNORE INTO production_signal_events
+          (event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at)
+        SELECT ?1,signal_id,?3,?4,?5,?6,'production_lifecycle',?7
+        FROM production_signals
+        WHERE signal_id=?2 AND final_status=?3 AND ${timeColumn}=?4
+      `).bind(`production:${signalId}:${eventType}`,signalId,eventType,eventAt,price,level,recordedAt)
+    );
+  }
+
+  await env.GSX_DB.batch(statements);
+  const stored=await env.GSX_DB.prepare(
+    'SELECT signal_id,status,final_status,result_r,updated_at FROM production_signals WHERE signal_id=?1'
+  ).bind(signalId).first();
+  return {ok:Boolean(stored),eventId:`production:${signalId}:${eventType}`,signal:stored||null};
+}
+
+async function recordProductionPerformanceSafely(env,signal,event) {
+  try {
+    return await recordProductionPerformanceEvent(env,signal,event);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'production performance recording failed',signalId:String(signal?.id||''),
+      event:canonicalPerformanceEvent(event),error:error instanceof Error?error.message:String(error)
+    }));
+    return {ok:false,error:'performance_record_failed'};
+  }
+}
+
+function mapPerformanceSignal(row) {
+  let reasons=[];
+  try { reasons=JSON.parse(String(row?.reasons_json||'[]')); } catch {}
+  return {
+    signalId:String(row?.signal_id||''),source:String(row?.source||PERFORMANCE_SOURCE),
+    symbol:String(row?.symbol||PERFORMANCE_SYMBOL),timeframe:String(row?.timeframe||''),
+    direction:String(row?.direction||''),createdAt:Number(row?.created_at||0),
+    signalBarTs:Number(row?.signal_bar_ts||0),entry:Number(row?.entry),tp1:Number(row?.tp1),
+    tp2:Number(row?.tp2),sl:Number(row?.sl),confidence:Number(row?.confidence||0),
+    score:row?.score==null?null:Number(row.score),reasons:Array.isArray(reasons)?reasons:[],
+    status:String(row?.status||''),finalStatus:row?.final_status?String(row.final_status):null,
+    tp1At:row?.tp1_at==null?null:Number(row.tp1_at),tp1Price:row?.tp1_price==null?null:Number(row.tp1_price),
+    tp2At:row?.tp2_at==null?null:Number(row.tp2_at),tp2Price:row?.tp2_price==null?null:Number(row.tp2_price),
+    slAt:row?.sl_at==null?null:Number(row.sl_at),slPrice:row?.sl_price==null?null:Number(row.sl_price),
+    expiredAt:row?.expired_at==null?null:Number(row.expired_at),
+    expiredPrice:row?.expired_price==null?null:Number(row.expired_price),
+    closedAt:row?.closed_at==null?null:Number(row.closed_at),
+    resultR:row?.result_r==null?null:Number(row.result_r),updatedAt:Number(row?.updated_at||0)
+  };
+}
+
+function roundPerformance(value) {
+  return Number(Number(value||0).toFixed(6));
+}
+
+function aggregatePerformance(records) {
+  const completed=records.filter(record=>['tp2','sl','expired'].includes(record.finalStatus));
+  const wins=completed.filter(record=>record.finalStatus==='tp2').length;
+  const losses=completed.filter(record=>record.finalStatus==='sl').length;
+  const expired=completed.filter(record=>record.finalStatus==='expired').length;
+  let equity=0,peak=0,maxDrawdown=0,bestStreak=0,worstStreak=0,winStreak=0,lossStreak=0;
+  for (const record of [...completed].sort((a,b)=>(a.closedAt||0)-(b.closedAt||0)||a.signalId.localeCompare(b.signalId))) {
+    equity+=Number(record.resultR||0);
+    peak=Math.max(peak,equity);
+    maxDrawdown=Math.max(maxDrawdown,peak-equity);
+    if (record.finalStatus==='tp2') {
+      winStreak+=1;lossStreak=0;bestStreak=Math.max(bestStreak,winStreak);
+    } else if (record.finalStatus==='sl') {
+      lossStreak+=1;winStreak=0;worstStreak=Math.max(worstStreak,lossStreak);
+    } else {
+      winStreak=0;lossStreak=0;
+    }
+  }
+  return {
+    signals:records.length,open:records.length-completed.length,completed:completed.length,
+    wins,losses,expired,winRate:wins+losses?roundPerformance(wins/(wins+losses)*100):0,
+    netR:roundPerformance(equity),averageR:completed.length?roundPerformance(equity/completed.length):0,
+    maxDrawdownR:roundPerformance(maxDrawdown),bestWinStreak:bestStreak,worstLossStreak:worstStreak
+  };
+}
+
+function performancePeriodStarts(now=Date.now()) {
+  const date=new Date(now);
+  const day=Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate());
+  const weekday=(date.getUTCDay()+6)%7;
+  return {today:day,week:day-weekday*24*60*60*1000,month:Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),1)};
+}
+
+function buildPerformanceSummary(records,now=Date.now()) {
+  const byTimeframe=Object.fromEntries(GOLD_EXPOSURE_TIMEFRAMES.map(tf=>[
+    tf,aggregatePerformance(records.filter(record=>record.timeframe===tf))
+  ]));
+  const byDirection=Object.fromEntries(['buy','sell'].map(side=>[
+    side,aggregatePerformance(records.filter(record=>record.direction===side))
+  ]));
+  const starts=performancePeriodStarts(now);
+  return {
+    ...aggregatePerformance(records),
+    rPolicy:{tp2:'target distance / initial risk',sl:'-1R',expired:'directional mark-to-market at expiration / initial risk',winRate:'TP2 / (TP2 + SL)'},
+    periodBasis:'signal.createdAt UTC',byTimeframe,byDirection,
+    periods:Object.fromEntries(Object.entries(starts).map(([name,start])=>[
+      name,aggregatePerformance(records.filter(record=>record.createdAt>=start))
+    ]))
+  };
+}
+
+function emptyProductionPerformance() {
+  return {
+    ok:true,source:'production-official-signals',simulation:false,storage:'D1',
+    summary:buildPerformanceSummary([]),records:[],nextCursor:null
+  };
+}
+
+function parsePerformanceCursor(value) {
+  const raw=String(value||''),separator=raw.indexOf('|');
+  if (separator<1) return null;
+  const createdAt=Number(raw.slice(0,separator));
+  let signalId='';
+  try { signalId=decodeURIComponent(raw.slice(separator+1)); } catch { return null; }
+  return Number.isFinite(createdAt)&&signalId?{createdAt,signalId}:null;
+}
+
+function makePerformanceCursor(record) {
+  return `${record.createdAt}|${encodeURIComponent(record.signalId)}`;
+}
+
+async function readProductionPerformance(env,searchParams=new URLSearchParams()) {
+  const conditions=["source='production'"];
+  const values=[];
+  const add=(condition,value)=>{values.push(value);conditions.push(condition.replace('?',`?${values.length}`));};
+  const tf=String(searchParams.get('tf')||'');
+  const direction=String(searchParams.get('direction')||'').toLowerCase();
+  const status=String(searchParams.get('status')||'').toLowerCase();
+  if (tf) {
+    if (!GOLD_EXPOSURE_TIMEFRAMES.includes(tf)) throw new Error('bad_performance_query');
+    add('timeframe=?',tf);
+  }
+  if (direction) {
+    if (!['buy','sell'].includes(direction)) throw new Error('bad_performance_query');
+    add('direction=?',direction);
+  }
+  if (status) {
+    if (!['active','tp1','tp2','sl','expired'].includes(status)) throw new Error('bad_performance_query');
+    add('status=?',status);
+  }
+  for (const [name,column,operator] of [['from','created_at','>='],['to','created_at','<=']]) {
+    if (!searchParams.has(name)) continue;
+    const timestamp=Number(searchParams.get(name));
+    if (!Number.isFinite(timestamp)) throw new Error('bad_performance_query');
+    add(`${column}${operator}?`,timestamp);
+  }
+  const where=conditions.join(' AND ');
+  const select=`SELECT signal_id,source,symbol,timeframe,direction,created_at,signal_bar_ts,
+    entry,tp1,tp2,sl,confidence,score,reasons_json,status,final_status,
+    tp1_at,tp1_price,tp2_at,tp2_price,sl_at,sl_price,expired_at,expired_price,
+    closed_at,result_r,updated_at FROM production_signals`;
+  const summaryRows=(await env.GSX_DB.prepare(`${select} WHERE ${where} ORDER BY created_at,signal_id`)
+    .bind(...values).all()).results||[];
+  const allRecords=summaryRows.map(mapPerformanceSignal);
+
+  const pageConditions=[...conditions],pageValues=[...values];
+  const cursorValue=searchParams.get('cursor');
+  if (cursorValue) {
+    const cursor=parsePerformanceCursor(cursorValue);
+    if (!cursor) throw new Error('bad_performance_query');
+    const first=pageValues.push(cursor.createdAt);
+    const second=pageValues.push(cursor.createdAt);
+    const third=pageValues.push(cursor.signalId);
+    pageConditions.push(`(created_at<?${first} OR (created_at=?${second} AND signal_id<?${third}))`);
+  }
+  const limit=parseLimit(searchParams.get('limit'),PERFORMANCE_PAGE_DEFAULT,PERFORMANCE_PAGE_MAX);
+  const limitIndex=pageValues.push(limit+1);
+  const pageRows=(await env.GSX_DB.prepare(
+    `${select} WHERE ${pageConditions.join(' AND ')} ORDER BY created_at DESC,signal_id DESC LIMIT ?${limitIndex}`
+  ).bind(...pageValues).all()).results||[];
+  const hasMore=pageRows.length>limit;
+  const records=pageRows.slice(0,limit).map(mapPerformanceSignal);
+  if (records.length) {
+    const placeholders=records.map((_,index)=>`?${index+1}`).join(',');
+    const events=(await env.GSX_DB.prepare(`
+      SELECT event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at
+      FROM production_signal_events WHERE signal_id IN (${placeholders})
+      ORDER BY event_at,CASE event_type WHEN 'created' THEN 1 WHEN 'tp1' THEN 2 ELSE 3 END,event_id
+    `).bind(...records.map(record=>record.signalId)).all()).results||[];
+    const bySignal=new Map();
+    for (const event of events) {
+      const list=bySignal.get(String(event.signal_id))||[];
+      list.push({
+        eventId:String(event.event_id),type:String(event.event_type),eventAt:Number(event.event_at),
+        price:Number(event.observed_price),level:Number(event.level),source:String(event.source),
+        recordedAt:Number(event.recorded_at)
+      });
+      bySignal.set(String(event.signal_id),list);
+    }
+    for (const record of records) record.events=bySignal.get(record.signalId)||[];
+  }
+  return {
+    ok:true,source:'production-official-signals',simulation:false,storage:'D1',
+    summary:buildPerformanceSummary(allRecords),records,
+    nextCursor:hasMore&&records.length?makePerformanceCursor(records.at(-1)):null
+  };
+}
+
 async function saveSignalState(env,signal,event) {
   if (!env.GSX_KV) return;
   await env.GSX_KV.put(`signal:state:${signal.tf}`,JSON.stringify(signal),{expirationTtl:90*24*60*60});
   await env.GSX_KV.put(`signal:log:${signal.id}:${event}`,JSON.stringify({...signal,event}),{expirationTtl:90*24*60*60});
+  const performanceWrite=recordProductionPerformanceSafely(env,signal,event);
   if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
-    await queueTelegramDelivery(env,signal,event,signalTelegramText(signal,event));
+    await Promise.all([
+      performanceWrite,
+      queueTelegramDelivery(env,signal,event,signalTelegramText(signal,event))
+    ]);
+  } else {
+    await performanceWrite;
   }
 }
 
 async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   if (String(env.SIGNALS_ENABLED||'1').trim()==='0'||!env.GSX_DB||!env.GSX_KV) return;
+  await ensurePerformanceSchema(env);
   const live=await currentPriceForSignals(env);
   if (!live) return;
   const limits={'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60};
@@ -1197,6 +1536,10 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   for (const tf of SIGNAL_TIMEFRAMES) {
     const existing=await readKvJson(env,`signal:state:${tf}`);
     if (existing&&['active','tp1'].includes(existing.status)) {
+      await recordProductionPerformanceSafely(env,existing,'created');
+      if (existing.status==='tp1'||existing.tp1Hit) {
+        await recordProductionPerformanceSafely(env,existing,'tp1');
+      }
       const lifecycle=updateSignalLifecycleAcrossBars(existing,trackingBars,live.price,now);
       for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event);
       if (!lifecycle.events.length) {
@@ -1222,7 +1565,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     const id=`${tf}:${signalBarTs}:${result.side}`;
     const signal={
       id,tf,side:result.side,entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
-      conf:Number(result.conf),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
+      conf:Number(result.conf),score:Number(result.score),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
       signalBarTs,lastProcessedBarTs:signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
       origin:'server',
       provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters
@@ -2436,6 +2779,16 @@ async function maybeEnsureD1(env) {
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS bars_v2 (tf INTEGER NOT NULL, t INTEGER NOT NULL, o REAL NOT NULL, h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL NOT NULL DEFAULT 0, provider TEXT NOT NULL DEFAULT \'legacy\', PRIMARY KEY (tf,t));');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_bars_v2_tf_t ON bars_v2(tf,t);');
   await env.GSX_DB.exec("INSERT OR IGNORE INTO bars_v2(tf,t,o,h,l,c,v,provider) SELECT COALESCE(tf,1),t,o,h,l,c,COALESCE(v,0),COALESCE(provider,'legacy') FROM bars;");
+  await ensurePerformanceSchema(env);
+}
+
+async function ensurePerformanceSchema(env) {
+  if (!env.GSX_DB) return;
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signals (signal_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT 'production' CHECK (source='production'), symbol TEXT NOT NULL DEFAULT 'XAUUSD', timeframe TEXT NOT NULL, direction TEXT NOT NULL CHECK (direction IN ('buy','sell')), created_at INTEGER NOT NULL, signal_bar_ts INTEGER NOT NULL DEFAULT 0, entry REAL NOT NULL, tp1 REAL NOT NULL, tp2 REAL NOT NULL, sl REAL NOT NULL, confidence REAL NOT NULL DEFAULT 0, score REAL, reasons_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', final_status TEXT, tp1_at INTEGER, tp1_price REAL, tp2_at INTEGER, tp2_price REAL, sl_at INTEGER, sl_price REAL, expired_at INTEGER, expired_price REAL, closed_at INTEGER, result_r REAL, recorded_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_created ON production_signals(created_at DESC,signal_id DESC);');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created ON production_signals(timeframe,created_at DESC);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
 }
 
 async function refreshStoredPrice(env) {
@@ -2532,5 +2885,7 @@ export {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,decideGoldExposure
+  pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
+  recordProductionPerformanceEvent,recordProductionPerformanceSafely,
+  readProductionPerformance,buildPerformanceSummary,signalResultR
 };
