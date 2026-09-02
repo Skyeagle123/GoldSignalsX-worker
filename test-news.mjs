@@ -36,7 +36,7 @@ const {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
+  pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
@@ -95,6 +95,21 @@ for (const [tf,minutes] of Object.entries(signalFrameMinutes)) {
     `${tf}: a candle must become eligible exactly at its close time`
   );
 }
+
+const expiredAt=Date.UTC(2026,8,2,5,10);
+const expired60m={
+  status:'expired',closedAt:expiredAt,
+  closedBarTs:Date.UTC(2026,8,2,5,9),
+  signalBarTs:Date.UTC(2026,8,1,16,0)
+};
+assert.equal(
+  candidateClosesAfterExistingSignal(expired60m,Date.UTC(2026,8,2,5,0),'60m'),true,
+  'a 60m candle that closes after expiration must be eligible even when its start precedes the 1m tracking timestamp'
+);
+assert.equal(
+  candidateClosesAfterExistingSignal(expired60m,Date.UTC(2026,8,2,4,0),'60m'),false,
+  'a 60m candle that closed before expiration must remain ineligible'
+);
 
 const bullish = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates and dollar falls',

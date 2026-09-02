@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   HIGHER_SIGNAL_TIMEFRAMES,
+  SIGNAL_TF_MS,
   SIGNAL_TIMEFRAMES,
   computeServerSignal,
   evaluateCandleQuality,
@@ -1549,6 +1550,17 @@ async function saveSignalState(env,signal,event) {
   }
 }
 
+function candidateClosesAfterExistingSignal(existing,signalBarTs,tf) {
+  if (!existing) return true;
+  const barStart=Number(signalBarTs);
+  const duration=Number(SIGNAL_TF_MS[tf]);
+  const terminalAt=Number(existing.closedAt);
+  if (Number.isFinite(barStart)&&Number.isFinite(duration)&&duration>0&&Number.isFinite(terminalAt)&&terminalAt>0) {
+    return barStart+duration>terminalAt;
+  }
+  return barStart>Number(existing.closedBarTs||existing.signalBarTs||0);
+}
+
 async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   if (String(env.SIGNALS_ENABLED||'1').trim()==='0'||!env.GSX_DB||!env.GSX_KV) return;
   await ensurePerformanceSchema(env);
@@ -1595,7 +1607,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     evaluations.set(tf,evaluation);
     if (!['buy','sell'].includes(result.side)) continue;
     const signalBarTs=Number(result.lastTs||frame.bars.at(-1)?.t||now);
-    if (existing&&signalBarTs<=Number(existing.closedBarTs||existing.signalBarTs||0)) continue;
+    if (!candidateClosesAfterExistingSignal(existing,signalBarTs,tf)) continue;
     const id=`${tf}:${signalBarTs}:${result.side}`;
     const signal={
       id,tf,side:result.side,entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
@@ -3095,7 +3107,7 @@ export {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,decideGoldExposure,ensurePerformanceSchema,
+  pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
