@@ -125,6 +125,57 @@ function appendExposureRecord(records,record) {
   return [...list,record].slice(-GOLD_EXPOSURE_MAX_RECORDS);
 }
 
+function normalizeMtfSummary(value) {
+  return {
+    bull:Math.max(0,Number(value?.bull)||0),
+    bear:Math.max(0,Number(value?.bear)||0),
+    neutral:Math.max(0,Number(value?.neutral)||0)
+  };
+}
+
+function createMtfAtEntrySnapshot(tf,summary,frames,capturedAt=Date.now()) {
+  const relatedTimeframes=Array.from(new Set(
+    (Array.isArray(frames)?frames:[]).map(frame=>String(frame?.tf||''))
+      .filter(frame=>SIGNAL_TIMEFRAMES.includes(frame))
+  ));
+  return {
+    capturedAt:Number(capturedAt)||Date.now(),
+    primaryTf:String(tf||''),
+    relatedTimeframes,
+    summary:normalizeMtfSummary(summary),
+    frames:(Array.isArray(frames)?frames:[]).map(frame=>{
+      const barTs=Number(frame?.bars?.at?.(-1)?.t)||0;
+      return {
+        tf:String(frame?.tf||''),barTs,
+        closedAt:barTs+Number(SIGNAL_TF_MS[frame?.tf]||0)
+      };
+    }).filter(frame=>SIGNAL_TIMEFRAMES.includes(frame.tf)&&frame.barTs>0)
+  };
+}
+
+function linkMtfConfirmation(primary,confirmation,primarySignalId,eventAt=Date.now()) {
+  const rootId=String(primarySignalId||'');
+  if (!primary||String(primary.id||'')!==rootId||!confirmation||
+      String(primary.side||'')!==String(confirmation.side||'')) return null;
+  const confirmationSignalId=String(confirmation.id||'');
+  if (!confirmationSignalId) return null;
+  const record={
+    type:'later-confirmation',confirmationSignalId,primarySignalId:rootId,
+    tf:String(confirmation.tf||''),side:String(confirmation.side||''),
+    conf:Number(confirmation.conf||0),score:Number(confirmation.score||0),
+    signalBarTs:Number(confirmation.signalBarTs||0),
+    confirmedAt:Number(eventAt)||Number(confirmation.createdAt)||Date.now()
+  };
+  const existing=Array.isArray(primary.mtfConfirmations)
+    ?primary.mtfConfirmations.filter(item=>item?.confirmationSignalId!==confirmationSignalId)
+    :[];
+  return {
+    ...primary,
+    mtfConfirmations:[...existing,record].slice(-GOLD_EXPOSURE_MAX_RECORDS),
+    mtfLastUpdatedAt:record.confirmedAt
+  };
+}
+
 function activeExposureFromSignal(signal,now,source='admission') {
   return {
     symbol:'XAUUSD',status:'active',side:signal.side,maxPositions:1,
@@ -1550,6 +1601,27 @@ async function saveSignalState(env,signal,event) {
   }
 }
 
+async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySignalId,eventAt) {
+  if (!env.GSX_KV||!primary) return null;
+  const key=`signal:state:${primary.tf}`;
+  const stored=await readKvJson(env,key);
+  const base=stored?.id===primarySignalId?stored:primary;
+  const linked=linkMtfConfirmation(base,confirmation,primarySignalId,eventAt);
+  if (!linked) return null;
+  await Promise.all([
+    env.GSX_KV.put(key,JSON.stringify(linked),{expirationTtl:90*24*60*60}),
+    env.GSX_KV.put(
+      `signal:log:${primarySignalId}:confirmation:${confirmation.id}`,
+      JSON.stringify({
+        event:'confirmation',primarySignalId,
+        confirmation:linked.mtfConfirmations.at(-1)
+      }),
+      {expirationTtl:90*24*60*60}
+    )
+  ]);
+  return linked;
+}
+
 function candidateClosesAfterExistingSignal(existing,signalBarTs,tf) {
   if (!existing) return true;
   const barStart=Number(signalBarTs);
@@ -1613,6 +1685,8 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       id,tf,side:result.side,entry:Number(result.entry),tp1:Number(result.tp1),tp2:Number(result.tp2),sl:Number(result.sl),
       conf:Number(result.conf),score:Number(result.score),reasons:Array.isArray(result.reasons)?result.reasons.slice(0,8):[],
       signalBarTs,lastProcessedBarTs:signalBarTs,createdAt:now,updatedAt:now,status:'active',tp1Hit:false,lastPrice:Number(live.price),
+      mtf:normalizeMtfSummary(result.mtf),
+      mtfAtEntry:createMtfAtEntrySnapshot(tf,result.mtf,mtf,now),mtfConfirmations:[],
       origin:'server',
       provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters
     };
@@ -1672,19 +1746,35 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       throw error;
     }
   }
-  if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
-    const signalsById=new Map([...officialSignals,...candidates].map(signal=>[signal.id,signal]));
-    for (const signal of candidates) {
-      const decision=decisions.get(signal.id);
-      if (decision?.decision!=='confirmation') continue;
-      const primarySignalId=String(decision.primarySignalId||exposureResult.state?.primarySignalId||'');
-      const primary=signalsById.get(primarySignalId)||null;
+  const signalsById=new Map([...officialSignals,...candidates].map(signal=>[signal.id,signal]));
+  for (const signal of candidates) {
+    const decision=decisions.get(signal.id);
+    if (decision?.decision!=='confirmation') continue;
+    const primarySignalId=String(decision.primarySignalId||exposureResult.state?.primarySignalId||'');
+    let primary=signalsById.get(primarySignalId)||null;
+    if (!primary&&exposureResult.state?.primaryTf) {
+      const stored=await readKvJson(env,`signal:state:${exposureResult.state.primaryTf}`);
+      if (stored?.id===primarySignalId) primary=stored;
+    }
+    const eventAt=Number(signal.createdAt)||now;
+    const linked=await persistLinkedMtfConfirmation(
+      env,primary,signal,primarySignalId,eventAt
+    );
+    if (!linked) {
+      console.error(JSON.stringify({
+        message:'MTF confirmation could not be linked',
+        primarySignalId,confirmationSignalId:signal.id
+      }));
+      continue;
+    }
+    primary=linked;
+    signalsById.set(primarySignalId,linked);
+    if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
       const options={
-        rootSignalId:primarySignalId,
-        primarySignalId,
-        primaryTf:String(primary?.tf||exposureResult.state?.primaryTf||''),
-        signalCreatedAt:Number(primary?.createdAt||exposureResult.state?.openedAt)||0,
-        eventAt:Number(signal.createdAt)||now
+        rootSignalId:primarySignalId,primarySignalId,
+        primaryTf:String(primary.tf||exposureResult.state?.primaryTf||''),
+        signalCreatedAt:Number(primary.createdAt||exposureResult.state?.openedAt)||0,
+        eventAt
       };
       await queueTelegramDelivery(
         env,signal,'confirmation',signalTelegramText(signal,'confirmation',options),options
@@ -3111,5 +3201,6 @@ export {
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
-  maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents
+  maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,
+  createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation
 };

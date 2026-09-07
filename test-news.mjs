@@ -40,7 +40,8 @@ const {
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
-  persistCalendarEvents,persistNewsEvents
+  persistCalendarEvents,persistNewsEvents,createMtfAtEntrySnapshot,
+  linkMtfConfirmation,persistLinkedMtfConfirmation
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
@@ -312,6 +313,67 @@ const oneMinuteConfirmation=decideGoldExposure(activeState,{
 });
 assert.equal(oneMinuteConfirmation.decisions[0].decision,'confirmation','1m may only confirm an active exposure');
 assert.equal(oneMinuteConfirmation.state.primarySignalId,primary.id);
+
+const mtfSnapshot=createMtfAtEntrySnapshot('5m',{bull:0,bear:2,neutral:0},[
+  {tf:'15m',bars:[{t:exposureNow-15*60_000}]},
+  {tf:'60m',bars:[{t:exposureNow-60*60_000}]}
+],exposureNow);
+assert.deepEqual(mtfSnapshot.summary,{bull:0,bear:2,neutral:0});
+assert.deepEqual(mtfSnapshot.relatedTimeframes,['15m','60m']);
+assert.equal(mtfSnapshot.frames[0].closedAt,exposureNow);
+
+const storedPrimary={
+  ...primary,entry:100,tp1:99,tp2:98,sl:101,origin:'server',
+  mtf:{bull:0,bear:2,neutral:0},mtfAtEntry:mtfSnapshot,mtfConfirmations:[]
+};
+const laterConfirmation={
+  ...exposureSignal('1m-linked-confirm','1m','sell',91),score:8.2
+};
+const linkedOnce=linkMtfConfirmation(
+  storedPrimary,laterConfirmation,storedPrimary.id,exposureNow+5_000
+);
+assert.equal(linkedOnce.id,storedPrimary.id,'a confirmation must update the primary lifecycle');
+assert.equal(linkedOnce.mtfConfirmations.length,1);
+assert.equal(linkedOnce.mtfConfirmations[0].primarySignalId,storedPrimary.id);
+assert.equal(linkMtfConfirmation(
+  storedPrimary,{...laterConfirmation,side:'buy'},storedPrimary.id,exposureNow+5_000
+),null,'an opposite candidate must never be linked as an MTF confirmation');
+
+const mtfKvValues=new Map([
+  [`signal:state:${storedPrimary.tf}`,JSON.stringify(storedPrimary)]
+]);
+const mtfKv={
+  get:async (key,type)=>{
+    const value=mtfKvValues.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  },
+  put:async (key,value)=>{mtfKvValues.set(key,value);}
+};
+await persistLinkedMtfConfirmation(
+  {GSX_KV:mtfKv},storedPrimary,laterConfirmation,storedPrimary.id,exposureNow+5_000
+);
+await persistLinkedMtfConfirmation(
+  {GSX_KV:mtfKv},storedPrimary,laterConfirmation,storedPrimary.id,exposureNow+5_000
+);
+const persistedPrimary=JSON.parse(mtfKvValues.get(`signal:state:${storedPrimary.tf}`));
+assert.equal(persistedPrimary.id,storedPrimary.id);
+assert.equal(persistedPrimary.status,'active');
+assert.equal(persistedPrimary.mtfConfirmations.length,1,'retries must not duplicate an MTF confirmation');
+assert.equal(mtfKvValues.has(`signal:state:${laterConfirmation.tf}`),false,'a confirmation must not create a separate signal state');
+const linkedTelegramText=signalTelegramText(laterConfirmation,'confirmation',{
+  primarySignalId:storedPrimary.id,primaryTf:storedPrimary.tf,
+  signalCreatedAt:storedPrimary.createdAt,eventAt:exposureNow+5_000
+});
+assert.match(linkedTelegramText,/— 1m/);
+assert.equal(
+  persistedPrimary.mtfConfirmations[0].tf,'1m',
+  'Telegram and the server state exposed to PWA must identify the same confirmation timeframe'
+);
+const persistedAfterLifecycle=updateSignalLifecycleAcrossBars(
+  persistedPrimary,[],storedPrimary.entry,exposureNow+6_000
+).signal;
+assert.deepEqual(persistedAfterLifecycle.mtfAtEntry,mtfSnapshot);
+assert.equal(persistedAfterLifecycle.mtfConfirmations.length,1,'lifecycle updates must preserve linked MTF state');
 
 const bootstrapExposure=decideGoldExposure(null,{
   now:exposureNow,officialSignals:[
