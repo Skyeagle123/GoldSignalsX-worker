@@ -71,7 +71,7 @@ const NEWS_CACHE_MS = 15 * 60 * 1000;
 const NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const NEWS_EMPTY_CACHE_MS = 2 * 60 * 1000;
 const NEWS_ALERT_MAX_AGE_MS = 15 * 60 * 1000;
-const CALENDAR_CACHE_KEY = 'calendar:official:v3';
+const CALENDAR_CACHE_KEY = 'calendar:official:v4';
 const CALENDAR_CACHE_MS = 15 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
@@ -2347,9 +2347,12 @@ async function persistCalendarEvents(env,calendar) {
     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
     ON CONFLICT(event_id) DO UPDATE SET
       name=excluded.name,event_at=excluded.event_at,impact=excluded.impact,
-      actual=COALESCE(excluded.actual,economic_calendar_events.actual),
-      forecast=COALESCE(excluded.forecast,economic_calendar_events.forecast),
-      previous=COALESCE(excluded.previous,economic_calendar_events.previous),
+      actual=CASE WHEN excluded.event_type IN ('cpi','core_cpi','nfp','unemployment_rate')
+        THEN excluded.actual ELSE COALESCE(excluded.actual,economic_calendar_events.actual) END,
+      forecast=CASE WHEN excluded.event_type IN ('cpi','core_cpi','nfp','unemployment_rate')
+        THEN excluded.forecast ELSE COALESCE(excluded.forecast,economic_calendar_events.forecast) END,
+      previous=CASE WHEN excluded.event_type IN ('cpi','core_cpi','nfp','unemployment_rate')
+        THEN excluded.previous ELSE COALESCE(excluded.previous,economic_calendar_events.previous) END,
       source_url=excluded.source_url,last_updated=excluded.last_updated,
       risk_before_min=excluded.risk_before_min,risk_after_min=excluded.risk_after_min,
       metadata_json=excluded.metadata_json,updated_at=excluded.updated_at
@@ -2387,7 +2390,7 @@ async function readCalendarD1(env) {
 async function getOfficialCalendar(env,{refresh=false}={}) {
   const now=Date.now(),settings=normalizeCalendarSettings(env),cached=await readCalendarCache(env);
   const age=cached?now-Number(cached.updatedAt||0):Infinity;
-  if (cached&&age<CALENDAR_CACHE_MS) return {...cached,cache:'hit',ageMs:age};
+  if (cached&&!refresh&&age<CALENDAR_CACHE_MS) return {...cached,cache:'hit',ageMs:age};
   try {
     const calendar=await fetchOfficialCalendar(settings,now);
     if (!calendar.ok) throw new Error('official_calendar_empty');
@@ -2422,12 +2425,34 @@ function mergeSignalRiskContext(news,calendar,now=Date.now()) {
 function calendarTelegramText(event,kind,settings) {
   const local=formatCalendarEvent(event,settings.localTimeZone);
   const released=kind==='released';
+  const pending=kind==='release_pending';
+  const actualText=event.actual!=null&&local.actualStatus==='verified-current-release'
+    ?event.actual:(event.eventAt>Date.now()?'Pending — release not due':
+      (local.actualStatus==='pending-current-release-verification'?'Pending — current release not yet verified':'Unavailable'));
+  const forecastText=event.forecast??'Unavailable — no validated consensus source';
+  const previousText=event.previous??'Unavailable';
+  const currentPeriod=local.referencePeriod??'current release';
+  const previousPeriod=local.previousReferencePeriod??'prior period';
   return [
-    released?'📊 صدور حدث اقتصادي — GoldSignalsX':'📅 تنبيه رزنامة اقتصادية — GoldSignalsX',
+    released?'📊 صدور حدث اقتصادي موثّق — GoldSignalsX':
+      (pending?'⏳ حدث اقتصادي — بانتظار التحقق — GoldSignalsX':'📅 تنبيه رزنامة اقتصادية — GoldSignalsX'),
     event.name,`Impact: ${event.impact}`,`UTC: ${local.eventAtUtc}`,`${settings.localTimeZone}: ${local.eventAtLocal}`,
-    `Actual: ${event.actual??'—'} | Forecast: ${event.forecast??'—'} | Previous: ${event.previous??'—'}`,
-    `Source: ${event.source}`,event.sourceUrl,'هذا News Alert وليس Trading Signal.'
+    `Actual [${currentPeriod}]: ${actualText}`,
+    `Forecast [${currentPeriod}]: ${forecastText}`,
+    `Previous [${previousPeriod}]: ${previousText}`,
+    `Source updated: ${local.sourceUpdatedAtUtc??'Unavailable'}`,
+    `Source: ${event.source}`,`Release: ${event.metadata?.releaseUrl||event.sourceUrl}`,
+    `Data: ${event.metadata?.actualUrl||event.metadata?.dataSourceUrl||event.sourceUrl}`,
+    'هذا News Alert وليس Trading Signal.'
   ].join('\n');
+}
+
+function hasVerifiedCurrentActual(event) {
+  const metadata=event?.metadata||{};
+  if (event?.actual==null||metadata.actualStatus!=='verified-current-release') return false;
+  if (metadata.referencePeriod&&metadata.actualReferencePeriod!==metadata.referencePeriod) return false;
+  const sourceUpdatedAt=Number(metadata.sourceUpdatedAt||metadata.actualAt);
+  return Number.isFinite(sourceUpdatedAt)&&sourceUpdatedAt>=Number(event.eventAt);
 }
 
 async function maybeNotifyCalendarEvents(env,calendar,now=Date.now()) {
@@ -2440,8 +2465,14 @@ async function maybeNotifyCalendarEvents(env,calendar,now=Date.now()) {
       const id=`calendar:${event.id}:upcoming`;
       await queueTelegramDelivery(env,{id,tf:'calendar',createdAt:event.eventAt},'news',calendarTelegramText(event,'upcoming',settings),{eventAt:event.eventAt});
     }
-    const actualAt=Number(event.metadata?.actualAt||event.lastUpdated||event.eventAt);
-    if (event.actual!=null&&now>=event.eventAt&&now-event.eventAt<=Number(event.riskAfterMinutes||0)*60_000) {
+    const withinReleaseWindow=now>=event.eventAt&&now-event.eventAt<=Number(event.riskAfterMinutes||0)*60_000;
+    const actualVerified=hasVerifiedCurrentActual(event);
+    if (withinReleaseWindow&&!actualVerified) {
+      const id=`calendar:${event.id}:release-pending`;
+      await queueTelegramDelivery(env,{id,tf:'calendar',createdAt:event.eventAt},'news',calendarTelegramText(event,'release_pending',settings),{eventAt:event.eventAt,signalCreatedAt:event.eventAt});
+    }
+    if (withinReleaseWindow&&actualVerified) {
+      const actualAt=Number(event.metadata?.sourceUpdatedAt||event.metadata?.actualAt);
       const id=`calendar:${event.id}:released`;
       await queueTelegramDelivery(env,{id,tf:'calendar',createdAt:event.eventAt},'news',calendarTelegramText(event,'released',settings),{eventAt:actualAt,signalCreatedAt:event.eventAt});
     }

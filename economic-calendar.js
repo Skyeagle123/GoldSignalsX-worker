@@ -8,6 +8,8 @@ const SOURCE_URLS = Object.freeze({
   blsLaborDownload:'https://download.bls.gov/pub/time.series/ln/ln.data.1.AllData',
   blsApiDocs:'https://www.bls.gov/developers/api_signature_v1.htm',
   blsIcalDocs:'https://www.bls.gov/help/hlpical.htm',
+  blsCpiRelease:'https://www.bls.gov/news.release/cpi.nr0.htm',
+  blsEmploymentRelease:'https://www.bls.gov/news.release/empsit.nr0.htm',
   bea:'https://www.bea.gov/news/schedule',
   beaRss:'https://apps.bea.gov/rss/rss.xml',
   census:'https://www.census.gov/economic-indicators/calendar-listview.html',
@@ -16,8 +18,8 @@ const SOURCE_URLS = Object.freeze({
   dolScheduleRule:'https://www.dol.gov/newsroom/newsletter/archive/2010/20101021-3',
   opmHolidays:'https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/',
   ism:'https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/',
-  ismManufacturingRule:'https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/pmi/june/',
-  ismServicesRule:'https://www.ismworld.org/supply-management-news-and-reports/reports/ism-pmi-reports/services/january/',
+  ismManufacturingRule:'https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/',
+  ismServicesRule:'https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/',
   nyseHolidays:'https://www.nyse.com/trade/hours-calendars',
   fedBase:'https://www.federalreserve.gov/newsevents/',
   fedMonetary:'https://www.federalreserve.gov/feeds/press_monetary.xml',
@@ -152,6 +154,18 @@ function parseIcsDate(property,value) {
   return Date.UTC(year,month-1,day,hour,minute,second);
 }
 
+function shiftMonthlyPeriod(period,offset) {
+  const match=String(period||'').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const date=new Date(Date.UTC(Number(match[1]),Number(match[2])-1+offset,1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,'0')}`;
+}
+
+function expectedBlsReferencePeriod(eventAt) {
+  const date=new Date(Number(eventAt));
+  return shiftMonthlyPeriod(`${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,'0')}`,-1);
+}
+
 export function parseBlsIcs(ics,settings=DEFAULT_RISK_SETTINGS,updatedAt=Date.now()) {
   const unfolded=String(ics||'').replace(/\r?\n[ \t]/g,'');
   const entries=[...unfolded.matchAll(/BEGIN:VEVENT([\s\S]*?)END:VEVENT/g)].map(match=>match[1]);
@@ -171,15 +185,20 @@ export function parseBlsIcs(ics,settings=DEFAULT_RISK_SETTINGS,updatedAt=Date.no
     const common={eventAt,source:'U.S. Bureau of Labor Statistics',sourceUrl:SOURCE_URLS.bls,updatedAt,settings,metadata:{
       release:title,uid:fields.UID?.value||'',scheduleSource:'fetched-official-ical',
       scheduleSourceUrl:SOURCE_URLS.bls,scheduleDocumentationUrl:SOURCE_URLS.blsIcalDocs,
-      scheduleMode:'fetched',dataAvailability:'schedule-and-official-actuals'
+      scheduleMode:'fetched',dataAvailability:'schedule-and-official-actuals',
+      releaseTimestamp:eventAt,referencePeriod:expectedBlsReferencePeriod(eventAt),
+      actualStatus:'pending-release',forecastStatus:'unavailable-no-validated-source',
+      previousStatus:'pending-official-data'
     }};
     if (/consumer price index/i.test(title)) {
-      out.push(makeEvent({...common,id:`bls:${base}:cpi`,type:'cpi',name:'Consumer Price Index (CPI)'},settings));
-      out.push(makeEvent({...common,id:`bls:${base}:core-cpi`,type:'core_cpi',name:'Core Consumer Price Index (Core CPI)'},settings));
+      const metadata={...common.metadata,releaseUrl:SOURCE_URLS.blsCpiRelease};
+      out.push(makeEvent({...common,metadata,id:`bls:${base}:cpi`,type:'cpi',name:'Consumer Price Index (CPI)'},settings));
+      out.push(makeEvent({...common,metadata,id:`bls:${base}:core-cpi`,type:'core_cpi',name:'Core Consumer Price Index (Core CPI)'},settings));
     }
     if (/employment situation/i.test(title)) {
-      out.push(makeEvent({...common,id:`bls:${base}:nfp`,type:'nfp',name:'Nonfarm Payrolls (NFP)'},settings));
-      out.push(makeEvent({...common,id:`bls:${base}:unemployment`,type:'unemployment_rate',name:'U.S. Unemployment Rate'},settings));
+      const metadata={...common.metadata,releaseUrl:SOURCE_URLS.blsEmploymentRelease};
+      out.push(makeEvent({...common,metadata,id:`bls:${base}:nfp`,type:'nfp',name:'Nonfarm Payrolls (NFP)'},settings));
+      out.push(makeEvent({...common,metadata,id:`bls:${base}:unemployment`,type:'unemployment_rate',name:'U.S. Unemployment Rate'},settings));
     }
   }
   return out;
@@ -215,7 +234,8 @@ function rounded(value,digits=1) {
   return Number(value.toFixed(digits));
 }
 
-export function buildBlsActualSnapshot(seriesRows={},sourceBySeries={}) {
+export function buildBlsActualSnapshot(seriesRows={},sourceBySeries={},options={}) {
+  const sourceUpdatedAt=Number(options.sourceUpdatedAt??Date.now());
   const snapshot={};
   for (const [type,seriesId] of Object.entries(BLS_SERIES)) {
     const rows=validBlsRows(seriesRows[seriesId]||[]),latest=rows[0],prior=rows[1],beforePrior=rows[2];
@@ -237,7 +257,8 @@ export function buildBlsActualSnapshot(seriesRows={},sourceBySeries={}) {
       referencePeriod:`${latest.year}-${String(latest.month).padStart(2,'0')}`,seriesId,unit,
       dataSource:sourceBySeries[seriesId]||'BLS Public Data API v1',
       dataSourceUrl:sourceBySeries[seriesId]?.includes('download')?downloadUrlForSeries(seriesId):SOURCE_URLS.blsApi,
-      dataMode:'fetched'};
+      dataMode:'fetched',sourceUpdatedAt:Number.isFinite(sourceUpdatedAt)?sourceUpdatedAt:null,
+      sourceUpdateBasis:'observed-at-official-source-fetch'};
   }
   return snapshot;
 }
@@ -259,11 +280,27 @@ export function applyBlsActuals(events,snapshot={},now=Date.now()) {
     const isLatestPast=latestPast.get(event.type)?.id===event.id,isNextFuture=nextFuture.get(event.type)?.id===event.id;
     if ((!isLatestPast&&!isNextFuture)||!snapshot[event.type]) return event;
     const data=snapshot[event.type];
-    return {...event,actual:isLatestPast?data.actual:null,forecast:null,previous:isLatestPast?data.previous:data.actual,metadata:{...event.metadata,
-      seriesId:data.seriesId,referencePeriod:data.referencePeriod,unit:data.unit,
+    const referencePeriod=event.metadata?.referencePeriod||expectedBlsReferencePeriod(event.eventAt);
+    const previousReferencePeriod=shiftMonthlyPeriod(referencePeriod,-1);
+    const sourceUpdatedAt=Number(data.sourceUpdatedAt||Date.parse(data.snapshotGeneratedAt||''));
+    const currentPeriodAvailable=data.referencePeriod===referencePeriod;
+    const observedAfterRelease=Number.isFinite(sourceUpdatedAt)&&sourceUpdatedAt>=event.eventAt;
+    const actualVerified=isLatestPast&&currentPeriodAvailable&&observedAfterRelease;
+    const previous=currentPeriodAvailable?data.previous:
+      (data.referencePeriod===previousReferencePeriod?data.actual:null);
+    const actualStatus=isNextFuture?'pending-release':
+      (actualVerified?'verified-current-release':'pending-current-release-verification');
+    return {...event,actual:actualVerified?data.actual:null,forecast:null,previous,metadata:{...event.metadata,
+      seriesId:data.seriesId,releaseTimestamp:event.eventAt,referencePeriod,unit:data.unit,
       dataSource:data.dataSource,dataSourceUrl:data.dataSourceUrl,dataMode:data.dataMode,
+      sourceUpdatedAt:Number.isFinite(sourceUpdatedAt)?sourceUpdatedAt:null,
+      sourceUpdateBasis:data.sourceUpdateBasis||'observed-at-official-source-fetch',
+      sourceReferencePeriod:data.referencePeriod,actualStatus,
+      actualReferencePeriod:actualVerified?referencePeriod:null,
+      forecastStatus:'unavailable-no-validated-source',forecastReferencePeriod:referencePeriod,
+      previousStatus:previous==null?'unavailable':'verified-prior-period',
+      previousReferencePeriod:previous==null?null:previousReferencePeriod,
       ...(data.snapshotGeneratedAt?{dataSnapshotGeneratedAt:data.snapshotGeneratedAt}:{}),
-      ...(isNextFuture?{previousReferencePeriod:data.referencePeriod}:{}),
       actualMethod:event.type==='nfp'?'latest SA level minus prior SA level':
         (event.type==='unemployment_rate'?'latest SA rate':'latest SA index versus prior SA index')
     }};
@@ -280,9 +317,12 @@ export function readBundledBlsFallback(settings=DEFAULT_RISK_SETTINGS,updatedAt=
   const sourceBySeries=Object.fromEntries(Object.values(BLS_SERIES).map(seriesId=>[
     seriesId,'BLS Public Data API v1 via verified repository snapshot'
   ]));
-  const snapshot=buildBlsActualSnapshot(BLS_OFFICIAL_SNAPSHOT.series||{},sourceBySeries);
+  const snapshot=buildBlsActualSnapshot(BLS_OFFICIAL_SNAPSHOT.series||{},sourceBySeries,{
+    sourceUpdatedAt:Date.parse(BLS_OFFICIAL_SNAPSHOT.generatedAt||'')
+  });
   for (const data of Object.values(snapshot)) {
     data.dataMode='official-snapshot-fallback';data.snapshotGeneratedAt=BLS_OFFICIAL_SNAPSHOT.generatedAt;
+    data.sourceUpdateBasis='repository-snapshot-generated-at';
     data.dataSourceUrl=BLS_OFFICIAL_SNAPSHOT.sources?.actuals?.url||SOURCE_URLS.blsApi;
   }
   return {ok:events.length>0&&Object.keys(snapshot).length===Object.keys(BLS_SERIES).length,events,snapshot,
@@ -464,7 +504,13 @@ export function enrichCalendarActuals(events,feeds={}) {
     else if (event.type==='powell_monetary_speech') update=latestRssSummary(fed,/Powell/i,event.eventAt,7*24*60*60*1000);
     if (!update||update.actualAt<event.eventAt-5*60_000) return event;
     const actual=extractOfficialActual(event.type,update.summary);
-    return {...event,actual,lastUpdated:Math.max(event.lastUpdated,update.actualAt),metadata:{...event.metadata,actualAt:update.actualAt,actualUrl:update.actualUrl,officialReleaseSummary:update.summary}};
+    return {...event,actual,lastUpdated:Math.max(event.lastUpdated,update.actualAt),metadata:{...event.metadata,
+      releaseTimestamp:event.eventAt,actualAt:update.actualAt,sourceUpdatedAt:update.actualAt,
+      sourceUpdateBasis:'official-feed-published-at',actualUrl:update.actualUrl,
+      actualStatus:actual==null?'unavailable-current-release-value':'verified-current-release',
+      forecastStatus:event.forecast==null?'unavailable-no-validated-source':'verified',
+      previousStatus:event.previous==null?'unavailable':'verified-prior-period',
+      officialReleaseSummary:update.summary}};
   });
 }
 
@@ -516,7 +562,12 @@ export function buildJoblessClaimsEvents(dolXml,settings=DEFAULT_RISK_SETTINGS,u
         holidayCalendarSource:'U.S. Office of Personnel Management published federal holiday schedule',
         holidayCalendarUrl:SOURCE_URLS.opmHolidays,scheduleMode:'derived',
         dataAvailability:'official-actuals',dataSource:'DOL ETA/OUI official XML weekly claims data',
-        dataSourceUrl:SOURCE_URLS.dol,dataMode:'fetched'
+        dataSourceUrl:SOURCE_URLS.dol,dataMode:'fetched',releaseTimestamp:eventAt,
+        referencePeriod:row.weekEndedText,actualReferencePeriod:row.actual==null?null:row.weekEndedText,
+        actualStatus:row.actual==null?'pending-current-release-verification':'verified-current-release',
+        forecastStatus:'unavailable-no-validated-source',
+        previousStatus:previous==null?'unavailable':'verified-prior-period',
+        sourceUpdatedAt:updatedAt,sourceUpdateBasis:'observed-at-official-source-fetch'
       }},settings));
   }
   return out;
@@ -570,7 +621,7 @@ async function fetchBlsActualSnapshot(now) {
       }
     } catch (error) { downloadErrors.push(`${new URL(group.url).pathname}: ${String(error?.message||error)}`); }
   }
-  const snapshot=buildBlsActualSnapshot(seriesRows,sourceBySeries),missingAfter=Object.keys(BLS_SERIES).filter(type=>!snapshot[type]);
+  const snapshot=buildBlsActualSnapshot(seriesRows,sourceBySeries,{sourceUpdatedAt:now}),missingAfter=Object.keys(BLS_SERIES).filter(type=>!snapshot[type]);
   return {ok:missingAfter.length===0,snapshot,sourceBySeries,missing:missingAfter,
     api:{ok:!apiError,...(apiError?{error:apiError}:{})},
     downloads:{attempted:groups.length,ok:downloadErrors.length===0,...(downloadErrors.length?{errors:downloadErrors}:{})}};
@@ -647,12 +698,23 @@ export function calendarRiskSnapshot(events,now=Date.now(),settings=DEFAULT_RISK
 
 export function formatCalendarEvent(event,localTimeZone='Asia/Beirut') {
   const metadata=event?.metadata||{};
+  const sourceUpdatedAt=Number(metadata.sourceUpdatedAt||metadata.actualAt);
   return {
     ...event,
     dataSource:event.dataSource||metadata.dataSource||event.source,
     scheduleSource:event.scheduleSource||metadata.scheduleSource||null,
     dataMode:event.dataMode||metadata.dataMode||null,
     scheduleMode:event.scheduleMode||metadata.scheduleMode||null,
+    releaseTimestamp:Number(metadata.releaseTimestamp||event.eventAt),
+    referencePeriod:metadata.referencePeriod||null,
+    actualStatus:metadata.actualStatus||(event.actual==null?'unavailable':'unverified'),
+    actualReferencePeriod:metadata.actualReferencePeriod||null,
+    forecastStatus:metadata.forecastStatus||(event.forecast==null?'unavailable-no-validated-source':'unverified'),
+    forecastReferencePeriod:metadata.forecastReferencePeriod||metadata.referencePeriod||null,
+    previousStatus:metadata.previousStatus||(event.previous==null?'unavailable':'unverified'),
+    previousReferencePeriod:metadata.previousReferencePeriod||null,
+    sourceUpdatedAt:Number.isFinite(sourceUpdatedAt)?sourceUpdatedAt:null,
+    sourceUpdatedAtUtc:Number.isFinite(sourceUpdatedAt)?new Date(sourceUpdatedAt).toISOString():null,
     eventAtUtc:new Date(Number(event.eventAt)).toISOString(),
     eventAtLocal:new Intl.DateTimeFormat('en-GB',{
       timeZone:localTimeZone,year:'numeric',month:'2-digit',day:'2-digit',

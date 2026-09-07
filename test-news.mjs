@@ -40,14 +40,14 @@ const {
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
-  persistCalendarEvents,persistNewsEvents,createMtfAtEntrySnapshot,
+  persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
   linkMtfConfirmation,persistLinkedMtfConfirmation
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
   parseCensusScheduleHtml,parseBlsApiPayload,parseBlsDownloadDataset,buildBlsActualSnapshot,
   applyBlsActuals,readBundledBlsFallback,parseJoblessClaimsXml,buildJoblessClaimsEvents,buildIsmDerivedSchedule,
-  calendarRiskSnapshot,extractOfficialActual
+  calendarRiskSnapshot,extractOfficialActual,formatCalendarEvent
 }=await import(economicCalendarUrl);
 
 const now = Date.UTC(2026, 7, 27, 8, 0, 0);
@@ -1181,6 +1181,7 @@ assert.deepEqual(calendarSettings,{
 const blsEvents=parseBlsIcs(`BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:cpi-202609\nDTSTART;TZID=America/New_York:20260910T083000\nSUMMARY:Consumer Price Index\nEND:VEVENT\nBEGIN:VEVENT\nUID:jobs-202609\nDTSTART;TZID=America/New_York:20260904T083000\nSUMMARY:Employment Situation\nEND:VEVENT\nEND:VCALENDAR`,calendarSettings,Date.UTC(2026,8,1));
 assert.deepEqual(blsEvents.map(event=>event.type),['cpi','core_cpi','nfp','unemployment_rate']);
 assert.equal(blsEvents[0].eventAt,Date.UTC(2026,8,10,12,30),'BLS Eastern release time must convert to UTC');
+assert.equal(blsEvents.find(event=>event.type==='nfp').metadata.releaseUrl,'https://www.bls.gov/news.release/empsit.nr0.htm');
 assert.equal(parseBlsIcs(`BEGIN:VEVENT\nDTSTART;TZID=US-Eastern:20260910T083000\nSUMMARY:Consumer Price Index\nEND:VEVENT`,calendarSettings)[0].eventAt,Date.UTC(2026,8,10,12,30),'the official BLS US-Eastern timezone alias must convert to UTC');
 assert.equal(blsEvents[0].forecast,null,'officially unavailable forecasts must stay null');
 assert.equal(extractOfficialActual('cpi','The Consumer Price Index increased 0.3 percent in August.'),'0.3%');
@@ -1195,17 +1196,47 @@ const blsApiSeries=parseBlsApiPayload({status:'REQUEST_SUCCEEDED',Results:{serie
   {seriesID:'CES0000000001',data:[{year:'2026',period:'M07',value:'159000'},{year:'2026',period:'M06',value:'158800'},{year:'2026',period:'M05',value:'158700'}]},
   {seriesID:'LNS14000000',data:[{year:'2026',period:'M07',value:'4.3'},{year:'2026',period:'M06',value:'4.2'}]}
 ]}});
-const blsSnapshot=buildBlsActualSnapshot(blsApiSeries,Object.fromEntries(Object.keys(blsApiSeries).map(id=>[id,'BLS Public Data API v1'])));
+const blsSnapshot=buildBlsActualSnapshot(blsApiSeries,Object.fromEntries(Object.keys(blsApiSeries).map(id=>[id,'BLS Public Data API v1'])),{
+  sourceUpdatedAt:Date.UTC(2026,8,4,12,31)
+});
 assert.deepEqual({actual:blsSnapshot.cpi.actual,previous:blsSnapshot.cpi.previous}, {actual:'2',previous:'1'});
 assert.deepEqual({actual:blsSnapshot.nfp.actual,previous:blsSnapshot.nfp.previous}, {actual:'200',previous:'100'});
 assert.deepEqual({actual:blsSnapshot.unemployment_rate.actual,previous:blsSnapshot.unemployment_rate.previous}, {actual:'4.3',previous:'4.2'});
 const downloadedBls=parseBlsDownloadDataset('series_id year period value footnote_codes\nCUSR0000SA0 2026 M07 102\nCUSR0000SA0 2026 M06 100\n',['CUSR0000SA0']);
 assert.equal(downloadedBls.CUSR0000SA0[0].value,102,'official downloadable BLS datasets must be a usable fallback');
-const enrichedBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,12));
-assert.deepEqual(enrichedBls.map(event=>event.actual),['2','0.5','200','4.3']);
-assert.ok(enrichedBls.every(event=>event.metadata.scheduleSource==='fetched-official-ical'&&event.metadata.dataMode==='fetched'));
 const upcomingBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,1));
 assert.deepEqual(upcomingBls.map(event=>event.previous),['2','0.5','200','4.3'],'next BLS releases must expose only the officially known previous values');
+assert.ok(upcomingBls.every(event=>event.actual===null&&event.metadata.actualStatus==='pending-release'));
+const staleReleaseBls=applyBlsActuals(blsEvents,blsSnapshot,Date.UTC(2026,8,4,12,31));
+const staleNfp=staleReleaseBls.find(event=>event.type==='nfp');
+assert.equal(staleNfp.actual,null,'a previous-period value must never be promoted to current Actual at release time');
+assert.equal(staleNfp.previous,'200','the last validated period remains Previous while the current release is pending');
+assert.equal(staleNfp.metadata.referencePeriod,'2026-08');
+assert.equal(staleNfp.metadata.sourceReferencePeriod,'2026-07');
+assert.equal(staleNfp.metadata.actualStatus,'pending-current-release-verification');
+
+const currentBlsSeries=parseBlsApiPayload({status:'REQUEST_SUCCEEDED',Results:{series:[
+  {seriesID:'CUSR0000SA0',data:[{year:'2026',period:'M08',value:'103'},{year:'2026',period:'M07',value:'102'},{year:'2026',period:'M06',value:'100'}]},
+  {seriesID:'CUSR0000SA0L1E',data:[{year:'2026',period:'M08',value:'202'},{year:'2026',period:'M07',value:'201'},{year:'2026',period:'M06',value:'200'}]},
+  {seriesID:'CES0000000001',data:[{year:'2026',period:'M08',value:'159042'},{year:'2026',period:'M07',value:'159000'},{year:'2026',period:'M06',value:'158800'}]},
+  {seriesID:'LNS14000000',data:[{year:'2026',period:'M08',value:'4.4'},{year:'2026',period:'M07',value:'4.3'}]}
+]}});
+const currentBlsSnapshot=buildBlsActualSnapshot(currentBlsSeries,Object.fromEntries(Object.keys(currentBlsSeries).map(id=>[id,'BLS Public Data API v1'])),{
+  sourceUpdatedAt:Date.UTC(2026,8,11,12,35)
+});
+const enrichedBls=applyBlsActuals(blsEvents,currentBlsSnapshot,Date.UTC(2026,8,12));
+assert.deepEqual(enrichedBls.map(event=>event.actual),['1','0.5','42','4.4']);
+assert.deepEqual(enrichedBls.map(event=>event.previous),['2','0.5','200','4.3']);
+assert.ok(enrichedBls.every(event=>event.metadata.scheduleSource==='fetched-official-ical'&&event.metadata.dataMode==='fetched'));
+assert.ok(enrichedBls.every(event=>event.metadata.actualStatus==='verified-current-release'));
+assert.ok(enrichedBls.every(event=>event.metadata.actualReferencePeriod===event.metadata.referencePeriod));
+assert.ok(enrichedBls.every(event=>event.metadata.forecastStatus==='unavailable-no-validated-source'));
+const formattedNfp=formatCalendarEvent(enrichedBls.find(event=>event.type==='nfp'));
+assert.equal(formattedNfp.releaseTimestamp,Date.UTC(2026,8,4,12,30));
+assert.equal(formattedNfp.referencePeriod,'2026-08');
+assert.equal(formattedNfp.actualReferencePeriod,'2026-08');
+assert.equal(formattedNfp.previousReferencePeriod,'2026-07');
+assert.equal(formattedNfp.sourceUpdatedAtUtc,'2026-09-11T12:35:00.000Z');
 const bundledBls=readBundledBlsFallback(calendarSettings,Date.UTC(2026,8,1));
 assert.equal(bundledBls.ok,true);assert.ok(bundledBls.events.some(event=>event.type==='cpi'&&event.eventAt>Date.UTC(2026,8,1)));
 assert.equal(bundledBls.snapshot.nfp.dataMode,'official-snapshot-fallback');
@@ -1290,12 +1321,17 @@ const storedCalendar={ok:true,events:[riskEvent]};
 await persistCalendarEvents({GSX_DB:calendarDb},storedCalendar);
 await persistCalendarEvents({GSX_DB:calendarDb},storedCalendar);
 assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM economic_calendar_events').get().count,1,'calendar persistence must be idempotent');
+const persistedBlsId='bls:freshness:nfp';
+await persistCalendarEvents({GSX_DB:calendarDb},{ok:true,events:[{...staleNfp,id:persistedBlsId,actual:'200'}]});
+await persistCalendarEvents({GSX_DB:calendarDb},{ok:true,events:[{...staleNfp,id:persistedBlsId,actual:null}]});
+assert.equal(calendarDb.database.prepare('SELECT actual FROM economic_calendar_events WHERE event_id=?').get(persistedBlsId).actual,null,
+  'an unverified BLS refresh must clear a previously persisted stale Actual');
 await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM news_context_events').get().count,2,'news persistence must deduplicate stable event IDs');
 
 const endpointCache=new Map([
-  ['calendar:official:v3',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
+  ['calendar:official:v4',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
   ['news:brief:v2',JSON.stringify({...confirmedNews,updatedAt:Date.now()})]
 ]);
 const endpointKv={get:async(key,type)=>type==='json'?safeJson(endpointCache.get(key)):endpointCache.get(key)??null,put:async(key,value)=>endpointCache.set(key,value)};
@@ -1309,6 +1345,12 @@ assert.equal(calendarPayload.events[0].scheduleMode,'fetched');
 assert.equal((await worker.default.fetch(new Request('https://example.com/calendar',{method:'POST'}),{},{})).status,405);
 assert.equal((await worker.default.fetch(new Request('https://example.com/news',{method:'POST'}),{},{})).status,405);
 
+let forcedCalendarFetches=0;
+globalThis.fetch=async()=>{forcedCalendarFetches+=1;return {ok:false,status:503,text:async()=>''};};
+const forcedRefresh=await getOfficialCalendar({GSX_KV:endpointKv},{refresh:true});
+assert.ok(forcedCalendarFetches>0,'cron refresh must bypass a still-fresh KV calendar cache');
+assert.equal(forcedRefresh.cache,'cron-refreshed');
+
 const calendarTelegramNow=Date.UTC(2026,8,10,12,5);
 Date.now=()=>calendarTelegramNow;
 const calendarHarness=await makeTelegramHarness();
@@ -1318,6 +1360,24 @@ const upcomingCalendar={ok:true,events:[{...riskEvent,eventAt:calendarTelegramNo
 await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
 await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
 assert.equal(calendarTelegramCalls,1,'stable calendar event IDs must prevent duplicate Telegram alerts');
+const pendingReleaseEvent={...staleNfp,eventAt:calendarTelegramNow-60_000,riskAfterMinutes:15,
+  metadata:{...staleNfp.metadata,releaseTimestamp:calendarTelegramNow-60_000}};
+await maybeNotifyCalendarEvents(calendarHarness.env,{ok:true,events:[pendingReleaseEvent]},calendarTelegramNow);
+assert.equal(calendarTelegramCalls,2,'an unverified release must emit one deduplicated Pending status');
+const pendingTelegramRecord=[...calendarHarness.storage.values.values()].find(record=>record.eventId?.includes('release-pending'));
+assert.match(pendingTelegramRecord.text,/Pending — current release not yet verified/);
+assert.doesNotMatch(pendingTelegramRecord.text,/صدور حدث اقتصادي موثّق/);
+const verifiedReleaseEvent={...enrichedBls.find(event=>event.type==='nfp'),eventAt:calendarTelegramNow-60_000,riskAfterMinutes:15,
+  metadata:{...enrichedBls.find(event=>event.type==='nfp').metadata,releaseTimestamp:calendarTelegramNow-60_000,
+    sourceUpdatedAt:calendarTelegramNow,actualReferencePeriod:'2026-08',referencePeriod:'2026-08'}};
+await maybeNotifyCalendarEvents(calendarHarness.env,{ok:true,events:[verifiedReleaseEvent]},calendarTelegramNow);
+assert.equal(calendarTelegramCalls,3,'a verified current release may emit the released update once');
+const releasedTelegramRecord=[...calendarHarness.storage.values.values()].find(record=>record.eventId?.endsWith(':released'));
+assert.match(releasedTelegramRecord.text,/صدور حدث اقتصادي موثّق/);
+assert.match(releasedTelegramRecord.text,/Actual \[2026-08\]: 42/);
+assert.match(releasedTelegramRecord.text,/Previous \[2026-07\]: 200/);
+assert.match(releasedTelegramRecord.text,/www\.bls\.gov\/news\.release\/empsit\.nr0\.htm/,'release alert must link to the current official release');
+assert.match(releasedTelegramRecord.text,/api\.bls\.gov\/publicAPI\/v1\/timeseries\/data/,'release alert must link to the current official data source');
 Date.now=realDateNow;globalThis.fetch=originalFetch;
 
 console.log('news intelligence tests passed');
