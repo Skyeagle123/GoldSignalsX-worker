@@ -40,6 +40,8 @@ const {
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
+  buildMtfDirectionMatrix,buildMtfConfirmationAnalysis,
+  collectMtfDirectionAnalysis,collectMtfDirectionAnalysisSafely,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
   linkMtfConfirmation,persistLinkedMtfConfirmation,activeExposureNewsRisk,
@@ -1268,6 +1270,158 @@ assert.equal(collectedRecord.quality.primarySignalId,collectedSignal.id);
 assert.equal(collectedRecord.quality.tickSource,'twelve-data');
 assert.equal(collectedRecord.quality.measurementOnly,true);
 assert.equal((await collectSignalQualityMetricsSafely({})).ok,false);
+
+const mtfMatrixSignal={
+  ...collectedSignal,
+  mtf:{bull:1,bear:1,neutral:0},
+  mtfAtEntry:{
+    capturedAt:qualityBase,primaryTf:'15m',relatedTimeframes:['60m','240m'],
+    summary:{bull:1,bear:1,neutral:0},frames:[]
+  },
+  mtfConfirmations:[]
+};
+const mtfEvaluations={
+  '1m':{bull:8,bear:2,score:8,evaluatedAt:qualityBase},
+  '5m':{bull:7,bear:3,score:7,evaluatedAt:qualityBase},
+  '15m':{bull:9,bear:2,score:9,evaluatedAt:qualityBase},
+  '30m':{bull:5,bear:5,score:5,evaluatedAt:qualityBase},
+  '60m':{bull:6,bear:7,score:7,evaluatedAt:qualityBase},
+  '240m':{bull:8,bear:1,score:8,evaluatedAt:qualityBase},
+  '1d':{bull:4,bear:1,score:4,evaluatedAt:qualityBase-1}
+};
+const mtfMatrix=buildMtfDirectionMatrix(mtfMatrixSignal,mtfEvaluations);
+assert.equal(mtfMatrix.measurementOnly,true);
+assert.equal(mtfMatrix.decisionUse,false);
+assert.equal(mtfMatrix.primarySignalId,collectedSignal.id);
+assert.equal(mtfMatrix.primaryTimeframe,'15m');
+assert.equal(mtfMatrix.signalSide,'buy');
+assert.equal(mtfMatrix.signalScore,collectedSignal.score);
+assert.deepEqual(mtfMatrix.counts,{
+  agreeing:3,opposing:1,neutral:1,unavailable:1,
+  available:5,considered:6,primaryExcluded:true
+});
+assert.equal(mtfMatrix.agreementPct,60);
+assert.equal(mtfMatrix.directionalAgreementPct,75);
+assert.equal(mtfMatrix.weightedAgreement.available,false,
+  'no analytical timeframe weighting may be invented when the engine has none');
+assert.equal(mtfMatrix.frames['15m'].primary,true);
+assert.equal(mtfMatrix.frames['60m'].direction,'bearish');
+assert.equal(mtfMatrix.frames['60m'].usedByPrimaryMtf,true);
+assert.equal(mtfMatrix.frames['240m'].direction,'bullish');
+assert.equal(mtfMatrix.frames['1d'].direction,'unavailable',
+  'a stale evaluation must not be represented as the at-entry direction');
+
+const firstMtfConfirmation={
+  confirmationSignalId:'60m:quality:confirmation',primarySignalId:collectedSignal.id,
+  tf:'60m',side:'buy',conf:78,score:7.5,confirmedAt:qualityBase+10*60_000
+};
+const secondMtfConfirmation={
+  confirmationSignalId:'240m:quality:confirmation',primarySignalId:collectedSignal.id,
+  tf:'240m',side:'buy',conf:84,score:8.4,confirmedAt:qualityBase+20*60_000
+};
+const confirmationAnalysis=buildMtfConfirmationAnalysis({
+  ...mtfMatrixSignal,
+  mtfConfirmations:[firstMtfConfirmation,firstMtfConfirmation,secondMtfConfirmation]
+},mtfMatrix);
+assert.equal(confirmationAnalysis.summary.count,2,'confirmation analysis must deduplicate by signal id');
+assert.equal(confirmationAnalysis.summary.averageDelayMs,15*60_000);
+assert.equal(confirmationAnalysis.summary.arrivedAfterEntry,2);
+assert.deepEqual(confirmationAnalysis.summary.atEntryRelations,{
+  agreeing:1,opposing:1,neutral:0,unavailable:0
+});
+
+const mtfAnalysisKvValues=new Map([
+  [`signal:state:${mtfMatrixSignal.tf}`,JSON.stringify(mtfMatrixSignal)],
+  ...Object.entries(mtfEvaluations).map(([tf,evaluation])=>[
+    `signal:evaluation:${tf}`,JSON.stringify(evaluation)
+  ])
+]);
+const mtfAnalysisKv={
+  get:async (key,type)=>{
+    const value=mtfAnalysisKvValues.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  }
+};
+let mtfExposureReads=0;
+let mtfExposureWrites=0;
+let mtfTelegramWrites=0;
+const mtfAnalysisFeed={
+  goldExposureStatus:async()=>{
+    mtfExposureReads+=1;
+    return {
+      status:'active',primarySignalId:collectedSignal.id,primaryTf:collectedSignal.tf,
+      side:collectedSignal.side,confirmations:[]
+    };
+  },
+  manageGoldExposure:async()=>{mtfExposureWrites+=1;throw new Error('unexpected exposure write');},
+  queueTelegramEvent:async()=>{mtfTelegramWrites+=1;throw new Error('unexpected Telegram write');}
+};
+const mtfAnalysisEnv={
+  GSX_DB:qualityDb,GSX_KV:mtfAnalysisKv,
+  GOLD_FEED:{getByName:()=>mtfAnalysisFeed}
+};
+assert.equal((await collectMtfDirectionAnalysis(mtfAnalysisEnv,qualityBase+21*60_000)).ok,true);
+const storedEntryMatrix=qualityDb.database.prepare(
+  'SELECT matrix_json FROM production_mtf_analysis WHERE primary_signal_id=?'
+).get(collectedSignal.id).matrix_json;
+const storedMtfUpdatedAt=qualityDb.database.prepare(
+  'SELECT updated_at FROM production_mtf_analysis WHERE primary_signal_id=?'
+).get(collectedSignal.id).updated_at;
+mtfAnalysisKvValues.set('signal:evaluation:1m',JSON.stringify({
+  bull:1,bear:9,score:9,evaluatedAt:qualityBase+22*60_000
+}));
+assert.equal((await collectMtfDirectionAnalysis(mtfAnalysisEnv,qualityBase+22*60_000)).ok,true);
+assert.equal(mtfExposureReads,2);
+assert.equal(mtfExposureWrites,0,'MTF analysis must not call Exposure Manager');
+assert.equal(mtfTelegramWrites,0,'MTF analysis must not create a Trading Signal or Confirmation alert');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_signals').get().count,1,
+  'MTF analysis must not create a Trading Signal');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_signal_events').get().count,1,
+  'MTF analysis must not create a lifecycle event or Confirmation');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_mtf_analysis').get().count,1,
+  'MTF analysis retries must keep one row for the primarySignalId');
+assert.equal(qualityDb.database.prepare(
+  'SELECT matrix_json FROM production_mtf_analysis WHERE primary_signal_id=?'
+).get(collectedSignal.id).matrix_json,storedEntryMatrix,
+  'later evaluations must not rewrite the immutable at-entry matrix');
+assert.equal(qualityDb.database.prepare(
+  'SELECT updated_at FROM production_mtf_analysis WHERE primary_signal_id=?'
+).get(collectedSignal.id).updated_at,storedMtfUpdatedAt,
+  'an identical retry must not rewrite the analysis row');
+
+mtfAnalysisKvValues.set(`signal:state:${mtfMatrixSignal.tf}`,JSON.stringify({
+  ...mtfMatrixSignal,mtfConfirmations:[firstMtfConfirmation,secondMtfConfirmation]
+}));
+assert.equal((await collectMtfDirectionAnalysis(mtfAnalysisEnv,qualityBase+23*60_000)).ok,true);
+const mtfCollectedRecord=(await readProductionPerformance(
+  mtfAnalysisEnv,new URLSearchParams('limit=10')
+)).records[0];
+assert.equal(mtfCollectedRecord.mtfAnalysis.matrix.primarySignalId,collectedSignal.id);
+assert.equal(mtfCollectedRecord.mtfAnalysis.matrix.signalScore,collectedSignal.score);
+assert.equal(mtfCollectedRecord.mtfAnalysis.laterConfirmations.summary.count,2);
+assert.equal(mtfCollectedRecord.mtfAnalysis.linkedQuality.available,true);
+assert.equal(mtfCollectedRecord.mtfAnalysis.linkedQuality.primarySignalId,collectedSignal.id);
+assert.equal(mtfCollectedRecord.mtfAnalysis.outcome.finalStatus,null);
+const mtfPerformanceResponse=await worker.default.fetch(
+  new Request('https://example.com/performance?limit=10'),
+  {...mtfAnalysisEnv,ALLOW_ORIGINS:'["*"]'},{}
+);
+assert.equal(mtfPerformanceResponse.status,200);
+const mtfPerformancePayload=await mtfPerformanceResponse.json();
+assert.equal(mtfPerformancePayload.records[0].mtfAnalysis.matrix.primarySignalId,collectedSignal.id,
+  'the performance API must expose the matrix linked to the primary signal');
+await recordProductionPerformanceEvent({GSX_DB:qualityDb},{
+  ...collectedSignal,status:'tp2',tp1Hit:true,
+  updatedAt:qualityBase+24*60_000,closedAt:qualityBase+24*60_000,lastPrice:collectedSignal.tp2
+},'tp2');
+const completedMtfRecord=(await readProductionPerformance(
+  mtfAnalysisEnv,new URLSearchParams('limit=10')
+)).records[0];
+assert.equal(completedMtfRecord.mtfAnalysis.outcome.finalStatus,'tp2');
+assert.equal(completedMtfRecord.mtfAnalysis.outcome.resultR,2.1);
+assert.equal(completedMtfRecord.mtfAnalysis.linkedQuality.primarySignalId,collectedSignal.id,
+  'the at-entry matrix, forward quality metrics, and final outcome must share one primarySignalId');
+assert.equal((await collectMtfDirectionAnalysisSafely({})).ok,false);
 
 const performanceResponse=await worker.default.fetch(new Request('https://example.com/performance?limit=2'),{
   GSX_DB:performanceDb,ALLOW_ORIGINS:JSON.stringify([allowedOrigin])

@@ -1217,7 +1217,9 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
   tasks.push(historyPromise.then(()=>Promise.all([newsPromise,calendarPromise])).then(async ([news,calendar])=>{
     const filters=await readSignalFilters(env);
     await runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
-    return collectSignalQualityMetricsSafely(env);
+    const quality=await collectSignalQualityMetricsSafely(env);
+    const mtfAnalysis=await collectMtfDirectionAnalysisSafely(env);
+    return {quality,mtfAnalysis};
   }));
   const results = await Promise.allSettled(tasks);
   const errors=[];
@@ -1722,6 +1724,170 @@ async function collectSignalQualityMetricsSafely(env,now=Date.now()) {
   }
 }
 
+function mtfDirectionFromEvaluation(evaluation,createdAt) {
+  const evaluatedAt=Number(evaluation?.evaluatedAt);
+  const bull=Number(evaluation?.bull),bear=Number(evaluation?.bear);
+  if (evaluatedAt!==Number(createdAt)||!Number.isFinite(bull)||!Number.isFinite(bear)) {
+    return {
+      direction:'unavailable',bullScore:null,bearScore:null,score:null,
+      evaluatedAt:Number.isFinite(evaluatedAt)?evaluatedAt:null,
+      source:'no-same-cycle-evaluation'
+    };
+  }
+  return {
+    direction:bull>bear?'bullish':bear>bull?'bearish':'neutral',
+    bullScore:bull,bearScore:bear,
+    score:Number.isFinite(Number(evaluation?.score))?Number(evaluation.score):Math.max(bull,bear),
+    evaluatedAt,source:'existing-signal-evaluation'
+  };
+}
+
+function buildMtfDirectionMatrix(signal,evaluations) {
+  const primarySignalId=String(signal?.id||'');
+  const primaryTimeframe=String(signal?.tf||'');
+  const side=String(signal?.side||'');
+  const createdAt=Number(signal?.createdAt);
+  if (!primarySignalId||!SIGNAL_TIMEFRAMES.includes(primaryTimeframe)||
+      !['buy','sell'].includes(side)||!Number.isFinite(createdAt)) return null;
+  const expectedDirection=side==='buy'?'bullish':'bearish';
+  const related=new Set(signal?.mtfAtEntry?.relatedTimeframes||[]);
+  const frames={};
+  for (const tf of SIGNAL_TIMEFRAMES) {
+    const evaluation=evaluations instanceof Map?evaluations.get(tf):evaluations?.[tf];
+    frames[tf]={
+      timeframe:tf,...mtfDirectionFromEvaluation(evaluation,createdAt),
+      primary:tf===primaryTimeframe,usedByPrimaryMtf:related.has(tf)
+    };
+  }
+  const scope=SIGNAL_TIMEFRAMES.filter(tf=>tf!==primaryTimeframe);
+  const counts={agreeing:0,opposing:0,neutral:0,unavailable:0};
+  for (const tf of scope) {
+    const frame=frames[tf];
+    if (frame.direction==='unavailable') {
+      counts.unavailable+=1;
+      continue;
+    }
+    if (frame.direction==='neutral') counts.neutral+=1;
+    else if (frame.direction===expectedDirection) counts.agreeing+=1;
+    else counts.opposing+=1;
+  }
+  const available=counts.agreeing+counts.opposing+counts.neutral;
+  const directional=counts.agreeing+counts.opposing;
+  return {
+    schema:1,measurementOnly:true,decisionUse:false,
+    primarySignalId,primaryTimeframe,signalSide:side,
+    signalScore:Number.isFinite(Number(signal?.score))?Number(signal.score):null,
+    createdAt,frameOrder:[...SIGNAL_TIMEFRAMES],frames,
+    counts:{...counts,available,considered:scope.length,primaryExcluded:true},
+    agreementPct:available?roundPerformance(counts.agreeing/available*100):null,
+    directionalAgreementPct:directional?roundPerformance(counts.agreeing/directional*100):null,
+    weightedAgreement:{
+      available:false,agreementPct:null,weightSource:null,
+      reason:'no-existing-timeframe-weights',decisionUse:false
+    },
+    engineMtfAtEntry:signal?.mtfAtEntry||null,
+    engineMtfSummary:signal?.mtf||null,
+    capturedAt:Date.now()
+  };
+}
+
+function buildMtfConfirmationAnalysis(signal,matrix) {
+  const primarySignalId=String(signal?.id||matrix?.primarySignalId||'');
+  const createdAt=Number(signal?.createdAt||matrix?.createdAt)||0;
+  const expectedDirection=signal?.side==='buy'?'bullish':'bearish';
+  const unique=new Map();
+  for (const row of Array.isArray(signal?.mtfConfirmations)?signal.mtfConfirmations:[]) {
+    const confirmationSignalId=String(row?.confirmationSignalId||row?.signalId||'');
+    if (!confirmationSignalId||unique.has(confirmationSignalId)) continue;
+    const confirmedAt=Number(row?.confirmedAt)||0;
+    const timeframe=String(row?.tf||'');
+    const atEntryDirection=String(matrix?.frames?.[timeframe]?.direction||'unavailable');
+    unique.set(confirmationSignalId,{
+      confirmationSignalId,primarySignalId,timeframe,side:String(row?.side||''),
+      score:Number.isFinite(Number(row?.score))?Number(row.score):null,
+      confidence:Number.isFinite(Number(row?.conf))?Number(row.conf):null,
+      confirmedAt:confirmedAt||null,delayMs:confirmedAt&&createdAt?confirmedAt-createdAt:null,
+      atEntryDirection,
+      atEntryRelation:atEntryDirection==='unavailable'?'unavailable':
+        atEntryDirection==='neutral'?'neutral':atEntryDirection===expectedDirection?'agreeing':'opposing'
+    });
+  }
+  const confirmations=[...unique.values()].sort((left,right)=>
+    Number(left.confirmedAt||0)-Number(right.confirmedAt||0)||
+    left.confirmationSignalId.localeCompare(right.confirmationSignalId)
+  );
+  const delays=confirmations.map(row=>Number(row.delayMs)).filter(Number.isFinite);
+  const relations={agreeing:0,opposing:0,neutral:0,unavailable:0};
+  for (const row of confirmations) relations[row.atEntryRelation]+=1;
+  return {
+    confirmations,
+    summary:{
+      count:confirmations.length,
+      timeframes:[...new Set(confirmations.map(row=>row.timeframe).filter(Boolean))],
+      averageDelayMs:delays.length?Math.round(delays.reduce((sum,value)=>sum+value,0)/delays.length):null,
+      firstDelayMs:delays.length?Math.min(...delays):null,
+      lastDelayMs:delays.length?Math.max(...delays):null,
+      atEntryRelations:relations,
+      arrivedAfterEntry:confirmations.filter(row=>Number(row.delayMs)>0).length
+    }
+  };
+}
+
+async function collectMtfDirectionAnalysis(env,now=Date.now()) {
+  if (!env.GSX_DB||!env.GSX_KV||!env.GOLD_FEED) {
+    return {ok:false,error:'mtf_analysis_source_unavailable'};
+  }
+  await ensurePerformanceSchema(env);
+  const exposure=await env.GOLD_FEED.getByName('xau-usd').goldExposureStatus();
+  if (exposure?.status!=='active'||!exposure.primarySignalId||!exposure.primaryTf) {
+    return {ok:true,updated:0,activeExposure:false};
+  }
+  const signal=await readKvJson(env,`signal:state:${exposure.primaryTf}`);
+  if (!signal||signal.id!==exposure.primarySignalId||!['active','tp1'].includes(signal.status)) {
+    return {ok:true,updated:0,activeExposure:true,reason:'primary_signal_unavailable'};
+  }
+  const stored=await env.GSX_DB.prepare(`
+    SELECT matrix_json,confirmations_json FROM production_mtf_analysis WHERE primary_signal_id=?1
+  `).bind(signal.id).first();
+  let matrix=safeJsonParse(stored?.matrix_json,null);
+  if (!matrix) {
+    const evaluationRows=await Promise.all(SIGNAL_TIMEFRAMES.map(async tf=>[
+      tf,await readKvJson(env,`signal:evaluation:${tf}`)
+    ]));
+    matrix=buildMtfDirectionMatrix(signal,Object.fromEntries(evaluationRows));
+    if (!matrix) return {ok:false,error:'mtf_matrix_unavailable'};
+    await env.GSX_DB.prepare(`
+      INSERT OR IGNORE INTO production_mtf_analysis
+        (primary_signal_id,matrix_json,confirmations_json,created_at,updated_at)
+      VALUES (?1,?2,'{"confirmations":[],"summary":{"count":0}}',?3,?4)
+    `).bind(signal.id,JSON.stringify(matrix),Number(signal.createdAt),Number(now)).run();
+  }
+  const confirmationAnalysis=buildMtfConfirmationAnalysis(signal,matrix);
+  const confirmationsJson=JSON.stringify(confirmationAnalysis);
+  if (confirmationsJson!==String(stored?.confirmations_json||'')) {
+    await env.GSX_DB.prepare(`
+      UPDATE production_mtf_analysis SET confirmations_json=?2,updated_at=?3
+      WHERE primary_signal_id=?1
+    `).bind(signal.id,confirmationsJson,Number(now)).run();
+  }
+  return {
+    ok:true,updated:1,primarySignalId:signal.id,
+    matrix,confirmationAnalysis
+  };
+}
+
+async function collectMtfDirectionAnalysisSafely(env,now=Date.now()) {
+  try {
+    return await collectMtfDirectionAnalysis(env,now);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'MTF direction analysis collection failed',
+      error:error instanceof Error?error.message:String(error)
+    }));
+    return {ok:false,error:'mtf_analysis_collection_failed'};
+  }
+}
+
 async function recordProductionPerformanceEvent(env,signal,event) {
   const eventType=canonicalPerformanceEvent(event);
   if (!env.GSX_DB) return {ok:false,error:'performance_storage_unavailable'};
@@ -1810,7 +1976,24 @@ function mapPerformanceSignal(row) {
   let reasons=[];
   try { reasons=JSON.parse(String(row?.reasons_json||'[]')); } catch {}
   const quality=safeJsonParse(row?.quality_metrics_json,null);
+  const mtfMatrix=safeJsonParse(row?.mtf_matrix_json,null);
+  const mtfConfirmations=safeJsonParse(row?.mtf_confirmations_json,null);
   const createdAt=Number(row?.created_at||0);
+  const finalStatus=row?.final_status?String(row.final_status):null;
+  const resultR=row?.result_r==null?null:Number(row.result_r);
+  const mtfAnalysis=mtfMatrix?{
+    matrix:mtfMatrix,
+    laterConfirmations:mtfConfirmations||{confirmations:[],summary:{count:0}},
+    linkedQuality:{
+      available:Boolean(quality),
+      primarySignalId:quality?.primarySignalId||String(row?.signal_id||''),
+      mfe:quality?.mfe??null,mae:quality?.mae??null,
+      timeToMfeMs:quality?.timeToMfeMs??null,timeToMaeMs:quality?.timeToMaeMs??null,
+      timeToTp1Ms:quality?.timeToTp1Ms??null,timeToTp2Ms:quality?.timeToTp2Ms??null,
+      timeToSlMs:quality?.timeToSlMs??null
+    },
+    outcome:{finalStatus,resultR}
+  }:null;
   return {
     signalId:String(row?.signal_id||''),source:String(row?.source||PERFORMANCE_SOURCE),
     symbol:String(row?.symbol||PERFORMANCE_SYMBOL),timeframe:String(row?.timeframe||''),
@@ -1818,18 +2001,18 @@ function mapPerformanceSignal(row) {
     signalBarTs:Number(row?.signal_bar_ts||0),entry:Number(row?.entry),tp1:Number(row?.tp1),
     tp2:Number(row?.tp2),sl:Number(row?.sl),confidence:Number(row?.confidence||0),
     score:row?.score==null?null:Number(row.score),reasons:Array.isArray(reasons)?reasons:[],
-    status:String(row?.status||''),finalStatus:row?.final_status?String(row.final_status):null,
+    status:String(row?.status||''),finalStatus,
     tp1At:row?.tp1_at==null?null:Number(row.tp1_at),tp1Price:row?.tp1_price==null?null:Number(row.tp1_price),
     tp2At:row?.tp2_at==null?null:Number(row.tp2_at),tp2Price:row?.tp2_price==null?null:Number(row.tp2_price),
     slAt:row?.sl_at==null?null:Number(row.sl_at),slPrice:row?.sl_price==null?null:Number(row.sl_price),
     expiredAt:row?.expired_at==null?null:Number(row.expired_at),
     expiredPrice:row?.expired_price==null?null:Number(row.expired_price),
     closedAt:row?.closed_at==null?null:Number(row.closed_at),
-    resultR:row?.result_r==null?null:Number(row.result_r),
+    resultR,
     timeToTp1Ms:row?.tp1_at==null?null:Number(row.tp1_at)-createdAt,
     timeToTp2Ms:row?.tp2_at==null?null:Number(row.tp2_at)-createdAt,
     timeToSlMs:row?.sl_at==null?null:Number(row.sl_at)-createdAt,
-    quality,updatedAt:Number(row?.updated_at||0)
+    quality,mtfAnalysis,updatedAt:Number(row?.updated_at||0)
   };
 }
 
@@ -1939,7 +2122,11 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
     tp1_at,tp1_price,tp2_at,tp2_price,sl_at,sl_price,expired_at,expired_price,
     closed_at,result_r,updated_at,
     (SELECT metrics_json FROM production_signal_quality quality
-      WHERE quality.primary_signal_id=production_signals.signal_id) AS quality_metrics_json
+      WHERE quality.primary_signal_id=production_signals.signal_id) AS quality_metrics_json,
+    (SELECT matrix_json FROM production_mtf_analysis analysis
+      WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_matrix_json,
+    (SELECT confirmations_json FROM production_mtf_analysis analysis
+      WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_confirmations_json
     FROM production_signals`;
   const summaryRows=(await env.GSX_DB.prepare(`${select} WHERE ${where} ORDER BY created_at,signal_id`)
     .bind(...values).all()).results||[];
@@ -3528,6 +3715,8 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_signal_quality (primary_signal_id TEXT PRIMARY KEY, metrics_json TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_quality_updated ON production_signal_quality(updated_at DESC,primary_signal_id);');
+  await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_mtf_analysis (primary_signal_id TEXT PRIMARY KEY, matrix_json TEXT NOT NULL, confirmations_json TEXT NOT NULL DEFAULT \'{"confirmations":[],"summary":{"count":0}}\', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_mtf_analysis_updated ON production_mtf_analysis(updated_at DESC,primary_signal_id);');
 }
 
 async function ensureNewsCalendarSchema(env) {
@@ -3636,6 +3825,8 @@ export {
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
+  buildMtfDirectionMatrix,buildMtfConfirmationAnalysis,
+  collectMtfDirectionAnalysis,collectMtfDirectionAnalysisSafely,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
   maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,
   activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
