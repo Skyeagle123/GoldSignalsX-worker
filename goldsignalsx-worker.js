@@ -176,6 +176,130 @@ function linkMtfConfirmation(primary,confirmation,primarySignalId,eventAt=Date.n
   };
 }
 
+function newsRiskWindowId(events,windowStartAt,windowEndAt) {
+  const value=(Array.isArray(events)?events:[])
+    .map(event=>String(event?.id||''))
+    .filter(Boolean).sort().join('|');
+  let hash=2166136261;
+  for (let index=0;index<value.length;index+=1) {
+    hash=Math.imul(hash^value.charCodeAt(index),16777619);
+  }
+  return `${windowStartAt}-${windowEndAt}-${(hash>>>0).toString(16).padStart(8,'0')}`;
+}
+
+function activeExposureNewsRisk(calendar,now=Date.now()) {
+  if (!calendar?.ok||calendar?.stale) return null;
+  const snapshot=calendarRiskSnapshot(calendar.events,now,normalizeCalendarSettings({}));
+  if (!snapshot.active||!snapshot.activeEvents.length) return null;
+  const events=snapshot.activeEvents.map(event=>{
+    const eventAt=Number(event.eventAt);
+    const beforeMinutes=Math.max(0,Number(event.riskBeforeMinutes)||0);
+    const afterMinutes=Math.max(0,Number(event.riskAfterMinutes)||0);
+    return {
+      id:String(event.id||''),type:String(event.type||''),name:String(event.name||''),
+      impact:String(event.impact||'high'),eventAt,eventAtUtc:new Date(eventAt).toISOString(),
+      windowStartAt:eventAt-beforeMinutes*60_000,
+      windowEndAt:eventAt+afterMinutes*60_000
+    };
+  });
+  const windowStartAt=Math.min(...events.map(event=>event.windowStartAt));
+  const windowEndAt=Math.max(...events.map(event=>event.windowEndAt));
+  const levels=['low','medium','high','critical'];
+  const level=events.reduce((highest,event)=>
+    levels.indexOf(event.impact)>levels.indexOf(highest)?event.impact:highest,'low');
+  return {
+    active:true,status:'active',level,events,windowStartAt,windowEndAt,
+    windowStartAtUtc:new Date(windowStartAt).toISOString(),
+    windowEndAtUtc:new Date(windowEndAt).toISOString(),
+    windowId:newsRiskWindowId(events,windowStartAt,windowEndAt),
+    activatedAt:Number(now),updatedAt:Number(now)
+  };
+}
+
+function applyActiveExposureNewsRisk(signal,calendar,now=Date.now()) {
+  if (!signal||!['active','tp1'].includes(String(signal.status||''))) {
+    return {signal,changed:false,transition:'none'};
+  }
+  if (!calendar?.ok||calendar?.stale) return {signal,changed:false,transition:'none'};
+  const previous=signal.newsRisk&&typeof signal.newsRisk==='object'?signal.newsRisk:null;
+  const current=activeExposureNewsRisk(calendar,now);
+  if (current) {
+    if (signal.newsRiskActive===true&&previous?.active===true&&previous.windowId===current.windowId) {
+      return {signal,changed:false,transition:'none',risk:previous};
+    }
+    const transition=previous?.active?'changed':'started';
+    const nextRisk={
+      ...current,
+      activatedAt:previous?.active&&previous.windowId===current.windowId
+        ?Number(previous.activatedAt||now):Number(now)
+    };
+    return {
+      signal:{...signal,newsRiskActive:true,newsRisk:nextRisk},
+      changed:true,transition,risk:nextRisk
+    };
+  }
+  if (signal.newsRiskActive===true||previous?.active===true) {
+    const ended={
+      ...(previous||{}),active:false,status:'ended',endedAt:Number(now),updatedAt:Number(now)
+    };
+    return {
+      signal:{...signal,newsRiskActive:false,newsRisk:ended},
+      changed:true,transition:'ended',risk:ended
+    };
+  }
+  return {signal,changed:false,transition:'none',risk:previous};
+}
+
+function activeExposureNewsRiskTelegramText(signal,risk,transition) {
+  const ended=transition==='ended';
+  const side=signal?.side==='buy'?'BUY':'SELL';
+  const names=(Array.isArray(risk?.events)?risk.events:[])
+    .map(event=>event.name).filter(Boolean).join(' / ')||'High-impact economic event';
+  return [
+    ended?'✅ News Risk انتهت — Active Exposure':'⚠️ News Risk — Active Exposure',
+    `Primary Signal: ${String(signal?.id||'—')} • ${side} ${String(signal?.tf||'—')}`,
+    `Impact: ${String(risk?.level||'high')}`,
+    `Events: ${names}`,
+    `Risk window UTC: ${telegramIsoTime(risk?.windowStartAt)} → ${telegramIsoTime(risk?.windowEndAt)}`,
+    ended?`انتهت حالة الخطر عند: ${telegramIsoTime(risk?.endedAt)}`:'الإشارة الحالية دخلت نافذة خبر عالي التأثير.',
+    'اتجاه الإشارة وEntry/TP/SL لم تتغير.',
+    'هذا News Risk Alert للصفقة الحالية، وليس Trading Signal أو Confirmation جديداً.'
+  ].join('\n');
+}
+
+async function syncActiveExposureNewsRisk(env,calendar,now=Date.now()) {
+  if (!env.GSX_KV||!env.GOLD_FEED) return {ok:false,changed:false,reason:'exposure_state_unavailable'};
+  let exposure;
+  try {
+    exposure=await env.GOLD_FEED.getByName('xau-usd').goldExposureStatus();
+  } catch {
+    return {ok:false,changed:false,reason:'exposure_state_unavailable'};
+  }
+  if (exposure?.status!=='active'||!exposure.primarySignalId||!exposure.primaryTf) {
+    return {ok:true,changed:false,activeExposure:false};
+  }
+  const key=`signal:state:${exposure.primaryTf}`;
+  const signal=await readKvJson(env,key);
+  if (!signal||signal.id!==exposure.primarySignalId||!['active','tp1'].includes(signal.status)) {
+    return {ok:true,changed:false,activeExposure:true,reason:'primary_signal_unavailable'};
+  }
+  const result=applyActiveExposureNewsRisk(signal,calendar,now);
+  if (!result.changed) return {ok:true,changed:false,activeExposure:true,signal:result.signal};
+  await env.GSX_KV.put(key,JSON.stringify(result.signal),{expirationTtl:90*24*60*60});
+  let delivery=null;
+  if (String(env.NEWS_ALERTS_ENABLED||'1').trim()!=='0') {
+    const eventId=`trade:${signal.id}:news-risk:${result.risk.windowId}:${result.transition}`;
+    delivery=await queueTelegramDelivery(
+      env,result.signal,'news',activeExposureNewsRiskTelegramText(result.signal,result.risk,result.transition),
+      {eventId,rootSignalId:signal.id,signalCreatedAt:signal.createdAt,eventAt:Number(now)}
+    );
+  }
+  return {
+    ok:true,changed:true,activeExposure:true,transition:result.transition,
+    signal:result.signal,delivery
+  };
+}
+
 function activeExposureFromSignal(signal,now,source='admission') {
   return {
     symbol:'XAUUSD',status:'active',side:signal.side,maxPositions:1,
@@ -240,11 +364,13 @@ function makeTelegramEventRecord(signal,event,text,options={}) {
     ['tp2','sl','expired'].includes(kind)?Number(signal?.closedAt||signal?.updatedAt):
     Number(signal?.updatedAt||signal?.createdAt)
   )||Date.now();
-  const eventId=kind==='confirmation'
-    ? `trade:${rootSignalId}:confirmation:${signalId}`
-    : kind==='news'
-      ? `news:${signalId}`
-      : `trade:${signalId}:${kind}`;
+  const eventId=String(options.eventId||(
+    kind==='confirmation'
+      ? `trade:${rootSignalId}:confirmation:${signalId}`
+      : kind==='news'
+        ? `news:${signalId}`
+        : `trade:${signalId}:${kind}`
+  ));
   const now=Date.now();
   return {
     schema:TELEGRAM_EVENT_SCHEMA,eventId,rootSignalId,signalId,
@@ -869,10 +995,12 @@ export default {
             await env.GSX_KV.put(SIGNAL_FILTERS_KEY,JSON.stringify({...filters,updatedAt:Date.now()}));
           }
         }
-        const snapshot=await readSignalSnapshot(env,tf||null);
+        const [snapshot,exposure]=await Promise.all([
+          readSignalSnapshot(env,tf||null),readExposureSnapshot(env)
+        ]);
         const stale=Date.now()-Number(snapshot.updatedAt||0)>6*60_000;
         if ((stale||filtersChanged)&&ctx?.waitUntil) ctx.waitUntil(runScheduledTasksGuarded(env,'signals-read'));
-        return jsonNoStore({...snapshot,filters,refreshing:stale||filtersChanged},corsHeaders);
+        return jsonNoStore({...snapshot,exposure,filters,refreshing:stale||filtersChanged},corsHeaders);
       }
 
       if (path === '/diagnostics') {
@@ -882,9 +1010,7 @@ export default {
           readKvJson(env,'system:history-status'),
           readTelegramDiagnostics(env),
           readSignalFilters(env),
-          env.GOLD_FEED
-            ? env.GOLD_FEED.getByName('xau-usd').goldExposureStatus().catch(()=>null)
-            : Promise.resolve(null)
+          readExposureSnapshot(env)
         ]);
         return jsonNoStore({ok:true,version:APP_VERSION,cycle,history,telegram,filters,exposure},corsHeaders);
       }
@@ -1067,6 +1193,14 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
   }
   const calendarPromise=getOfficialCalendar(env,{refresh:true}).then(async calendar=>{
     await maybeNotifyCalendarEvents(env,calendar);
+    try {
+      await syncActiveExposureNewsRisk(env,calendar);
+    } catch (error) {
+      console.error(JSON.stringify({
+        message:'active exposure news risk sync failed',
+        error:error instanceof Error?error.message:String(error)
+      }));
+    }
     return calendar;
   });
   const newsPromise=getGoldNewsBrief(env,{notify:true});
@@ -1200,7 +1334,12 @@ async function readSignalSnapshot(env,tf=null) {
       : null;
     return {
       tf:frame,
-      state:state?{...state,telegram:publicTelegramDelivery(telegram)}:null,
+      state:state?{
+        ...state,
+        newsRiskActive:Boolean(state.newsRiskActive),
+        newsRisk:state.newsRisk&&typeof state.newsRisk==='object'?state.newsRisk:null,
+        telegram:publicTelegramDelivery(telegram)
+      }:null,
       evaluation:await readKvJson(env,`signal:evaluation:${frame}`)
     };
   }));
@@ -1209,6 +1348,25 @@ async function readSignalSnapshot(env,tf=null) {
     updatedAt:Math.max(0,...rows.map(row=>Number(row.evaluation?.evaluatedAt||row.state?.updatedAt||0))),
     signals:rows
   };
+}
+
+async function readExposureSnapshot(env) {
+  if (!env.GOLD_FEED) return null;
+  try {
+    const exposure=await env.GOLD_FEED.getByName('xau-usd').goldExposureStatus();
+    if (exposure?.status!=='active'||!exposure.primarySignalId||!exposure.primaryTf) {
+      return exposure||null;
+    }
+    const signal=await readKvJson(env,`signal:state:${exposure.primaryTf}`);
+    const matches=signal?.id===exposure.primarySignalId&&['active','tp1'].includes(signal.status);
+    return {
+      ...exposure,
+      newsRiskActive:Boolean(matches&&signal.newsRiskActive),
+      newsRisk:matches&&signal.newsRisk?signal.newsRisk:null
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function currentPriceForSignals(env) {
@@ -3233,5 +3391,7 @@ export {
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
   maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,
+  activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
+  syncActiveExposureNewsRisk,readExposureSnapshot,
   createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation
 };

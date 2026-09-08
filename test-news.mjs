@@ -41,7 +41,9 @@ const {
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
-  linkMtfConfirmation,persistLinkedMtfConfirmation
+  linkMtfConfirmation,persistLinkedMtfConfirmation,activeExposureNewsRisk,
+  applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
+  syncActiveExposureNewsRisk,readExposureSnapshot
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
@@ -1271,6 +1273,141 @@ const riskEvent={...blsEvents[0],eventAt:Date.UTC(2026,8,10,12,30)};
 assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt-30*60_000,calendarSettings).active,true);
 assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt+15*60_000,calendarSettings).active,true);
 assert.equal(calendarRiskSnapshot([riskEvent],riskEvent.eventAt+15*60_000+1,calendarSettings).active,false);
+
+const activeNewsRiskSignal={
+  ...storedPrimary,id:'15m:news-risk-primary',tf:'15m',status:'active',
+  createdAt:riskEvent.eventAt-60*60_000,updatedAt:riskEvent.eventAt-60*60_000
+};
+const activeNewsRiskCalendar={ok:true,stale:false,events:[riskEvent]};
+const beforeNewsRisk=applyActiveExposureNewsRisk(
+  activeNewsRiskSignal,activeNewsRiskCalendar,riskEvent.eventAt-30*60_000-1
+);
+assert.equal(beforeNewsRisk.changed,false,'an active exposure must remain unchanged before the existing news-risk window');
+const enteredNewsRisk=applyActiveExposureNewsRisk(
+  activeNewsRiskSignal,activeNewsRiskCalendar,riskEvent.eventAt-30*60_000
+);
+assert.equal(enteredNewsRisk.changed,true);
+assert.equal(enteredNewsRisk.transition,'started');
+assert.equal(enteredNewsRisk.signal.newsRiskActive,true);
+assert.equal(enteredNewsRisk.signal.newsRisk.level,'high');
+assert.equal(enteredNewsRisk.signal.newsRisk.events[0].id,riskEvent.id);
+assert.equal(enteredNewsRisk.signal.newsRisk.windowStartAt,riskEvent.eventAt-30*60_000);
+assert.equal(enteredNewsRisk.signal.newsRisk.windowEndAt,riskEvent.eventAt+15*60_000);
+assert.deepEqual(
+  {
+    id:enteredNewsRisk.signal.id,side:enteredNewsRisk.signal.side,
+    entry:enteredNewsRisk.signal.entry,tp1:enteredNewsRisk.signal.tp1,
+    tp2:enteredNewsRisk.signal.tp2,sl:enteredNewsRisk.signal.sl,
+    mtfAtEntry:enteredNewsRisk.signal.mtfAtEntry,
+    mtfConfirmations:enteredNewsRisk.signal.mtfConfirmations
+  },
+  {
+    id:activeNewsRiskSignal.id,side:activeNewsRiskSignal.side,
+    entry:activeNewsRiskSignal.entry,tp1:activeNewsRiskSignal.tp1,
+    tp2:activeNewsRiskSignal.tp2,sl:activeNewsRiskSignal.sl,
+    mtfAtEntry:activeNewsRiskSignal.mtfAtEntry,
+    mtfConfirmations:activeNewsRiskSignal.mtfConfirmations
+  },
+  'news risk must not change the primary signal, direction, levels, or MTF state'
+);
+assert.equal(
+  applyActiveExposureNewsRisk(
+    enteredNewsRisk.signal,activeNewsRiskCalendar,riskEvent.eventAt
+  ).changed,
+  false,
+  'the same active news window must be idempotent'
+);
+const endedNewsRisk=applyActiveExposureNewsRisk(
+  enteredNewsRisk.signal,activeNewsRiskCalendar,riskEvent.eventAt+15*60_000+1
+);
+assert.equal(endedNewsRisk.changed,true);
+assert.equal(endedNewsRisk.transition,'ended');
+assert.equal(endedNewsRisk.signal.newsRiskActive,false);
+assert.equal(endedNewsRisk.signal.newsRisk.status,'ended');
+assert.equal(activeExposureNewsRisk(activeNewsRiskCalendar,riskEvent.eventAt)?.active,true);
+assert.match(
+  activeExposureNewsRiskTelegramText(enteredNewsRisk.signal,enteredNewsRisk.risk,'started'),
+  /News Risk — Active Exposure/
+);
+
+const newsRiskKvValues=new Map([
+  [`signal:state:${activeNewsRiskSignal.tf}`,JSON.stringify(activeNewsRiskSignal)]
+]);
+const newsRiskTelegramRecords=new Map();
+const unchangedExposure={
+  symbol:'XAUUSD',status:'active',side:activeNewsRiskSignal.side,maxPositions:1,
+  primarySignalId:activeNewsRiskSignal.id,primaryTf:activeNewsRiskSignal.tf,
+  openedAt:activeNewsRiskSignal.createdAt,confirmations:[{signalId:'1m-existing-confirmation'}]
+};
+const newsRiskCoordinator={
+  goldExposureStatus:async()=>unchangedExposure,
+  queueTelegramEvent:async record=>{
+    if (!newsRiskTelegramRecords.has(record.eventId)) newsRiskTelegramRecords.set(record.eventId,record);
+    return newsRiskTelegramRecords.get(record.eventId);
+  }
+};
+const newsRiskEnv={
+  NEWS_ALERTS_ENABLED:'1',
+  GSX_KV:{
+    get:async (key,type)=>{
+      const value=newsRiskKvValues.get(key);
+      return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+    },
+    put:async (key,value)=>newsRiskKvValues.set(key,value)
+  },
+  GOLD_FEED:{getByName:()=>newsRiskCoordinator}
+};
+const riskWindowStartedAt=riskEvent.eventAt-30*60_000;
+const firstRiskSync=await syncActiveExposureNewsRisk(newsRiskEnv,activeNewsRiskCalendar,riskWindowStartedAt);
+const duplicateRiskSync=await syncActiveExposureNewsRisk(newsRiskEnv,activeNewsRiskCalendar,riskWindowStartedAt+1);
+assert.equal(firstRiskSync.transition,'started');
+assert.equal(duplicateRiskSync.changed,false);
+assert.equal(newsRiskTelegramRecords.size,1,'News Risk start must be deduplicated for the same window');
+const exposureDuringRisk=await readExposureSnapshot(newsRiskEnv);
+assert.equal(exposureDuringRisk.primarySignalId,activeNewsRiskSignal.id);
+assert.equal(exposureDuringRisk.newsRiskActive,true,'API exposure and primary signal must expose the same active risk');
+const signalsDuringRiskResponse=await worker.default.fetch(
+  new Request(`https://example.com/signals?tf=${activeNewsRiskSignal.tf}`),newsRiskEnv,{}
+);
+assert.equal(signalsDuringRiskResponse.status,200);
+const signalsDuringRiskPayload=await signalsDuringRiskResponse.json();
+assert.equal(signalsDuringRiskPayload.signals[0].state.id,activeNewsRiskSignal.id);
+assert.equal(signalsDuringRiskPayload.signals[0].state.newsRiskActive,true);
+assert.equal(signalsDuringRiskPayload.exposure.newsRiskActive,true);
+assert.equal(signalsDuringRiskPayload.exposure.newsRisk.windowId,signalsDuringRiskPayload.signals[0].state.newsRisk.windowId);
+const firstRiskRecord=[...newsRiskTelegramRecords.values()][0];
+assert.equal(firstRiskRecord.kind,'news');
+assert.equal(firstRiskRecord.rootSignalId,activeNewsRiskSignal.id);
+assert.match(firstRiskRecord.text,/ليس Trading Signal أو Confirmation جديداً/);
+const riskWindowEndedAt=riskEvent.eventAt+15*60_000+1;
+const firstRiskEnd=await syncActiveExposureNewsRisk(newsRiskEnv,activeNewsRiskCalendar,riskWindowEndedAt);
+const duplicateRiskEnd=await syncActiveExposureNewsRisk(newsRiskEnv,activeNewsRiskCalendar,riskWindowEndedAt+1);
+assert.equal(firstRiskEnd.transition,'ended');
+assert.equal(duplicateRiskEnd.changed,false);
+assert.equal(newsRiskTelegramRecords.size,2,'News Risk end must emit once without creating a trading event');
+assert.ok([...newsRiskTelegramRecords.values()].every(record=>record.kind==='news'));
+const nextRiskEvent={...riskEvent,id:`${riskEvent.id}:next-window`,eventAt:riskEvent.eventAt+60*60_000};
+const nextRiskCalendar={ok:true,stale:false,events:[nextRiskEvent]};
+const nextRiskStart=await syncActiveExposureNewsRisk(
+  newsRiskEnv,nextRiskCalendar,nextRiskEvent.eventAt-30*60_000
+);
+assert.equal(nextRiskStart.transition,'started');
+assert.notEqual(nextRiskStart.signal.newsRisk.windowId,firstRiskSync.signal.newsRisk.windowId);
+assert.equal(newsRiskTelegramRecords.size,3,'a new risk window must emit a new Active Exposure alert');
+const nextRiskEnd=await syncActiveExposureNewsRisk(
+  newsRiskEnv,nextRiskCalendar,nextRiskEvent.eventAt+15*60_000+1
+);
+assert.equal(nextRiskEnd.transition,'ended');
+assert.equal(newsRiskTelegramRecords.size,4);
+const persistedNewsRiskSignal=JSON.parse(newsRiskKvValues.get(`signal:state:${activeNewsRiskSignal.tf}`));
+assert.equal(persistedNewsRiskSignal.id,activeNewsRiskSignal.id,'News Risk must preserve the signalId');
+assert.equal(persistedNewsRiskSignal.newsRiskActive,false);
+assert.equal(persistedNewsRiskSignal.newsRisk.status,'ended');
+assert.deepEqual(unchangedExposure.confirmations,[{signalId:'1m-existing-confirmation'}]);
+assert.equal(newsRiskKvValues.size,1,'News Risk must not create another trade or confirmation state');
+const healthRegressionResponse=await worker.default.fetch(new Request('https://example.com/health'),{},{});
+assert.equal(healthRegressionResponse.status,200);
+assert.equal((await healthRegressionResponse.json()).ok,true);
 
 const geopoliticalAt=Date.UTC(2026,8,1,10,0);
 const confirmedNews=buildNewsBrief([
