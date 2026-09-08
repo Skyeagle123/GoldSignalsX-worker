@@ -39,6 +39,7 @@ const {
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
+  computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
   linkMtfConfirmation,persistLinkedMtfConfirmation,activeExposureNewsRisk,
@@ -1075,6 +1076,74 @@ const productionSignal=(id,createdAt,overrides={})=>({
   updatedAt:createdAt,lastPrice:100,...overrides
 });
 
+const qualityBase=Date.UTC(2026,8,1,9,0,0);
+const qualitySignal=productionSignal('5m:quality:buy',qualityBase,{
+  entry:100,tp1:105,tp2:110,sl:95,closedAt:qualityBase+4*60_000,status:'tp2'
+});
+const qualityTicks=[
+  {ts:qualityBase-1_000,price:99.9},
+  {ts:qualityBase+100,price:100.2},
+  {ts:qualityBase+60_000,price:98},
+  {ts:qualityBase+120_000,price:106},
+  {ts:qualityBase+240_000,price:111},
+  {ts:qualityBase+241_000,price:94}
+];
+const qualityMetrics=computeSignalQualityMetrics(qualitySignal,qualityTicks,{now:qualityBase+5*60_000});
+assert.equal(qualityMetrics.measurementOnly,true);
+assert.equal(qualityMetrics.primarySignalId,qualitySignal.id);
+assert.equal(qualityMetrics.createdAt,qualitySignal.createdAt);
+assert.equal(qualityMetrics.timeframe,'5m');
+assert.equal(qualityMetrics.side,'buy');
+assert.equal(qualityMetrics.entry,100);
+assert.equal(qualityMetrics.score,8.75);
+assert.deepEqual(qualityMetrics.actualPriceAtSignal,{at:qualityBase+100,price:100.2,offsetMs:100});
+assert.deepEqual(qualityMetrics.firstPostSignalTick,{at:qualityBase+100,price:100.2,timeMs:100});
+assert.equal(qualityMetrics.mfe,11);
+assert.equal(qualityMetrics.mfePrice,111);
+assert.equal(qualityMetrics.timeToMfeMs,240_000);
+assert.equal(qualityMetrics.mae,2);
+assert.equal(qualityMetrics.maePrice,98);
+assert.equal(qualityMetrics.timeToMaeMs,60_000);
+assert.equal(qualityMetrics.mfeR,2.2);
+assert.equal(qualityMetrics.maeR,0.4);
+assert.equal(qualityMetrics.entryOpportunity.available,true);
+assert.equal(qualityMetrics.entryOpportunity.timeMs,60_000);
+assert.equal(qualityMetrics.timeToTp1Ms,120_000);
+assert.equal(qualityMetrics.timeToTp2Ms,240_000);
+assert.equal(qualityMetrics.timeToSlMs,null,'ticks after the recorded close must not affect quality metrics');
+assert.equal(qualityMetrics.windows['1m'].status,'complete');
+assert.equal(qualityMetrics.windows['5m'].status,'closed_early');
+
+const sellQualityMetrics=computeSignalQualityMetrics({
+  ...qualitySignal,id:'5m:quality:sell',side:'sell',closedAt:null,status:'active'
+},[
+  {ts:qualityBase+1_000,price:99},
+  {ts:qualityBase+2_000,price:102}
+],{now:qualityBase+3_000});
+assert.equal(sellQualityMetrics.mfe,1,'SELL favorable movement must be entry minus tick price');
+assert.equal(sellQualityMetrics.mae,2,'SELL adverse movement must be tick price minus entry');
+
+const lateEntrySignal=productionSignal('15m:quality:late',qualityBase,{tf:'15m',entry:100,tp1:110,tp2:120,sl:90});
+const lateEntryTicks=[
+  {ts:qualityBase+100,price:100.5},
+  {ts:qualityBase+5*60_000,price:104},
+  {ts:qualityBase+15*60_000-1,price:106},
+  {ts:qualityBase+15*60_000+1,price:107}
+];
+const lateEntryMetrics=computeSignalQualityMetrics(lateEntrySignal,lateEntryTicks,{now:qualityBase+16*60_000});
+assert.equal(lateEntryMetrics.entryOpportunity.available,false);
+assert.equal(lateEntryMetrics.entryOpportunity.late,true);
+assert.equal(lateEntryMetrics.entryOpportunity.status,'no_retrace_within_window');
+
+const initialQualityMetrics=computeSignalQualityMetrics(lateEntrySignal,lateEntryTicks.slice(0,2),{
+  now:qualityBase+5*60_000
+});
+const mergedQualityMetrics=computeSignalQualityMetrics(lateEntrySignal,[
+  {ts:qualityBase+6*60_000,price:103}
+],{now:qualityBase+6*60_000,previous:initialQualityMetrics});
+assert.equal(mergedQualityMetrics.mfe,4,'incremental collection must preserve an earlier MFE');
+assert.equal(mergedQualityMetrics.mfeAt,qualityBase+5*60_000);
+
 const winner=productionSignal('5m:performance:win',performanceBase);
 await Promise.all([
   recordProductionPerformanceEvent({GSX_DB:performanceDb},winner,'created'),
@@ -1160,6 +1229,45 @@ assert.equal((await recordProductionPerformanceSafely(
   {GSX_DB:{batch:async()=>{throw new Error('D1 unavailable');},prepare:performanceDb.prepare.bind(performanceDb)}},
   {...winner,id:'5m:storage-failure'},'created'
 )).ok,false,'performance storage failure must be isolated from the signal lifecycle');
+
+const qualityDb=new MemoryD1();
+await ensurePerformanceSchema({GSX_DB:qualityDb});
+const collectedSignal=productionSignal('15m:quality:primary',qualityBase,{tf:'15m'});
+await recordProductionPerformanceEvent({GSX_DB:qualityDb},collectedSignal,'created');
+let qualityTickReads=0;
+let qualityExposureWrites=0;
+let qualityTelegramWrites=0;
+const qualityFeed={
+  ticks:async options=>{
+    qualityTickReads+=1;
+    return {
+      ok:true,provider:'twelve-data',retentionMs:60*60_000,
+      ticks:qualityTicks.filter(tick=>tick.ts>=options.from&&tick.ts<=options.to)
+    };
+  },
+  manageGoldExposure:async()=>{qualityExposureWrites+=1;throw new Error('unexpected exposure write');},
+  queueTelegramEvent:async()=>{qualityTelegramWrites+=1;throw new Error('unexpected Telegram write');}
+};
+const qualityEnv={GSX_DB:qualityDb,GOLD_FEED:{getByName:()=>qualityFeed}};
+assert.equal((await collectSignalQualityMetrics(qualityEnv,qualityBase+6*60_000)).ok,true);
+assert.equal((await collectSignalQualityMetrics(qualityEnv,qualityBase+6*60_000)).ok,true);
+assert.equal(qualityTickReads,2);
+assert.equal(qualityExposureWrites,0,'quality collection must not call Exposure Manager');
+assert.equal(qualityTelegramWrites,0,'quality collection must not create a Trading Signal or Confirmation alert');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_signals').get().count,1,
+  'quality collection must not create a Trading Signal');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_signal_events').get().count,1,
+  'quality collection must not create a lifecycle event or Confirmation');
+assert.equal(qualityDb.database.prepare('SELECT COUNT(*) AS count FROM production_signal_quality').get().count,1,
+  'quality retries must update the same primarySignalId row');
+const collectedRecord=(await readProductionPerformance(
+  qualityEnv,new URLSearchParams('limit=10')
+)).records[0];
+assert.equal(collectedRecord.signalId,collectedSignal.id);
+assert.equal(collectedRecord.quality.primarySignalId,collectedSignal.id);
+assert.equal(collectedRecord.quality.tickSource,'twelve-data');
+assert.equal(collectedRecord.quality.measurementOnly,true);
+assert.equal((await collectSignalQualityMetricsSafely({})).ok,false);
 
 const performanceResponse=await worker.default.fetch(new Request('https://example.com/performance?limit=2'),{
   GSX_DB:performanceDb,ALLOW_ORIGINS:JSON.stringify([allowedOrigin])

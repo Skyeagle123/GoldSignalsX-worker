@@ -65,6 +65,9 @@ const PERFORMANCE_SOURCE = 'production';
 const PERFORMANCE_SYMBOL = 'XAUUSD';
 const PERFORMANCE_PAGE_DEFAULT = 50;
 const PERFORMANCE_PAGE_MAX = 100;
+const SIGNAL_QUALITY_WINDOWS_MINUTES = Object.freeze([1,5,15,30,60]);
+const SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS = 30_000;
+const SIGNAL_QUALITY_RECENT_UPDATE_MS = 10 * 60_000;
 // 700 rows keep a 1m import under D1 Free's per-invocation query and bind limits.
 const MAX_IMPORT_ROWS = 700;
 const NEWS_CACHE_MS = 15 * 60 * 1000;
@@ -1213,7 +1216,8 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
     : backfillSignalRollups(env);
   tasks.push(historyPromise.then(()=>Promise.all([newsPromise,calendarPromise])).then(async ([news,calendar])=>{
     const filters=await readSignalFilters(env);
-    return runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
+    await runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
+    return collectSignalQualityMetricsSafely(env);
   }));
   const results = await Promise.allSettled(tasks);
   const errors=[];
@@ -1487,6 +1491,237 @@ function productionSignalEligible(signal) {
       .every(value=>Number.isFinite(Number(value)));
 }
 
+function roundSignalQuality(value) {
+  return Number(Number(value||0).toFixed(6));
+}
+
+function signalQualityMove(signal,price) {
+  const entry=Number(signal?.entry),observed=Number(price);
+  if (!Number.isFinite(entry)||!Number.isFinite(observed)) return NaN;
+  return signal?.side==='sell'?entry-observed:observed-entry;
+}
+
+function signalQualityExcursion(signal,ticks) {
+  let favorable=null,adverse=null;
+  for (const tick of ticks) {
+    const move=signalQualityMove(signal,tick.price);
+    if (!Number.isFinite(move)) continue;
+    if (move>0&&(!favorable||move>favorable.move||(move===favorable.move&&tick.ts<favorable.at))) {
+      favorable={move,price:tick.price,at:tick.ts};
+    }
+    const adverseMove=-move;
+    if (adverseMove>0&&(!adverse||adverseMove>adverse.move||(adverseMove===adverse.move&&tick.ts<adverse.at))) {
+      adverse={move:adverseMove,price:tick.price,at:tick.ts};
+    }
+  }
+  return {favorable,adverse};
+}
+
+function earlierSignalQualityTouch(previous,current) {
+  if (!previous) return current||null;
+  if (!current) return previous;
+  return Number(current.at)<Number(previous.at)?current:previous;
+}
+
+function strongerSignalQualityExcursion(previous,current) {
+  if (!previous) return current||null;
+  if (!current) return previous;
+  if (Number(current.move)>Number(previous.move)) return current;
+  if (Number(current.move)<Number(previous.move)) return previous;
+  return Number(current.at)<Number(previous.at)?current:previous;
+}
+
+function firstSignalQualityTouch(signal,ticks,level,type) {
+  const target=Number(level);
+  if (!Number.isFinite(target)) return null;
+  const touched=ticks.find(tick=>{
+    if (type==='sl') return signal.side==='sell'?tick.price>=target:tick.price<=target;
+    return signal.side==='sell'?tick.price<=target:tick.price>=target;
+  });
+  return touched?{at:touched.ts,price:touched.price,timeMs:touched.ts-Number(signal.createdAt)}:null;
+}
+
+function signalQualityWindow(signal,ticks,minutes,measurementEndAt,now) {
+  const createdAt=Number(signal.createdAt),windowMs=minutes*60_000;
+  const windowEndAt=createdAt+windowMs;
+  const effectiveEndAt=Math.min(windowEndAt,measurementEndAt);
+  const rows=ticks.filter(tick=>tick.ts<=effectiveEndAt);
+  const excursion=signalQualityExcursion(signal,rows);
+  const first=rows[0]||null,last=rows.at(-1)||null;
+  const startsNearSignal=Boolean(first&&first.ts<=createdAt+SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS);
+  const closedEarly=measurementEndAt<windowEndAt;
+  const complete=Boolean(!closedEarly&&now>=windowEndAt&&startsNearSignal&&ticks.at(-1)?.ts>=windowEndAt);
+  return {
+    minutes,windowEndAt,measurementEndAt:effectiveEndAt,
+    status:closedEarly?'closed_early':complete?'complete':now<windowEndAt?'collecting':'incomplete_tick_coverage',
+    finalized:closedEarly||complete,tickCount:rows.length,
+    firstTickAt:first?.ts||null,lastTickAt:last?.ts||null,lastPrice:last?.price??null,
+    directionalMove:last?roundSignalQuality(signalQualityMove(signal,last.price)):null,
+    mfe:roundSignalQuality(excursion.favorable?.move||0),
+    mae:roundSignalQuality(excursion.adverse?.move||0)
+  };
+}
+
+function computeSignalQualityMetrics(signal,ticks,options={}) {
+  const createdAt=Number(signal?.createdAt),now=Number(options.now)||Date.now();
+  const closedAt=Number(signal?.closedAt)||0;
+  const measurementEndAt=closedAt>0?Math.min(closedAt,now):now;
+  const normalized=(Array.isArray(ticks)?ticks:[])
+    .map(tick=>({ts:Number(tick?.ts),price:Number(tick?.price)}))
+    .filter(tick=>Number.isFinite(tick.ts)&&Number.isFinite(tick.price)&&
+      tick.ts>=createdAt-SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS&&tick.ts<=measurementEndAt)
+    .sort((left,right)=>left.ts-right.ts);
+  const postTicks=normalized.filter(tick=>tick.ts>=createdAt);
+  const previous=options.previous&&typeof options.previous==='object'?options.previous:{};
+  const currentExcursion=signalQualityExcursion(signal,postTicks);
+  const previousMfe=Number(previous.mfe)>0?{move:Number(previous.mfe),price:Number(previous.mfePrice),at:Number(previous.mfeAt)}:null;
+  const previousMae=Number(previous.mae)>0?{move:Number(previous.mae),price:Number(previous.maePrice),at:Number(previous.maeAt)}:null;
+  const mfe=strongerSignalQualityExcursion(previousMfe,currentExcursion.favorable);
+  const mae=strongerSignalQualityExcursion(previousMae,currentExcursion.adverse);
+  const risk=Math.abs(Number(signal.entry)-Number(signal.sl));
+  const nearest=normalized.reduce((best,tick)=>{
+    const distance=Math.abs(tick.ts-createdAt);
+    return !best||distance<best.distance?{at:tick.ts,price:tick.price,distance}:best;
+  },null);
+  const previousActual=previous.actualPriceAtSignal&&typeof previous.actualPriceAtSignal==='object'
+    ?previous.actualPriceAtSignal:null;
+  const actualPriceAtSignal=!previousActual||nearest&&nearest.distance<Math.abs(Number(previousActual.offsetMs))
+    ?(nearest?{at:nearest.at,price:nearest.price,offsetMs:nearest.at-createdAt}:null)
+    :previousActual;
+  const firstPost=earlierSignalQualityTouch(
+    previous.firstPostSignalTick,
+    postTicks[0]?{at:postTicks[0].ts,price:postTicks[0].price,timeMs:postTicks[0].ts-createdAt}:null
+  );
+  const latestPost=postTicks.at(-1)||null;
+  const entryWindowMs=Math.min(Number(SIGNAL_TF_MS[signal.tf])||15*60_000,15*60_000);
+  const entryWindowEndAt=createdAt+entryWindowMs;
+  const entryTicks=postTicks.filter(tick=>tick.ts<=Math.min(entryWindowEndAt,measurementEndAt));
+  const currentEntryTick=entryTicks.find(tick=>signal.side==='sell'?tick.price>=Number(signal.entry):tick.price<=Number(signal.entry));
+  const previousEntry=previous.entryOpportunity&&typeof previous.entryOpportunity==='object'?previous.entryOpportunity:null;
+  const opportunity=earlierSignalQualityTouch(
+    previousEntry?.available===true?{at:previousEntry.at,price:previousEntry.price,timeMs:previousEntry.timeMs}:null,
+    currentEntryTick?{at:currentEntryTick.ts,price:currentEntryTick.price,timeMs:currentEntryTick.ts-createdAt}:null
+  );
+  const entryCoverageComplete=Boolean(
+    entryTicks[0]?.ts<=createdAt+SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS&&
+    postTicks.at(-1)?.ts>=entryWindowEndAt
+  );
+  const entryWindowElapsed=measurementEndAt>=entryWindowEndAt;
+  const entryOpportunity=opportunity?{
+    windowMs:entryWindowMs,windowEndAt:entryWindowEndAt,available:true,
+    status:'at_or_better',at:opportunity.at,price:opportunity.price,timeMs:opportunity.timeMs,
+    late:false
+  }:{
+    windowMs:entryWindowMs,windowEndAt:entryWindowEndAt,
+    available:entryWindowElapsed&&entryCoverageComplete?false:null,
+    status:entryWindowElapsed&&entryCoverageComplete?'no_retrace_within_window':
+      closedAt&&closedAt<entryWindowEndAt?'closed_before_window_end':'pending_or_incomplete_tick_coverage',
+    at:null,price:null,timeMs:null,late:Boolean(entryWindowElapsed&&entryCoverageComplete)
+  };
+  const previousTouches=previous.tickTouches&&typeof previous.tickTouches==='object'?previous.tickTouches:{};
+  const tickTouches={
+    tp1:earlierSignalQualityTouch(previousTouches.tp1,firstSignalQualityTouch(signal,postTicks,signal.tp1,'tp1')),
+    tp2:earlierSignalQualityTouch(previousTouches.tp2,firstSignalQualityTouch(signal,postTicks,signal.tp2,'tp2')),
+    sl:earlierSignalQualityTouch(previousTouches.sl,firstSignalQualityTouch(signal,postTicks,signal.sl,'sl'))
+  };
+  const windows={};
+  for (const minutes of SIGNAL_QUALITY_WINDOWS_MINUTES) {
+    const key=`${minutes}m`,stored=previous.windows?.[key];
+    windows[key]=stored?.finalized?stored:signalQualityWindow(signal,postTicks,minutes,measurementEndAt,now);
+  }
+  const observedFromAt=Math.min(
+    ...[Number(previous.coverage?.observedFromAt),postTicks[0]?.ts].filter(Number.isFinite)
+  );
+  const observedToAt=Math.max(
+    ...[Number(previous.coverage?.observedToAt),latestPost?.ts].filter(Number.isFinite)
+  );
+  return {
+    schema:1,measurementOnly:true,primarySignalId:String(signal.id),
+    createdAt,timeframe:String(signal.tf),side:String(signal.side),entry:Number(signal.entry),
+    score:Number.isFinite(Number(signal.score))?Number(signal.score):null,
+    tickSource:String(options.tickSource||previous.tickSource||'gold-feed-tick-history'),
+    tickRetentionMs:Number(options.tickRetentionMs||previous.tickRetentionMs||TICK_HISTORY_RETENTION_MS),
+    measurementEndAt,closedAt:closedAt||null,
+    actualPriceAtSignal,firstPostSignalTick:firstPost,
+    latestPostSignalTick:latestPost?{at:latestPost.ts,price:latestPost.price,timeMs:latestPost.ts-createdAt}:
+      previous.latestPostSignalTick||null,
+    coverage:{
+      observedFromAt:Number.isFinite(observedFromAt)?observedFromAt:null,
+      observedToAt:Number.isFinite(observedToAt)?observedToAt:null,
+      startsNearCreatedAt:Boolean(Number.isFinite(observedFromAt)&&observedFromAt<=createdAt+SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS),
+      observedTickCountAtLeast:Math.max(Number(previous.coverage?.observedTickCountAtLeast)||0,postTicks.length)
+    },
+    mfe:roundSignalQuality(mfe?.move||0),mfePrice:mfe?.price??null,mfeAt:mfe?.at||null,
+    timeToMfeMs:mfe?.at?mfe.at-createdAt:null,
+    mae:roundSignalQuality(mae?.move||0),maePrice:mae?.price??null,maeAt:mae?.at||null,
+    timeToMaeMs:mae?.at?mae.at-createdAt:null,
+    mfeR:Number.isFinite(risk)&&risk>0?roundSignalQuality((mfe?.move||0)/risk):null,
+    maeR:Number.isFinite(risk)&&risk>0?roundSignalQuality((mae?.move||0)/risk):null,
+    favorableMove:roundSignalQuality(mfe?.move||0),adverseMove:roundSignalQuality(mae?.move||0),
+    entryOpportunity,tickTouches,
+    timeToTp1Ms:tickTouches.tp1?.timeMs??null,
+    timeToTp2Ms:tickTouches.tp2?.timeMs??null,
+    timeToSlMs:tickTouches.sl?.timeMs??null,
+    windows,updatedAt:now
+  };
+}
+
+async function collectSignalQualityMetrics(env,now=Date.now()) {
+  if (!env.GSX_DB||!env.GOLD_FEED) return {ok:false,error:'quality_metrics_source_unavailable'};
+  await ensurePerformanceSchema(env);
+  const cutoff=Number(now)-TICK_HISTORY_RETENTION_MS;
+  const recentUpdateCutoff=Number(now)-SIGNAL_QUALITY_RECENT_UPDATE_MS;
+  const signals=(await env.GSX_DB.prepare(`
+    SELECT signal_id,timeframe,direction,created_at,entry,tp1,tp2,sl,score,status,closed_at,updated_at
+    FROM production_signals
+    WHERE source='production' AND (created_at>=?1 OR status IN ('active','tp1') OR updated_at>=?2)
+    ORDER BY created_at DESC LIMIT 25
+  `).bind(cutoff,recentUpdateCutoff).all()).results||[];
+  if (!signals.length) return {ok:true,updated:0};
+  const feed=env.GOLD_FEED.getByName('xau-usd');
+  const earliestFrom=Math.min(...signals.map(row=>Number(row.created_at)-SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS));
+  const tickResult=await feed.ticks({
+    from:Math.max(earliestFrom,Number(now)-TICK_HISTORY_RETENTION_MS),
+    to:Number(now),limit:TICK_HISTORY_QUERY_MAX
+  });
+  let updated=0;
+  for (const row of signals) {
+    const signal={
+      id:String(row.signal_id),tf:String(row.timeframe),side:String(row.direction),
+      createdAt:Number(row.created_at),entry:Number(row.entry),tp1:Number(row.tp1),
+      tp2:Number(row.tp2),sl:Number(row.sl),score:row.score==null?null:Number(row.score),
+      status:String(row.status),closedAt:row.closed_at==null?null:Number(row.closed_at)
+    };
+    const stored=await env.GSX_DB.prepare(
+      'SELECT metrics_json FROM production_signal_quality WHERE primary_signal_id=?1'
+    ).bind(signal.id).first();
+    const previous=safeJsonParse(stored?.metrics_json,null);
+    const metrics=computeSignalQualityMetrics(signal,tickResult?.ticks,{
+      now,previous,tickSource:tickResult?.provider||'gold-feed-tick-history',
+      tickRetentionMs:tickResult?.retentionMs||TICK_HISTORY_RETENTION_MS
+    });
+    await env.GSX_DB.prepare(`
+      INSERT INTO production_signal_quality (primary_signal_id,metrics_json,updated_at)
+      VALUES (?1,?2,?3)
+      ON CONFLICT(primary_signal_id) DO UPDATE SET metrics_json=excluded.metrics_json,updated_at=excluded.updated_at
+    `).bind(signal.id,JSON.stringify(metrics),Number(now)).run();
+    updated+=1;
+  }
+  return {ok:true,updated};
+}
+
+async function collectSignalQualityMetricsSafely(env,now=Date.now()) {
+  try {
+    return await collectSignalQualityMetrics(env,now);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'signal quality metrics collection failed',
+      error:error instanceof Error?error.message:String(error)
+    }));
+    return {ok:false,error:'quality_metrics_collection_failed'};
+  }
+}
+
 async function recordProductionPerformanceEvent(env,signal,event) {
   const eventType=canonicalPerformanceEvent(event);
   if (!env.GSX_DB) return {ok:false,error:'performance_storage_unavailable'};
@@ -1574,10 +1809,12 @@ async function recordProductionPerformanceSafely(env,signal,event) {
 function mapPerformanceSignal(row) {
   let reasons=[];
   try { reasons=JSON.parse(String(row?.reasons_json||'[]')); } catch {}
+  const quality=safeJsonParse(row?.quality_metrics_json,null);
+  const createdAt=Number(row?.created_at||0);
   return {
     signalId:String(row?.signal_id||''),source:String(row?.source||PERFORMANCE_SOURCE),
     symbol:String(row?.symbol||PERFORMANCE_SYMBOL),timeframe:String(row?.timeframe||''),
-    direction:String(row?.direction||''),createdAt:Number(row?.created_at||0),
+    direction:String(row?.direction||''),createdAt,
     signalBarTs:Number(row?.signal_bar_ts||0),entry:Number(row?.entry),tp1:Number(row?.tp1),
     tp2:Number(row?.tp2),sl:Number(row?.sl),confidence:Number(row?.confidence||0),
     score:row?.score==null?null:Number(row.score),reasons:Array.isArray(reasons)?reasons:[],
@@ -1588,7 +1825,11 @@ function mapPerformanceSignal(row) {
     expiredAt:row?.expired_at==null?null:Number(row.expired_at),
     expiredPrice:row?.expired_price==null?null:Number(row.expired_price),
     closedAt:row?.closed_at==null?null:Number(row.closed_at),
-    resultR:row?.result_r==null?null:Number(row.result_r),updatedAt:Number(row?.updated_at||0)
+    resultR:row?.result_r==null?null:Number(row.result_r),
+    timeToTp1Ms:row?.tp1_at==null?null:Number(row.tp1_at)-createdAt,
+    timeToTp2Ms:row?.tp2_at==null?null:Number(row.tp2_at)-createdAt,
+    timeToSlMs:row?.sl_at==null?null:Number(row.sl_at)-createdAt,
+    quality,updatedAt:Number(row?.updated_at||0)
   };
 }
 
@@ -1696,7 +1937,10 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
   const select=`SELECT signal_id,source,symbol,timeframe,direction,created_at,signal_bar_ts,
     entry,tp1,tp2,sl,confidence,score,reasons_json,status,final_status,
     tp1_at,tp1_price,tp2_at,tp2_price,sl_at,sl_price,expired_at,expired_price,
-    closed_at,result_r,updated_at FROM production_signals`;
+    closed_at,result_r,updated_at,
+    (SELECT metrics_json FROM production_signal_quality quality
+      WHERE quality.primary_signal_id=production_signals.signal_id) AS quality_metrics_json
+    FROM production_signals`;
   const summaryRows=(await env.GSX_DB.prepare(`${select} WHERE ${where} ORDER BY created_at,signal_id`)
     .bind(...values).all()).results||[];
   const allRecords=summaryRows.map(mapPerformanceSignal);
@@ -3282,6 +3526,8 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created ON production_signals(timeframe,created_at DESC);');
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
+  await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_signal_quality (primary_signal_id TEXT PRIMARY KEY, metrics_json TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_quality_updated ON production_signal_quality(updated_at DESC,primary_signal_id);');
 }
 
 async function ensureNewsCalendarSchema(env) {
@@ -3389,6 +3635,7 @@ export {
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
+  computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
   maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,
   activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
