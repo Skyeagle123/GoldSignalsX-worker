@@ -68,6 +68,8 @@ const PERFORMANCE_SOURCE = 'production';
 const PERFORMANCE_SYMBOL = 'XAUUSD';
 const PERFORMANCE_PAGE_DEFAULT = 50;
 const PERFORMANCE_PAGE_MAX = 100;
+const FORWARD_VALIDATION_MIN_RESOLVED_SAMPLE = 10;
+const FORWARD_VALIDATION_MIN_ANALYSIS_SAMPLE = 3;
 const SIGNAL_QUALITY_WINDOWS_MINUTES = Object.freeze([1,5,15,30,60]);
 const SIGNAL_QUALITY_TICK_AT_SIGNAL_LOOKBACK_MS = 30_000;
 const SIGNAL_QUALITY_RECENT_UPDATE_MS = 10 * 60_000;
@@ -301,6 +303,9 @@ async function syncActiveExposureNewsRisk(env,calendar,now=Date.now()) {
   const result=applyActiveExposureNewsRisk(signal,calendar,now);
   if (!result.changed) return {ok:true,changed:false,activeExposure:true,signal:result.signal};
   await env.GSX_KV.put(key,JSON.stringify(result.signal),{expirationTtl:90*24*60*60});
+  const performanceRiskWrite=recordProductionNewsRiskSafely(
+    env,result.signal,result.risk,result.transition,now
+  );
   let delivery=null;
   if (String(env.NEWS_ALERTS_ENABLED||'1').trim()!=='0') {
     const eventId=`trade:${signal.id}:news-risk:${result.risk.windowId}:${result.transition}`;
@@ -309,6 +314,7 @@ async function syncActiveExposureNewsRisk(env,calendar,now=Date.now()) {
       {eventId,rootSignalId:signal.id,signalCreatedAt:signal.createdAt,eventAt:Number(now)}
     );
   }
+  await performanceRiskWrite;
   return {
     ok:true,changed:true,activeExposure:true,transition:result.transition,
     signal:result.signal,delivery
@@ -1763,6 +1769,95 @@ function mtfDirectionFromEvaluation(evaluation,createdAt) {
   };
 }
 
+function atEntryConflictState(direction,evidence=null) {
+  if (!['bullish','bearish','neutral'].includes(direction)) {
+    return {
+      status:'unavailable',direction:'unavailable',evidence:null,
+      reason:'no-explicit-same-cycle-indicator-data'
+    };
+  }
+  return {status:'available',direction,evidence};
+}
+
+function indicatorStatesAtEntry(evaluation,createdAt) {
+  const sameCycle=Number(evaluation?.evaluatedAt)===Number(createdAt);
+  const reasons=sameCycle&&Array.isArray(evaluation?.reasons)?evaluation.reasons.map(String):[];
+  const matching=pattern=>pattern?reasons.find(reason=>pattern.test(reason))||null:null;
+  const directional=(bullish,bearish,neutral=null)=>{
+    const bullReason=matching(bullish);
+    if (bullReason) return atEntryConflictState('bullish',bullReason);
+    const bearReason=matching(bearish);
+    if (bearReason) return atEntryConflictState('bearish',bearReason);
+    const neutralReason=neutral?matching(neutral):null;
+    return neutralReason?atEntryConflictState('neutral',neutralReason):atEntryConflictState('unavailable');
+  };
+  const bullishPatterns=/^(Bullish Engulfing|Morning Star|Hammer|Piercing Line|Bullish Harami|Three White Soldiers):/;
+  const bearishPatterns=/^(Bearish Engulfing|Evening Star|Shooting Star|Dark Cloud Cover|Bearish Harami|Three Black Crows):/;
+  return {
+    ema:directional(/EMA تؤكد اتجاهاً صاعداً/,/EMA تؤكد اتجاهاً هابطاً/),
+    macd:directional(/زخم MACD موجب/,/زخم MACD سالب/),
+    dmiAdx:directional(/\+DI يتفوّق/,/-DI يتفوّق/,/ADX ضعيف/),
+    rsi:directional(null,null,/RSI متطرف/),
+    stochastic:atEntryConflictState('unavailable'),
+    bollingerBands:atEntryConflictState('unavailable'),
+    candlestickPattern:directional(bullishPatterns,bearishPatterns,/^Doji:/),
+    candleConfirmation:directional(/ضغطاً شرائياً/,/ضغطاً بيعياً/)
+  };
+}
+
+function conflictAtEntrySummary(states,expectedDirection) {
+  const counts={agreeing:0,opposing:0,neutral:0,unavailable:0};
+  for (const state of Object.values(states||{})) {
+    const direction=String(state?.direction||'unavailable');
+    if (state?.status!=='available'||direction==='unavailable') counts.unavailable+=1;
+    else if (direction==='neutral') counts.neutral+=1;
+    else if (direction===expectedDirection) counts.agreeing+=1;
+    else counts.opposing+=1;
+  }
+  const directional=counts.agreeing+counts.opposing;
+  return {
+    ...counts,directional,considered:Object.keys(states||{}).length,
+    conflictPct:directional?roundPerformance(counts.opposing/directional*100):null,
+    denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
+  };
+}
+
+function buildIndicatorMtfConflictAtEntry(signal,evaluations,matrix) {
+  const createdAt=Number(signal?.createdAt);
+  const primaryTimeframe=String(signal?.tf||'');
+  const evaluation=evaluations instanceof Map?evaluations.get(primaryTimeframe):evaluations?.[primaryTimeframe];
+  const sameCycle=Number(evaluation?.evaluatedAt)===createdAt;
+  const expectedDirection=signal?.side==='buy'?'bullish':'bearish';
+  const indicators=indicatorStatesAtEntry(evaluation,createdAt);
+  const mtf=Object.fromEntries(Object.entries(matrix?.frames||{})
+    .filter(([tf])=>tf!==primaryTimeframe)
+    .map(([tf,frame])=>[tf,frame?.direction==='unavailable'
+      ?atEntryConflictState('unavailable')
+      :atEntryConflictState(frame?.direction,`same-cycle MTF evaluation ${tf}`)]));
+  const bull=sameCycle?Number(evaluation?.bull):NaN;
+  const bear=sameCycle?Number(evaluation?.bear):NaN;
+  const supporting=signal?.side==='buy'?bull:bear;
+  const opposing=signal?.side==='buy'?bear:bull;
+  const scoreDenominator=supporting+opposing;
+  return {
+    schema:1,measurementOnly:true,decisionUse:false,immutable:true,
+    primarySignalId:String(signal?.id||''),primaryTimeframe,signalSide:String(signal?.side||''),
+    signalScore:Number.isFinite(Number(signal?.score))?Number(signal.score):null,
+    createdAt,source:'same-created-at evaluation snapshot',
+    laterConfirmationsIncluded:false,historicalReconstruction:false,
+    indicators:{states:indicators,summary:conflictAtEntrySummary(indicators,expectedDirection)},
+    mtf:{states:mtf,summary:conflictAtEntrySummary(mtf,expectedDirection)},
+    combined:conflictAtEntrySummary({...indicators,...Object.fromEntries(
+      Object.entries(mtf).map(([tf,state])=>[`mtf:${tf}`,state])
+    )},expectedDirection),
+    evaluationScoreConflict:Number.isFinite(supporting)&&Number.isFinite(opposing)&&scoreDenominator>0?{
+      status:'available',supportingScore:supporting,opposingScore:opposing,
+      conflictPct:roundPerformance(opposing/scoreDenominator*100),
+      denominator:'same-cycle evaluation bull + bear totals',decisionUse:false
+    }:{status:'unavailable',supportingScore:null,opposingScore:null,conflictPct:null}
+  };
+}
+
 function buildMtfDirectionMatrix(signal,evaluations) {
   const primarySignalId=String(signal?.id||'');
   const primaryTimeframe=String(signal?.tf||'');
@@ -1794,7 +1889,7 @@ function buildMtfDirectionMatrix(signal,evaluations) {
   }
   const available=counts.agreeing+counts.opposing+counts.neutral;
   const directional=counts.agreeing+counts.opposing;
-  return {
+  const matrix={
     schema:1,measurementOnly:true,decisionUse:false,
     primarySignalId,primaryTimeframe,signalSide:side,
     signalScore:Number.isFinite(Number(signal?.score))?Number(signal.score):null,
@@ -1810,6 +1905,8 @@ function buildMtfDirectionMatrix(signal,evaluations) {
     engineMtfSummary:signal?.mtf||null,
     capturedAt:Date.now()
   };
+  matrix.conflictAtEntry=buildIndicatorMtfConflictAtEntry(signal,evaluations,matrix);
+  return matrix;
 }
 
 function buildMtfConfirmationAnalysis(signal,matrix) {
@@ -1993,6 +2090,45 @@ async function recordProductionPerformanceSafely(env,signal,event) {
   }
 }
 
+async function recordProductionNewsRiskEvent(env,signal,risk,transition,eventAt=Date.now()) {
+  const riskTransition=String(transition||'');
+  const windowId=String(risk?.windowId||'');
+  const timestamp=Number(eventAt);
+  if (!env.GSX_DB) return {ok:false,error:'performance_storage_unavailable'};
+  if (!productionSignalEligible(signal)||!windowId||
+      !['started','changed','ended'].includes(riskTransition)||
+      !Number.isFinite(timestamp)||timestamp<Number(signal.createdAt)) {
+    return {ok:false,error:'official_news_risk_required'};
+  }
+  await ensurePerformanceSchema(env);
+  const eventId=`production:${signal.id}:news-risk:${windowId}:${riskTransition}`;
+  await env.GSX_DB.prepare(`
+    INSERT OR IGNORE INTO production_signal_news_risk
+      (event_id,primary_signal_id,window_id,transition,event_at,risk_json,recorded_at)
+    SELECT ?1,signal_id,?3,?4,?5,?6,?7
+    FROM production_signals WHERE signal_id=?2 AND source='production'
+  `).bind(
+    eventId,String(signal.id),windowId,riskTransition,timestamp,
+    JSON.stringify(risk&&typeof risk==='object'?risk:{}),Date.now()
+  ).run();
+  const stored=await env.GSX_DB.prepare(
+    'SELECT event_id FROM production_signal_news_risk WHERE event_id=?1'
+  ).bind(eventId).first();
+  return {ok:Boolean(stored),eventId,recorded:Boolean(stored)};
+}
+
+async function recordProductionNewsRiskSafely(env,signal,risk,transition,eventAt=Date.now()) {
+  try {
+    return await recordProductionNewsRiskEvent(env,signal,risk,transition,eventAt);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'production News Risk recording failed',signalId:String(signal?.id||''),
+      transition:String(transition||''),error:error instanceof Error?error.message:String(error)
+    }));
+    return {ok:false,error:'performance_news_risk_record_failed'};
+  }
+}
+
 function mapPerformanceSignal(row) {
   let reasons=[];
   try { reasons=JSON.parse(String(row?.reasons_json||'[]')); } catch {}
@@ -2033,7 +2169,15 @@ function mapPerformanceSignal(row) {
     timeToTp1Ms:row?.tp1_at==null?null:Number(row.tp1_at)-createdAt,
     timeToTp2Ms:row?.tp2_at==null?null:Number(row.tp2_at)-createdAt,
     timeToSlMs:row?.sl_at==null?null:Number(row.sl_at)-createdAt,
-    quality,mtfAnalysis,updatedAt:Number(row?.updated_at||0)
+    quality,mtfAnalysis,
+    newsRisk:{
+      available:Number(row?.news_risk_window_count||0)>0,atEntry:null,
+      postEntry:{
+        transitions:[],windowCount:Number(row?.news_risk_window_count||0),
+        transitionCount:Number(row?.news_risk_transition_count||0)
+      }
+    },
+    updatedAt:Number(row?.updated_at||0)
   };
 }
 
@@ -2042,7 +2186,8 @@ function roundPerformance(value) {
 }
 
 function aggregatePerformance(records) {
-  const completed=records.filter(record=>['tp2','sl','expired'].includes(record.finalStatus));
+  const completed=records.filter(record=>['tp2','sl','expired','closed'].includes(record.finalStatus));
+  const measured=completed.filter(record=>record.resultR!==null&&Number.isFinite(Number(record.resultR)));
   const wins=completed.filter(record=>record.finalStatus==='tp2').length;
   const losses=completed.filter(record=>record.finalStatus==='sl').length;
   const expired=completed.filter(record=>record.finalStatus==='expired').length;
@@ -2062,9 +2207,175 @@ function aggregatePerformance(records) {
   return {
     signals:records.length,open:records.length-completed.length,completed:completed.length,
     wins,losses,expired,winRate:wins+losses?roundPerformance(wins/(wins+losses)*100):0,
-    netR:roundPerformance(equity),averageR:completed.length?roundPerformance(equity/completed.length):0,
+    netR:roundPerformance(equity),averageR:measured.length?roundPerformance(equity/measured.length):0,
     maxDrawdownR:roundPerformance(maxDrawdown),bestWinStreak:bestStreak,worstLossStreak:worstStreak
   };
+}
+
+function forwardValidationMetric(records,readValue) {
+  const values=records.map(readValue)
+    .filter(value=>value!==null&&value!==undefined&&value!=='')
+    .map(Number).filter(Number.isFinite);
+  return {
+    sampleSize:values.length,
+    sampleSufficient:values.length>=FORWARD_VALIDATION_MIN_ANALYSIS_SAMPLE,
+    minimumSample:FORWARD_VALIDATION_MIN_ANALYSIS_SAMPLE,
+    mean:values.length?roundPerformance(values.reduce((sum,value)=>sum+value,0)/values.length):null
+  };
+}
+
+function forwardValidationGroup(records) {
+  const aggregate=aggregatePerformance(records);
+  const resolved=aggregate.wins+aggregate.losses;
+  const qualityRows=records.filter(record=>
+    ['tp2','sl','expired','closed'].includes(String(record.finalStatus||''))&&
+    record.quality?.measurementOnly===true
+  );
+  const matrixRows=records.filter(record=>record.mtfAnalysis?.matrix?.measurementOnly===true);
+  const conflictRows=matrixRows.filter(record=>
+    record.mtfAnalysis.matrix.conflictAtEntry?.measurementOnly===true
+  );
+  const confirmationCounts=records.map(record=>
+    Number(record.mtfAnalysis?.laterConfirmations?.summary?.count)
+  ).filter(Number.isFinite);
+  const newsRiskTransitions=records.reduce((total,record)=>
+    total+Number(record.newsRisk?.postEntry?.transitionCount||0),0
+  );
+  const newsRiskSignals=records.filter(record=>(record.newsRisk?.postEntry?.windowCount||0)>0).length;
+  return {
+    counts:{
+      signals:aggregate.signals,open:aggregate.open,wins:aggregate.wins,
+      losses:aggregate.losses,expired:aggregate.expired,
+      closed:records.filter(record=>String(record.finalStatus||record.status)==='closed').length,
+      resolved
+    },
+    winRate:{
+      numerator:aggregate.wins,denominator:resolved,formula:'TP2 / (TP2 + SL)',
+      valuePct:resolved?roundPerformance(aggregate.wins/resolved*100):null,
+      sampleSufficient:resolved>=FORWARD_VALIDATION_MIN_RESOLVED_SAMPLE,
+      minimumSample:FORWARD_VALIDATION_MIN_RESOLVED_SAMPLE
+    },
+    atEntry:{
+      score:forwardValidationMetric(records,record=>record.score),
+      agreementPct:forwardValidationMetric(matrixRows,record=>record.mtfAnalysis.matrix.agreementPct),
+      directionalAgreementPct:forwardValidationMetric(
+        matrixRows,record=>record.mtfAnalysis.matrix.directionalAgreementPct
+      ),
+      conflictPct:forwardValidationMetric(
+        conflictRows,record=>record.mtfAnalysis.matrix.conflictAtEntry.combined.conflictPct
+      )
+    },
+    postEntry:{
+      qualityPopulation:'terminal official signals with captured tick metrics',
+      mfe:forwardValidationMetric(qualityRows,record=>record.quality.mfe),
+      mae:forwardValidationMetric(qualityRows,record=>record.quality.mae),
+      mfeR:forwardValidationMetric(qualityRows,record=>record.quality.mfeR),
+      maeR:forwardValidationMetric(qualityRows,record=>record.quality.maeR),
+      laterConfirmations:{
+        sampleSize:confirmationCounts.length,
+        mean:confirmationCounts.length?roundPerformance(
+          confirmationCounts.reduce((sum,value)=>sum+value,0)/confirmationCounts.length
+        ):null
+      },
+      newsRisk:{signals:newsRiskSignals,transitions:newsRiskTransitions}
+    }
+  };
+}
+
+function performanceScoreBand(record) {
+  if (record?.score===null||record?.score===undefined||record?.score==='') return 'unavailable';
+  const score=Number(record?.score);
+  if (!Number.isFinite(score)) return 'unavailable';
+  if (score<8) return 'lt8';
+  if (score<10) return '8to10';
+  if (score<12) return '10to12';
+  return 'gte12';
+}
+
+function performanceOutcomeGroup(record) {
+  const status=String(record?.finalStatus||record?.status||'');
+  if (status==='active'||status==='tp1'||!status) return 'open';
+  return ['tp2','sl','expired','closed'].includes(status)?status:'other';
+}
+
+function forwardValidationGroups(records,definitions,selectKey) {
+  return definitions.map(definition=>({
+    key:definition.key,label:definition.label,
+    ...forwardValidationGroup(records.filter(record=>selectKey(record)===definition.key))
+  }));
+}
+
+function buildForwardValidationDashboard(records) {
+  const scoreBands=[
+    {key:'lt8',label:'Score < 8'},
+    {key:'8to10',label:'Score 8–<10'},
+    {key:'10to12',label:'Score 10–<12'},
+    {key:'gte12',label:'Score ≥ 12'},
+    {key:'unavailable',label:'Score unavailable'}
+  ];
+  const outcomes=[
+    {key:'open',label:'Open (active/tp1)'},{key:'tp2',label:'TP2 / Win'},
+    {key:'sl',label:'SL / Loss'},{key:'expired',label:'Expired — neutral'},
+    {key:'closed',label:'Closed'},{key:'other',label:'Other'}
+  ];
+  return {
+    schema:1,source:'production-official-signals',measurementOnly:true,
+    lookAheadPolicy:{
+      atEntry:['signal fields','score','MTF Direction Matrix-at-Entry','Indicator / MTF Conflict-at-Entry'],
+      postEntry:['lifecycle outcome','later MTF confirmations','News Risk transitions','Signal Quality','MFE/MAE'],
+      postEntryUsedAsEntryData:false
+    },
+    samplePolicy:{
+      winRateMinimumResolved:FORWARD_VALIDATION_MIN_RESOLVED_SAMPLE,
+      analysisMinimum:FORWARD_VALIDATION_MIN_ANALYSIS_SAMPLE
+    },
+    overall:forwardValidationGroup(records),
+    byTimeframe:forwardValidationGroups(
+      records,GOLD_EXPOSURE_TIMEFRAMES.map(tf=>({key:tf,label:tf})),record=>record.timeframe
+    ),
+    bySide:forwardValidationGroups(
+      records,[{key:'buy',label:'BUY'},{key:'sell',label:'SELL'}],record=>record.direction
+    ),
+    byScoreBand:forwardValidationGroups(records,scoreBands,performanceScoreBand),
+    byFinalStatus:forwardValidationGroups(records,outcomes,performanceOutcomeGroup)
+  };
+}
+
+function attachPerformanceRecordViews(record) {
+  const transitions=record.newsRisk?.postEntry?.transitions||[];
+  const atEntryRisk=transitions.find(item=>
+    item.transition!=='ended'&&Number(item.eventAt)<=Number(record.createdAt)&&
+    Number(item.risk?.windowStartAt)<=Number(record.createdAt)&&
+    Number(item.risk?.windowEndAt)>=Number(record.createdAt)
+  )||null;
+  const postEntryTransitions=transitions.filter(item=>Number(item.eventAt)>Number(record.createdAt));
+  record.newsRisk={
+    available:Boolean(transitions.length),
+    atEntry:atEntryRisk,
+    postEntry:{
+      transitions:postEntryTransitions,
+      windowCount:new Set(postEntryTransitions.map(item=>item.windowId).filter(Boolean)).size,
+      transitionCount:postEntryTransitions.length
+    }
+  };
+  record.atEntry={
+    signalId:record.signalId,timeframe:record.timeframe,side:record.direction,
+    createdAt:record.createdAt,entry:record.entry,tp1:record.tp1,tp2:record.tp2,sl:record.sl,
+    confidence:record.confidence,score:record.score,
+    mtfDirectionMatrix:record.mtfAnalysis?.matrix||null,
+    indicatorMtfConflict:record.mtfAnalysis?.matrix?.conflictAtEntry||null,
+    newsRisk:record.newsRisk.atEntry
+  };
+  record.postEntry={
+    lifecycle:{
+      status:record.status,finalStatus:record.finalStatus,closedAt:record.closedAt,
+      resultR:record.resultR,events:record.events||[]
+    },
+    signalQuality:record.quality||null,
+    laterMtfConfirmations:record.mtfAnalysis?.laterConfirmations||{confirmations:[],summary:{count:0}},
+    newsRisk:record.newsRisk.postEntry
+  };
+  return record;
 }
 
 function performancePeriodStarts(now=Date.now()) {
@@ -2095,7 +2406,8 @@ function buildPerformanceSummary(records,now=Date.now()) {
 function emptyProductionPerformance() {
   return {
     ok:true,source:'production-official-signals',simulation:false,storage:'D1',
-    summary:buildPerformanceSummary([]),records:[],nextCursor:null
+    summary:buildPerformanceSummary([]),dashboard:buildForwardValidationDashboard([]),
+    records:[],nextCursor:null
   };
 }
 
@@ -2113,6 +2425,7 @@ function makePerformanceCursor(record) {
 }
 
 async function readProductionPerformance(env,searchParams=new URLSearchParams()) {
+  await ensurePerformanceSchema(env);
   const conditions=["source='production'"];
   const values=[];
   const add=(condition,value)=>{values.push(value);conditions.push(condition.replace('?',`?${values.length}`));};
@@ -2128,7 +2441,7 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
     add('direction=?',direction);
   }
   if (status) {
-    if (!['active','tp1','tp2','sl','expired'].includes(status)) throw new Error('bad_performance_query');
+    if (!['active','tp1','tp2','sl','expired','closed'].includes(status)) throw new Error('bad_performance_query');
     add('status=?',status);
   }
   for (const [name,column,operator] of [['from','created_at','>='],['to','created_at','<=']]) {
@@ -2147,7 +2460,11 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
     (SELECT matrix_json FROM production_mtf_analysis analysis
       WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_matrix_json,
     (SELECT confirmations_json FROM production_mtf_analysis analysis
-      WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_confirmations_json
+      WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_confirmations_json,
+    (SELECT COUNT(DISTINCT window_id) FROM production_signal_news_risk risk
+      WHERE risk.primary_signal_id=production_signals.signal_id) AS news_risk_window_count,
+    (SELECT COUNT(*) FROM production_signal_news_risk risk
+      WHERE risk.primary_signal_id=production_signals.signal_id) AS news_risk_transition_count
     FROM production_signals`;
   const summaryRows=(await env.GSX_DB.prepare(`${select} WHERE ${where} ORDER BY created_at,signal_id`)
     .bind(...values).all()).results||[];
@@ -2188,10 +2505,34 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
       bySignal.set(String(event.signal_id),list);
     }
     for (const record of records) record.events=bySignal.get(record.signalId)||[];
+
+    const riskRows=(await env.GSX_DB.prepare(`
+      SELECT event_id,primary_signal_id,window_id,transition,event_at,risk_json,recorded_at
+      FROM production_signal_news_risk WHERE primary_signal_id IN (${placeholders})
+      ORDER BY event_at,event_id
+    `).bind(...records.map(record=>record.signalId)).all()).results||[];
+    const risksBySignal=new Map();
+    for (const row of riskRows) {
+      const signalId=String(row.primary_signal_id),list=risksBySignal.get(signalId)||[];
+      list.push({
+        eventId:String(row.event_id),windowId:String(row.window_id),
+        transition:String(row.transition),eventAt:Number(row.event_at),
+        risk:safeJsonParse(row.risk_json,{}),recordedAt:Number(row.recorded_at)
+      });
+      risksBySignal.set(signalId,list);
+    }
+    for (const record of records) {
+      const transitions=risksBySignal.get(record.signalId)||[];
+      record.newsRisk={
+        available:Boolean(transitions.length),atEntry:null,
+        postEntry:{transitions,windowCount:0,transitionCount:transitions.length}
+      };
+      attachPerformanceRecordViews(record);
+    }
   }
   return {
     ok:true,source:'production-official-signals',simulation:false,storage:'D1',
-    summary:buildPerformanceSummary(allRecords),records,
+    summary:buildPerformanceSummary(allRecords),dashboard:buildForwardValidationDashboard(allRecords),records,
     nextCursor:hasMore&&records.length?makePerformanceCursor(records.at(-1)):null
   };
 }
@@ -3742,6 +4083,8 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_quality_updated ON production_signal_quality(updated_at DESC,primary_signal_id);');
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_mtf_analysis (primary_signal_id TEXT PRIMARY KEY, matrix_json TEXT NOT NULL, confirmations_json TEXT NOT NULL DEFAULT \'{"confirmations":[],"summary":{"count":0}}\', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_mtf_analysis_updated ON production_mtf_analysis(updated_at DESC,primary_signal_id);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_news_risk (event_id TEXT PRIMARY KEY, primary_signal_id TEXT NOT NULL, window_id TEXT NOT NULL, transition TEXT NOT NULL CHECK (transition IN ('started','changed','ended')), event_at INTEGER NOT NULL, risk_json TEXT NOT NULL, recorded_at INTEGER NOT NULL, UNIQUE(primary_signal_id,window_id,transition), FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_news_risk_signal_time ON production_signal_news_risk(primary_signal_id,event_at,event_id);');
 }
 
 async function ensureNewsCalendarSchema(env) {
@@ -3849,9 +4192,10 @@ export {
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   isFreshSignalQuote,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
-  readProductionPerformance,buildPerformanceSummary,signalResultR,
+  readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
+  recordProductionNewsRiskEvent,recordProductionNewsRiskSafely,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
-  buildMtfDirectionMatrix,buildMtfConfirmationAnalysis,
+  buildMtfDirectionMatrix,buildIndicatorMtfConflictAtEntry,buildMtfConfirmationAnalysis,
   collectMtfDirectionAnalysis,collectMtfDirectionAnalysisSafely,
   ensureNewsCalendarSchema,getOfficialCalendar,mergeSignalRiskContext,
   maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,

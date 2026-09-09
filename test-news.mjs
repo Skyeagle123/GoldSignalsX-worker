@@ -38,9 +38,10 @@ const {
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
-  readProductionPerformance,buildPerformanceSummary,signalResultR,
+  readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
+  recordProductionNewsRiskEvent,recordProductionNewsRiskSafely,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
-  buildMtfDirectionMatrix,buildMtfConfirmationAnalysis,
+  buildMtfDirectionMatrix,buildIndicatorMtfConflictAtEntry,buildMtfConfirmationAnalysis,
   collectMtfDirectionAnalysis,collectMtfDirectionAnalysisSafely,
   ensureNewsCalendarSchema,mergeSignalRiskContext,maybeNotifyCalendarEvents,
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
@@ -1297,6 +1298,43 @@ await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
   closedAt:expiring.createdAt+60_000,lastPrice:105
 },'expired');
 
+const performanceNewsRisk={
+  active:true,status:'active',level:'high',windowId:'forward-risk-window',
+  windowStartAt:performanceBase+20_000,windowEndAt:performanceBase+5*60_000,
+  events:[{id:'calendar:risk',name:'High-impact release',impact:'high'}],
+  activatedAt:performanceBase+30_000,updatedAt:performanceBase+30_000
+};
+const officialEventsBeforeNewsRisk=performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signal_events'
+).get().count;
+await Promise.all([
+  recordProductionNewsRiskEvent(
+    {GSX_DB:performanceDb},winner,performanceNewsRisk,'started',performanceBase+30_000
+  ),
+  recordProductionNewsRiskEvent(
+    {GSX_DB:performanceDb},winner,performanceNewsRisk,'started',performanceBase+30_000
+  )
+]);
+await recordProductionNewsRiskEvent(
+  {GSX_DB:performanceDb},winner,
+  {...performanceNewsRisk,active:false,status:'ended',endedAt:performanceBase+5*60_000},
+  'ended',performanceBase+5*60_000
+);
+assert.equal(performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signal_news_risk WHERE primary_signal_id=?'
+).get(winner.id).count,2,'News Risk retry must keep one transition per window and transition type');
+assert.equal(performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signals'
+).get().count,4,'News Risk measurement must not create an official trade');
+assert.equal(performanceDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signal_events'
+).get().count,officialEventsBeforeNewsRisk,
+  'News Risk measurement must not create a lifecycle event or Confirmation');
+assert.equal((await recordProductionNewsRiskEvent(
+  {GSX_DB:performanceDb},{...winner,id:'5m:missing-primary'},performanceNewsRisk,
+  'started',performanceBase+30_000
+)).recorded,false,'News Risk storage must not create a missing Primary Signal record');
+
 assert.equal(signalResultR(winner,'tp2',122),2.1);
 assert.equal(signalResultR(winner,'sl',89),-1);
 assert.equal(signalResultR(expiring,'expired',105),0.5);
@@ -1319,6 +1357,21 @@ assert.equal(performance.summary.bestWinStreak,1);
 assert.equal(performance.summary.worstLossStreak,2);
 assert.equal(performance.summary.byTimeframe['15m'].losses,2);
 assert.equal(performance.summary.byDirection.buy.wins,1);
+assert.equal(performance.dashboard.source,'production-official-signals');
+assert.equal(performance.dashboard.measurementOnly,true);
+assert.equal(performance.dashboard.lookAheadPolicy.postEntryUsedAsEntryData,false);
+assert.deepEqual(performance.dashboard.overall.counts,{
+  signals:4,open:0,wins:1,losses:2,expired:1,closed:0,resolved:3
+});
+assert.equal(performance.dashboard.overall.winRate.denominator,3,
+  'Forward win rate denominator must exclude Expired');
+assert.equal(performance.dashboard.overall.winRate.valuePct,33.333333);
+assert.equal(performance.dashboard.overall.winRate.sampleSufficient,false,
+  'small resolved samples must be explicitly marked insufficient');
+assert.equal(performance.dashboard.byScoreBand.find(group=>group.key==='8to10').counts.signals,4);
+assert.equal(performance.dashboard.byFinalStatus.find(group=>group.key==='expired').counts.expired,1);
+assert.equal(performance.dashboard.overall.postEntry.newsRisk.signals,1);
+assert.equal(performance.dashboard.overall.postEntry.newsRisk.transitions,2);
 
 const winnerRecord=(await readProductionPerformance(
   {GSX_DB:performanceDb},new URLSearchParams('tf=5m&limit=10')
@@ -1327,6 +1380,12 @@ assert.deepEqual(winnerRecord.events.map(event=>event.type),['created','tp1','tp
 assert.equal(winnerRecord.finalStatus,'tp2','a later conflicting SL must not replace the first terminal event');
 assert.equal(winnerRecord.tp1At,performanceBase+60_000,'a delayed duplicate TP1 must not rewrite the first event time');
 assert.equal(winnerRecord.score,8.75);
+assert.equal(winnerRecord.atEntry.signalId,winner.id);
+assert.equal(winnerRecord.atEntry.entry,winner.entry);
+assert.equal(winnerRecord.atEntry.newsRisk,null,
+  'a News Risk window detected after createdAt must not be presented as at-entry information');
+assert.equal(winnerRecord.postEntry.newsRisk.windowCount,1);
+assert.deepEqual(winnerRecord.postEntry.newsRisk.transitions.map(item=>item.transition),['started','ended']);
 
 const duplicateEventCount=performanceDb.database.prepare(
   'SELECT COUNT(*) AS count FROM production_signal_events WHERE signal_id=?'
@@ -1400,7 +1459,14 @@ const mtfMatrixSignal={
 const mtfEvaluations={
   '1m':{bull:8,bear:2,score:8,evaluatedAt:qualityBase},
   '5m':{bull:7,bear:3,score:7,evaluatedAt:qualityBase},
-  '15m':{bull:9,bear:2,score:9,evaluatedAt:qualityBase},
+  '15m':{
+    bull:9,bear:2,score:9,evaluatedAt:qualityBase,
+    reasons:[
+      'EMA تؤكد اتجاهاً صاعداً','زخم MACD موجب','+DI يتفوّق مع ADX 25.0',
+      'RSI متطرف','Bullish Engulfing: ابتلاع شرائي',
+      'إغلاق الشمعة يؤكد ضغطاً شرائياً'
+    ]
+  },
   '30m':{bull:5,bear:5,score:5,evaluatedAt:qualityBase},
   '60m':{bull:6,bear:7,score:7,evaluatedAt:qualityBase},
   '240m':{bull:8,bear:1,score:8,evaluatedAt:qualityBase},
@@ -1427,6 +1493,29 @@ assert.equal(mtfMatrix.frames['60m'].usedByPrimaryMtf,true);
 assert.equal(mtfMatrix.frames['240m'].direction,'bullish');
 assert.equal(mtfMatrix.frames['1d'].direction,'unavailable',
   'a stale evaluation must not be represented as the at-entry direction');
+assert.equal(mtfMatrix.conflictAtEntry.measurementOnly,true);
+assert.equal(mtfMatrix.conflictAtEntry.decisionUse,false);
+assert.equal(mtfMatrix.conflictAtEntry.immutable,true);
+assert.equal(mtfMatrix.conflictAtEntry.laterConfirmationsIncluded,false);
+assert.equal(mtfMatrix.conflictAtEntry.historicalReconstruction,false);
+assert.deepEqual(mtfMatrix.conflictAtEntry.indicators.summary,{
+  agreeing:5,opposing:0,neutral:1,unavailable:2,directional:5,considered:8,
+  conflictPct:0,denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
+});
+assert.deepEqual(mtfMatrix.conflictAtEntry.mtf.summary,{
+  agreeing:3,opposing:1,neutral:1,unavailable:1,directional:4,considered:6,
+  conflictPct:25,denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
+});
+assert.equal(mtfMatrix.conflictAtEntry.combined.conflictPct,11.111111);
+assert.equal(mtfMatrix.conflictAtEntry.evaluationScoreConflict.conflictPct,18.181818);
+assert.equal(mtfMatrix.conflictAtEntry.indicators.states.stochastic.status,'unavailable');
+assert.equal(mtfMatrix.conflictAtEntry.indicators.states.bollingerBands.status,'unavailable');
+const unavailableConflict=buildIndicatorMtfConflictAtEntry(
+  mtfMatrixSignal,{'15m':{...mtfEvaluations['15m'],evaluatedAt:qualityBase+1}},mtfMatrix
+);
+assert.equal(unavailableConflict.indicators.summary.unavailable,8,
+  'a later evaluation must not be reconstructed as indicator data at entry');
+assert.equal(unavailableConflict.evaluationScoreConflict.status,'unavailable');
 
 const firstMtfConfirmation={
   confirmationSignalId:'60m:quality:confirmation',primarySignalId:collectedSignal.id,
@@ -1501,6 +1590,8 @@ assert.equal(qualityDb.database.prepare(
   'SELECT matrix_json FROM production_mtf_analysis WHERE primary_signal_id=?'
 ).get(collectedSignal.id).matrix_json,storedEntryMatrix,
   'later evaluations must not rewrite the immutable at-entry matrix');
+assert.equal(JSON.parse(storedEntryMatrix).conflictAtEntry.combined.conflictPct,11.111111,
+  'the conflict-at-entry snapshot must remain inside the immutable matrix');
 assert.equal(qualityDb.database.prepare(
   'SELECT updated_at FROM production_mtf_analysis WHERE primary_signal_id=?'
 ).get(collectedSignal.id).updated_at,storedMtfUpdatedAt,
@@ -1519,6 +1610,13 @@ assert.equal(mtfCollectedRecord.mtfAnalysis.laterConfirmations.summary.count,2);
 assert.equal(mtfCollectedRecord.mtfAnalysis.linkedQuality.available,true);
 assert.equal(mtfCollectedRecord.mtfAnalysis.linkedQuality.primarySignalId,collectedSignal.id);
 assert.equal(mtfCollectedRecord.mtfAnalysis.outcome.finalStatus,null);
+assert.equal(mtfCollectedRecord.atEntry.mtfDirectionMatrix.primarySignalId,collectedSignal.id);
+assert.equal(mtfCollectedRecord.atEntry.indicatorMtfConflict.primarySignalId,collectedSignal.id);
+assert.equal(mtfCollectedRecord.atEntry.indicatorMtfConflict.combined.conflictPct,11.111111);
+assert.equal(mtfCollectedRecord.postEntry.laterMtfConfirmations.summary.count,2);
+assert.equal(mtfCollectedRecord.postEntry.signalQuality.primarySignalId,collectedSignal.id);
+assert.equal('signalQuality' in mtfCollectedRecord.atEntry,false,
+  'post-entry MFE/MAE must never be exposed inside the at-entry snapshot');
 const mtfPerformanceResponse=await worker.default.fetch(
   new Request('https://example.com/performance?limit=10'),
   {...mtfAnalysisEnv,ALLOW_ORIGINS:'["*"]'},{}
@@ -1538,6 +1636,11 @@ assert.equal(completedMtfRecord.mtfAnalysis.outcome.finalStatus,'tp2');
 assert.equal(completedMtfRecord.mtfAnalysis.outcome.resultR,2.1);
 assert.equal(completedMtfRecord.mtfAnalysis.linkedQuality.primarySignalId,collectedSignal.id,
   'the at-entry matrix, forward quality metrics, and final outcome must share one primarySignalId');
+const conflictDashboard=buildForwardValidationDashboard([completedMtfRecord]);
+assert.equal(conflictDashboard.overall.atEntry.conflictPct.sampleSize,1);
+assert.equal(conflictDashboard.overall.atEntry.conflictPct.mean,11.111111);
+assert.equal(conflictDashboard.overall.atEntry.conflictPct.sampleSufficient,false);
+assert.equal(conflictDashboard.lookAheadPolicy.postEntryUsedAsEntryData,false);
 assert.equal((await collectMtfDirectionAnalysisSafely({})).ok,false);
 
 const performanceResponse=await worker.default.fetch(new Request('https://example.com/performance?limit=2'),{
@@ -1552,6 +1655,18 @@ assert.equal(performancePayload.storage,'D1');
 const emptySummary=buildPerformanceSummary([]);
 assert.equal(emptySummary.signals,0);
 assert.equal(emptySummary.maxDrawdownR,0);
+const emptyDashboard=buildForwardValidationDashboard([]);
+assert.equal(emptyDashboard.overall.winRate.valuePct,null);
+assert.equal(emptyDashboard.overall.winRate.denominator,0);
+assert.equal(emptyDashboard.overall.atEntry.score.mean,null);
+const closedDashboard=buildForwardValidationDashboard([{
+  ...winnerRecord,status:'closed',finalStatus:'closed',resultR:null
+}]);
+assert.equal(closedDashboard.overall.counts.open,0);
+assert.equal(closedDashboard.overall.counts.closed,1);
+assert.equal(closedDashboard.overall.winRate.denominator,0,
+  'Closed must remain outside the TP2/SL win-rate denominator');
+assert.equal((await recordProductionNewsRiskSafely({},winner,performanceNewsRisk,'started')).ok,false);
 
 // Point 8: official calendar parsers, risk policy and context-only news.
 const calendarSettings=normalizeCalendarSettings({});
