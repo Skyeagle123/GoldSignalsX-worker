@@ -36,7 +36,7 @@ const {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
+  pruneTickHistory,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
@@ -46,7 +46,7 @@ const {
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
   linkMtfConfirmation,persistLinkedMtfConfirmation,activeExposureNewsRisk,
   applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
-  syncActiveExposureNewsRisk,readExposureSnapshot
+  syncActiveExposureNewsRisk,readExposureSnapshot,runSignalCycle
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
@@ -195,9 +195,15 @@ const fakeDb = {
 };
 const feed = new GoldFeed(fakeCtx, { GSX_DB:fakeDb });
 await fakeCtx.ready;
+const providerClock=Date.now;
+let providerNow=Date.UTC(2026,7,27,9,0,10,500);
+Date.now=()=>providerNow;
 await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD', price:4600, timestamp:Math.floor(Date.UTC(2026,7,27,9,0,10)/1000) }));
+providerNow=Date.UTC(2026,7,27,9,0,40,500);
 await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD', price:4602, timestamp:Math.floor(Date.UTC(2026,7,27,9,0,40)/1000) }));
+providerNow=Date.UTC(2026,7,27,9,1,1,500);
 await feed.handleProviderMessage(JSON.stringify({ event:'price', symbol:'XAU/USD', price:4601, timestamp:Math.floor(Date.UTC(2026,7,27,9,1,1)/1000) }));
+Date.now=providerClock;
 assert.equal(persistedBars.length, 1, 'one completed minute must be persisted');
 assert.deepEqual(persistedBars[0].slice(1,5), [4600,4602,4600,4602], 'OHLC must be built from the shared live stream');
 
@@ -244,6 +250,43 @@ const ticksBody=await ticksResponse.json();
 assert.ok(ticksBody.count>1,'the read endpoint must return historical ticks');
 assert.equal(ticksBody.retentionMs,60*60_000);
 assert.equal(ticksBody.maxTicks,2400);
+
+const fridayClose=Date.UTC(2026,8,4,20,59,0);
+const weekend=Date.UTC(2026,8,5,12,0,0);
+assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},fridayClose+1_000),true);
+assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},weekend),false,
+  'a Friday close quote must not become a fresh weekend tick');
+const reopenValues=new Map([
+  ['latestQuote',{event:'price',symbol:'XAU/USD',price:4700,ts:fridayClose,receivedAt:fridayClose,source:'twelve-data'}],
+  ['currentBar',{t:Math.floor(fridayClose/60_000)*60_000,o:4700,h:4700,l:4700,c:4700,v:1,provider:'twelve-data'}],
+  ['tickHistory',[{ts:fridayClose,price:4700}]]
+]);
+const reopenStorage={
+  get:async keys=>Array.isArray(keys)
+    ?new Map(keys.filter(key=>reopenValues.has(key)).map(key=>[key,reopenValues.get(key)]))
+    :reopenValues.get(keys),
+  getAlarm:async()=>0,setAlarm:async()=>{},
+  put:async values=>Object.entries(values).forEach(([key,value])=>reopenValues.set(key,value))
+};
+const reopenCtx={storage:reopenStorage,blockConcurrencyWhile(fn){this.ready=fn();},getWebSockets:()=>[]};
+let reopenNow=fridayClose+1_000;
+Date.now=()=>reopenNow;
+const reopenFeed=new GoldFeed(reopenCtx,{});
+await reopenCtx.ready;
+const fridayTickCount=reopenFeed.tickHistory.length;
+reopenNow=weekend;
+await reopenFeed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:4690,timestamp:fridayClose/1000
+}));
+assert.equal(reopenFeed.latestQuote.price,4700,'a stale reconnect replay must not replace the last accepted quote');
+assert.equal(reopenFeed.tickHistory.length,fridayTickCount,'a stale reconnect replay must not enter tick history');
+reopenNow=Date.UTC(2026,8,6,22,1,0);
+await reopenFeed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:4710,timestamp:(reopenNow-1_000)/1000
+}));
+assert.equal(reopenFeed.latestQuote.price,4710,'the first genuinely fresh reopen tick must be accepted');
+assert.equal(reopenFeed.tickHistory.at(-1).ts,reopenNow,'the reopen tick must use its actual receipt time');
+Date.now=providerClock;
 
 const exposureNow=Date.UTC(2026,7,31,14,0,0);
 const exposureSignal=(id,tf,side,conf,status='')=>({
@@ -718,6 +761,25 @@ const tracksPostSignalLivePrice=updateSignalLifecycleAcrossBars(issuedMidMinute,
 ],102.1,fixedNow);
 assert.equal(tracksPostSignalLivePrice.signal.status,'tp2','a live-price touch observed after signal issuance must be counted');
 
+const fridaySignal={
+  ...lifecycleSignal,id:'5m:friday:buy',tf:'5m',createdAt:fridayClose-10*60_000,
+  updatedAt:fridayClose-10*60_000,signalBarTs:fridayClose-10*60_000,
+  lastProcessedBarTs:fridayClose-10*60_000,lastPrice:100
+};
+const staleWeekendQuote={price:98,ts:fridayClose,receivedAt:fridayClose};
+const closureLifecycle=updateSignalLifecycleAcrossBars(
+  fridaySignal,[],isFreshSignalQuote(staleWeekendQuote,weekend)?staleWeekendQuote.price:NaN,weekend
+);
+assert.equal(closureLifecycle.signal.status,'expired','wall-clock expiry must remain deterministic during market closure');
+assert.equal(closureLifecycle.signal.lastPrice,100,'expiry must preserve the last genuinely observed price');
+assert.deepEqual(closureLifecycle.events.map(item=>item.event),['expired']);
+const closureRetry=updateSignalLifecycleAcrossBars(closureLifecycle.signal,[],NaN,weekend+5*60_000);
+assert.deepEqual(closureRetry.events,[],'market-closure retries must not duplicate a terminal lifecycle event');
+const tp1Closure=updateSignalLifecycleAcrossBars(
+  {...fridaySignal,id:'5m:friday:tp1',status:'tp1',tp1Hit:true},[],NaN,weekend
+);
+assert.equal(tp1Closure.signal.status,'expired','TP1-only exposure must expire neutrally without a fresh reopen tick');
+
 const issuedAtMinuteOpen={...lifecycleSignal,createdAt:fixedNow-2*60000,updatedAt:fixedNow-2*60000};
 const exactBoundary=updateSignalLifecycleAcrossBars(issuedAtMinuteOpen,[
   {t:fixedNow-2*60000,o:100,h:101.2,l:99.5,c:101}
@@ -1078,6 +1140,54 @@ const productionSignal=(id,createdAt,overrides={})=>({
   updatedAt:createdAt,lastPrice:100,...overrides
 });
 
+const closureDb=new MemoryD1();
+closureDb.database.exec("CREATE TABLE bars_v2 (tf INTEGER NOT NULL,t INTEGER NOT NULL,o REAL NOT NULL,h REAL NOT NULL,l REAL NOT NULL,c REAL NOT NULL,v REAL NOT NULL DEFAULT 0,provider TEXT NOT NULL DEFAULT 'test',PRIMARY KEY(tf,t));");
+const closureKvValues=new Map();
+const closureKv={
+  get:async (key,type)=>{
+    const value=closureKvValues.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  },
+  put:async (key,value)=>closureKvValues.set(key,value)
+};
+const cronSignal=productionSignal('5m:friday:cron',fridayClose-10*60_000,{
+  signalBarTs:fridayClose-10*60_000,lastProcessedBarTs:fridayClose-10*60_000
+});
+closureKvValues.set('signal:state:5m',JSON.stringify(cronSignal));
+let closureExposure={
+  symbol:'XAUUSD',status:'active',side:'buy',maxPositions:1,
+  primarySignalId:cronSignal.id,primaryTf:'5m',openedAt:cronSignal.createdAt,
+  updatedAt:cronSignal.createdAt,cooldownUntil:0,confirmations:[],blocked:[]
+};
+const closureExposureInputs=[];
+const closureFeed={
+  status:async()=>({latestQuote:{
+    event:'price',price:98,ts:fridayClose,receivedAt:fridayClose,source:'twelve-data'
+  }}),
+  manageGoldExposure:async input=>{
+    closureExposureInputs.push(input);
+    const result=decideGoldExposure(closureExposure,input);
+    closureExposure=result.state;
+    return result;
+  }
+};
+const closureEnv={
+  GSX_DB:closureDb,GSX_KV:closureKv,TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>closureFeed},SIGNAL_ALERTS_ENABLED:'0'
+};
+Date.now=()=>weekend;
+await runSignalCycle(closureEnv,null,normalizeSignalFilters());
+const expiredCronSignal=JSON.parse(closureKvValues.get('signal:state:5m'));
+assert.equal(expiredCronSignal.status,'expired','weekend cron must expire by clock without applying a stale stop price');
+assert.equal(expiredCronSignal.lastPrice,100,'weekend cron must retain the last genuine signal price');
+assert.equal(closureExposureInputs[0].candidates.length,0,'stale market data must not create signals or confirmations');
+assert.equal(closureExposure.status,'flat','Expired must close the official exposure consistently');
+await runSignalCycle(closureEnv,null,normalizeSignalFilters());
+assert.equal(closureExposureInputs[1].candidates.length,0,'a weekend retry must remain signal-free');
+assert.equal([...closureKvValues.keys()].filter(key=>key===`signal:log:${cronSignal.id}:expired`).length,1,
+  'weekend retries must keep one idempotent expiry lifecycle record');
+Date.now=providerClock;
+
 const qualityBase=Date.UTC(2026,8,1,9,0,0);
 const qualitySignal=productionSignal('5m:quality:buy',qualityBase,{
   entry:100,tp1:105,tp2:110,sl:95,closedAt:qualityBase+4*60_000,status:'tp2'
@@ -1145,6 +1255,11 @@ const mergedQualityMetrics=computeSignalQualityMetrics(lateEntrySignal,[
 ],{now:qualityBase+6*60_000,previous:initialQualityMetrics});
 assert.equal(mergedQualityMetrics.mfe,4,'incremental collection must preserve an earlier MFE');
 assert.equal(mergedQualityMetrics.mfeAt,qualityBase+5*60_000);
+const closureQualityMetrics=computeSignalQualityMetrics({
+  ...qualitySignal,status:'expired',closedAt:qualitySignal.closedAt
+},[],{now:qualityBase+10*60_000,previous:qualityMetrics});
+assert.equal(closureQualityMetrics.mfe,qualityMetrics.mfe,'expiry with no new ticks must preserve MFE');
+assert.equal(closureQualityMetrics.mae,qualityMetrics.mae,'expiry with no new ticks must preserve MAE');
 
 const winner=productionSignal('5m:performance:win',performanceBase);
 await Promise.all([
@@ -1195,6 +1310,8 @@ assert.equal(performance.summary.signals,4);
 assert.equal(performance.summary.wins,1);
 assert.equal(performance.summary.losses,2);
 assert.equal(performance.summary.expired,1);
+assert.equal(performance.summary.wins+performance.summary.losses,3,
+  'Expired must remain outside the Win/Loss classification');
 assert.equal(performance.summary.netR,0.6);
 assert.equal(performance.summary.averageR,0.15);
 assert.equal(performance.summary.maxDrawdownR,2);

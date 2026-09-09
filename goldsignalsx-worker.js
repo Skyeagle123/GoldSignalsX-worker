@@ -46,6 +46,9 @@ const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
 const TICK_HISTORY_QUERY_MAX = 2400;
+const SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS = 20 * 1000;
+const SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS = 90 * 1000;
+const SIGNAL_QUOTE_FUTURE_TOLERANCE_MS = 30 * 1000;
 const GOLD_EXPOSURE_KEY = 'exposure:XAUUSD';
 const GOLD_EXPOSURE_COOLDOWN_MS = 30 * 60 * 1000;
 const GOLD_EXPOSURE_MAX_RECORDS = 50;
@@ -100,6 +103,15 @@ function appendTickHistory(history, tick) {
   let first = 0;
   while (first < ticks.length && ticks[first].ts < cutoff) first += 1;
   return ticks.slice(Math.max(first, ticks.length - TICK_HISTORY_MAX));
+}
+
+function isFreshSignalQuote(value, referenceTs = Date.now()) {
+  const now=Number(referenceTs),price=Number(value?.price),providerTs=Number(value?.ts);
+  const receivedAt=Number(value?.receivedAt??providerTs);
+  if (![now,price,providerTs,receivedAt].every(Number.isFinite)) return false;
+  const providerAge=now-providerTs,receiptAge=now-receivedAt;
+  return receiptAge>=0&&receiptAge<=SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS&&
+    providerAge>=-SIGNAL_QUOTE_FUTURE_TOLERANCE_MS&&providerAge<=SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS;
 }
 
 function normalizedExposureSignal(value) {
@@ -736,6 +748,15 @@ export class GoldFeed extends DurableObject {
     if (message.event !== 'price') {
       this.broadcast(message);
       return;
+    }
+
+    const receivedAt=Number(message.receivedAt)||Date.now();
+    if (!isFreshSignalQuote(message,receivedAt)) return;
+    const previousQuote=this.latestQuote;
+    if (previousQuote) {
+      const previousTs=Number(previousQuote.ts),previousPrice=Number(previousQuote.price);
+      if (Number(message.ts)<previousTs||
+          (Number(message.ts)===previousTs&&Number(message.price)===previousPrice)) return;
     }
 
     const minute = bucket(message.ts, 1);
@@ -2230,6 +2251,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   const limits={'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60};
   const frames={};
   const now=Date.now();
+  const liveFresh=isFreshSignalQuote(live,now);
   await Promise.all(SIGNAL_TIMEFRAMES.map(async tf=>{
     const storedBars=await d1Bars(env,tf,limits[tf],{allowLegacy:false})||[];
     const bars=closedBarsOnly(storedBars,tf,now);
@@ -2247,7 +2269,9 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       if (existing.status==='tp1'||existing.tp1Hit) {
         await recordProductionPerformanceSafely(env,existing,'tp1');
       }
-      const lifecycle=updateSignalLifecycleAcrossBars(existing,trackingBars,live.price,now);
+      const lifecycle=updateSignalLifecycleAcrossBars(
+        existing,trackingBars,liveFresh?live.price:NaN,now
+      );
       for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event);
       if (!lifecycle.events.length) {
         await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(lifecycle.signal),{expirationTtl:90*24*60*60});
@@ -2258,6 +2282,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       continue;
     }
     currentSignals[tf]=existing||null;
+    if (!liveFresh) continue;
 
     const frame=frames[tf];
     const mtf=(HIGHER_SIGNAL_TIMEFRAMES[tf]||[]).map(name=>frames[name]).filter(item=>item?.quality?.ok);
@@ -3822,6 +3847,7 @@ export {
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
+  isFreshSignalQuote,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,signalResultR,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
@@ -3831,5 +3857,6 @@ export {
   maybeNotifyCalendarEvents,persistCalendarEvents,persistNewsEvents,
   activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
   syncActiveExposureNewsRisk,readExposureSnapshot,
-  createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation
+  createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation,
+  runSignalCycle
 };
