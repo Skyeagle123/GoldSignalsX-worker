@@ -1815,11 +1815,33 @@ function conflictAtEntrySummary(states,expectedDirection) {
     else counts.opposing+=1;
   }
   const directional=counts.agreeing+counts.opposing;
+  const available=directional+counts.neutral;
   return {
-    ...counts,directional,considered:Object.keys(states||{}).length,
+    ...counts,directional,available,considered:Object.keys(states||{}).length,
     conflictPct:directional?roundPerformance(counts.opposing/directional*100):null,
+    nonAgreementPct:available?roundPerformance((counts.opposing+counts.neutral)/available*100):null,
+    hasDirectionalConflict:directional?counts.opposing>0:null,
+    hasMixedState:available?counts.opposing+counts.neutral>0:null,
     denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
   };
+}
+
+function classifyConflictAtEntry(summary) {
+  const value=Number(summary?.conflictPct);
+  if (!Number.isFinite(value)||!Number(summary?.directional)) return 'unavailable';
+  if (!Number(summary?.opposing)) return 'none';
+  if (value<25) return 'low';
+  if (value<50) return 'medium';
+  return 'high';
+}
+
+function conflictAtEntrySource(indicators,mtf,key='opposing') {
+  const indicatorConflict=Number(indicators?.[key])>0;
+  const mtfConflict=Number(mtf?.[key])>0;
+  if (indicatorConflict&&mtfConflict) return 'both';
+  if (indicatorConflict) return 'indicators';
+  if (mtfConflict) return 'mtf';
+  return Number(indicators?.directional)+Number(mtf?.directional)>0?'none':'unavailable';
 }
 
 function buildIndicatorMtfConflictAtEntry(signal,evaluations,matrix) {
@@ -1839,17 +1861,45 @@ function buildIndicatorMtfConflictAtEntry(signal,evaluations,matrix) {
   const supporting=signal?.side==='buy'?bull:bear;
   const opposing=signal?.side==='buy'?bear:bull;
   const scoreDenominator=supporting+opposing;
+  const indicatorSummary=conflictAtEntrySummary(indicators,expectedDirection);
+  const mtfSummary=conflictAtEntrySummary(mtf,expectedDirection);
+  const combined=conflictAtEntrySummary({...indicators,...Object.fromEntries(
+    Object.entries(mtf).map(([tf,state])=>[`mtf:${tf}`,state])
+  )},expectedDirection);
   return {
-    schema:1,measurementOnly:true,decisionUse:false,immutable:true,
+    schema:2,measurementOnly:true,decisionUse:false,immutable:true,
     primarySignalId:String(signal?.id||''),primaryTimeframe,signalSide:String(signal?.side||''),
     signalScore:Number.isFinite(Number(signal?.score))?Number(signal.score):null,
+    entry:Number.isFinite(Number(signal?.entry))?Number(signal.entry):null,
+    tp1:Number.isFinite(Number(signal?.tp1))?Number(signal.tp1):null,
+    tp2:Number.isFinite(Number(signal?.tp2))?Number(signal.tp2):null,
+    sl:Number.isFinite(Number(signal?.sl))?Number(signal.sl):null,
     createdAt,source:'same-created-at evaluation snapshot',
     laterConfirmationsIncluded:false,historicalReconstruction:false,
-    indicators:{states:indicators,summary:conflictAtEntrySummary(indicators,expectedDirection)},
-    mtf:{states:mtf,summary:conflictAtEntrySummary(mtf,expectedDirection)},
-    combined:conflictAtEntrySummary({...indicators,...Object.fromEntries(
-      Object.entries(mtf).map(([tf,state])=>[`mtf:${tf}`,state])
-    )},expectedDirection),
+    mtfAtEntry:signal?.mtfAtEntry||null,
+    timeframeDirections:Object.fromEntries(Object.entries(matrix?.frames||{}).map(([tf,frame])=>[
+      tf,{
+        direction:String(frame?.direction||'unavailable'),
+        status:frame?.direction==='unavailable'?'unavailable':'available',
+        evaluatedAt:frame?.evaluatedAt!=null&&Number.isFinite(Number(frame.evaluatedAt))
+          ?Number(frame.evaluatedAt):null,
+        primary:Boolean(frame?.primary),usedByPrimaryMtf:Boolean(frame?.usedByPrimaryMtf)
+      }
+    ])),
+    indicators:{states:indicators,summary:indicatorSummary},
+    mtf:{states:mtf,summary:mtfSummary},
+    combined,
+    hasConflict:combined.hasDirectionalConflict,
+    hasMixedState:combined.hasMixedState,
+    level:classifyConflictAtEntry(combined),
+    sourceType:conflictAtEntrySource(indicatorSummary,mtfSummary),
+    neutralSourceType:conflictAtEntrySource(indicatorSummary,mtfSummary,'neutral'),
+    definition:{
+      conflictPct:'opposing / (agreeing + opposing)',
+      nonAgreementPct:'(opposing + neutral) / (agreeing + opposing + neutral)',
+      bands:{none:'0%',low:'>0% and <25%',medium:'25% to <50%',high:'>=50%'},
+      neutralAffectsConflictPct:false,unavailableAffectsDenominator:false
+    },
     evaluationScoreConflict:Number.isFinite(supporting)&&Number.isFinite(opposing)&&scoreDenominator>0?{
       status:'available',supportingScore:supporting,opposingScore:opposing,
       conflictPct:roundPerformance(opposing/scoreDenominator*100),
@@ -2224,6 +2274,32 @@ function forwardValidationMetric(records,readValue) {
   };
 }
 
+function forwardValidationBooleanPct(records,readValue) {
+  return forwardValidationMetric(records,record=>{
+    const value=readValue(record);
+    return typeof value==='boolean'?(value?100:0):null;
+  });
+}
+
+function performanceConflictSnapshot(record) {
+  const snapshot=record?.mtfAnalysis?.matrix?.conflictAtEntry;
+  return snapshot?.measurementOnly===true?snapshot:null;
+}
+
+function performanceConflictLevel(record) {
+  const snapshot=performanceConflictSnapshot(record);
+  if (!snapshot) return 'unavailable';
+  return ['none','low','medium','high'].includes(snapshot.level)
+    ?snapshot.level:classifyConflictAtEntry(snapshot.combined);
+}
+
+function performanceConflictSource(record) {
+  const snapshot=performanceConflictSnapshot(record);
+  if (!snapshot) return 'unavailable';
+  if (['none','indicators','mtf','both'].includes(snapshot.sourceType)) return snapshot.sourceType;
+  return conflictAtEntrySource(snapshot.indicators?.summary,snapshot.mtf?.summary);
+}
+
 function forwardValidationGroup(records) {
   const aggregate=aggregatePerformance(records);
   const resolved=aggregate.wins+aggregate.losses;
@@ -2271,6 +2347,21 @@ function forwardValidationGroup(records) {
       mae:forwardValidationMetric(qualityRows,record=>record.quality.mae),
       mfeR:forwardValidationMetric(qualityRows,record=>record.quality.mfeR),
       maeR:forwardValidationMetric(qualityRows,record=>record.quality.maeR),
+      entryOpportunityPct:forwardValidationBooleanPct(
+        qualityRows,record=>record.quality.entryOpportunity?.available
+      ),
+      lateEntryPct:forwardValidationBooleanPct(qualityRows,record=>
+        typeof record.quality.entryOpportunity?.available==='boolean'
+          ?Boolean(record.quality.entryOpportunity?.late):null
+      ),
+      timeToEntryOpportunityMs:forwardValidationMetric(
+        qualityRows,record=>record.quality.entryOpportunity?.timeMs
+      ),
+      timeToMfeMs:forwardValidationMetric(qualityRows,record=>record.quality.timeToMfeMs),
+      timeToMaeMs:forwardValidationMetric(qualityRows,record=>record.quality.timeToMaeMs),
+      timeToTp1Ms:forwardValidationMetric(qualityRows,record=>record.quality.timeToTp1Ms),
+      timeToTp2Ms:forwardValidationMetric(qualityRows,record=>record.quality.timeToTp2Ms),
+      timeToSlMs:forwardValidationMetric(qualityRows,record=>record.quality.timeToSlMs),
       laterConfirmations:{
         sampleSize:confirmationCounts.length,
         mean:confirmationCounts.length?roundPerformance(
@@ -2318,8 +2409,22 @@ function buildForwardValidationDashboard(records) {
     {key:'sl',label:'SL / Loss'},{key:'expired',label:'Expired — neutral'},
     {key:'closed',label:'Closed'},{key:'other',label:'Other'}
   ];
+  const conflictLevels=[
+    {key:'none',label:'Conflict none (0%)'},
+    {key:'low',label:'Conflict low (>0–<25%)'},
+    {key:'medium',label:'Conflict medium (25–<50%)'},
+    {key:'high',label:'Conflict high (≥50%)'},
+    {key:'unavailable',label:'Conflict unavailable'}
+  ];
+  const conflictSources=[
+    {key:'none',label:'No directional conflict'},
+    {key:'indicators',label:'Indicator conflict'},
+    {key:'mtf',label:'MTF conflict'},
+    {key:'both',label:'Indicator + MTF conflict'},
+    {key:'unavailable',label:'Conflict source unavailable'}
+  ];
   return {
-    schema:1,source:'production-official-signals',measurementOnly:true,
+    schema:2,source:'production-official-signals',measurementOnly:true,
     lookAheadPolicy:{
       atEntry:['signal fields','score','MTF Direction Matrix-at-Entry','Indicator / MTF Conflict-at-Entry'],
       postEntry:['lifecycle outcome','later MTF confirmations','News Risk transitions','Signal Quality','MFE/MAE'],
@@ -2337,7 +2442,9 @@ function buildForwardValidationDashboard(records) {
       records,[{key:'buy',label:'BUY'},{key:'sell',label:'SELL'}],record=>record.direction
     ),
     byScoreBand:forwardValidationGroups(records,scoreBands,performanceScoreBand),
-    byFinalStatus:forwardValidationGroups(records,outcomes,performanceOutcomeGroup)
+    byFinalStatus:forwardValidationGroups(records,outcomes,performanceOutcomeGroup),
+    byConflictLevel:forwardValidationGroups(records,conflictLevels,performanceConflictLevel),
+    byConflictSource:forwardValidationGroups(records,conflictSources,performanceConflictSource)
   };
 }
 

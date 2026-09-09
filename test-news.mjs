@@ -1499,14 +1499,29 @@ assert.equal(mtfMatrix.conflictAtEntry.immutable,true);
 assert.equal(mtfMatrix.conflictAtEntry.laterConfirmationsIncluded,false);
 assert.equal(mtfMatrix.conflictAtEntry.historicalReconstruction,false);
 assert.deepEqual(mtfMatrix.conflictAtEntry.indicators.summary,{
-  agreeing:5,opposing:0,neutral:1,unavailable:2,directional:5,considered:8,
-  conflictPct:0,denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
+  agreeing:5,opposing:0,neutral:1,unavailable:2,directional:5,available:6,considered:8,
+  conflictPct:0,nonAgreementPct:16.666667,hasDirectionalConflict:false,hasMixedState:true,
+  denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
 });
 assert.deepEqual(mtfMatrix.conflictAtEntry.mtf.summary,{
-  agreeing:3,opposing:1,neutral:1,unavailable:1,directional:4,considered:6,
-  conflictPct:25,denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
+  agreeing:3,opposing:1,neutral:1,unavailable:1,directional:4,available:5,considered:6,
+  conflictPct:25,nonAgreementPct:40,hasDirectionalConflict:true,hasMixedState:true,
+  denominator:'agreeing + opposing',neutralExcluded:true,unavailableExcluded:true
 });
 assert.equal(mtfMatrix.conflictAtEntry.combined.conflictPct,11.111111);
+assert.equal(mtfMatrix.conflictAtEntry.combined.nonAgreementPct,27.272727);
+assert.equal(mtfMatrix.conflictAtEntry.level,'low');
+assert.equal(mtfMatrix.conflictAtEntry.sourceType,'mtf');
+assert.equal(mtfMatrix.conflictAtEntry.hasConflict,true);
+assert.equal(mtfMatrix.conflictAtEntry.schema,2);
+assert.equal(mtfMatrix.conflictAtEntry.entry,collectedSignal.entry);
+assert.equal(mtfMatrix.conflictAtEntry.tp1,collectedSignal.tp1);
+assert.equal(mtfMatrix.conflictAtEntry.tp2,collectedSignal.tp2);
+assert.equal(mtfMatrix.conflictAtEntry.sl,collectedSignal.sl);
+assert.equal(mtfMatrix.conflictAtEntry.mtfAtEntry.primaryTf,'15m');
+assert.equal(mtfMatrix.conflictAtEntry.timeframeDirections['15m'].primary,true);
+assert.equal(mtfMatrix.conflictAtEntry.timeframeDirections['1d'].evaluatedAt,qualityBase-1);
+assert.equal(mtfMatrix.conflictAtEntry.timeframeDirections['1d'].status,'unavailable');
 assert.equal(mtfMatrix.conflictAtEntry.evaluationScoreConflict.conflictPct,18.181818);
 assert.equal(mtfMatrix.conflictAtEntry.indicators.states.stochastic.status,'unavailable');
 assert.equal(mtfMatrix.conflictAtEntry.indicators.states.bollingerBands.status,'unavailable');
@@ -1516,6 +1531,30 @@ const unavailableConflict=buildIndicatorMtfConflictAtEntry(
 assert.equal(unavailableConflict.indicators.summary.unavailable,8,
   'a later evaluation must not be reconstructed as indicator data at entry');
 assert.equal(unavailableConflict.evaluationScoreConflict.status,'unavailable');
+
+const mediumConflict=buildIndicatorMtfConflictAtEntry(mtfMatrixSignal,{
+  '15m':{bull:9,bear:2,score:9,evaluatedAt:qualityBase,reasons:['EMA تؤكد اتجاهاً صاعداً']}
+},{frames:{
+  '15m':{direction:'bullish',evaluatedAt:qualityBase,primary:true},
+  '60m':{direction:'bearish',evaluatedAt:qualityBase},
+  '240m':{direction:'bullish',evaluatedAt:qualityBase}
+}});
+assert.equal(mediumConflict.combined.conflictPct,33.333333);
+assert.equal(mediumConflict.level,'medium');
+assert.equal(mediumConflict.sourceType,'mtf');
+const highConflict=buildIndicatorMtfConflictAtEntry(mtfMatrixSignal,{
+  '15m':{
+    bull:9,bear:5,score:9,evaluatedAt:qualityBase,
+    reasons:['EMA تؤكد اتجاهاً صاعداً','زخم MACD سالب']
+  }
+},{frames:{
+  '15m':{direction:'bullish',evaluatedAt:qualityBase,primary:true},
+  '60m':{direction:'bearish',evaluatedAt:qualityBase},
+  '240m':{direction:'neutral',evaluatedAt:qualityBase}
+}});
+assert.equal(highConflict.combined.conflictPct,66.666667);
+assert.equal(highConflict.level,'high');
+assert.equal(highConflict.sourceType,'both');
 
 const firstMtfConfirmation={
   confirmationSignalId:'60m:quality:confirmation',primarySignalId:collectedSignal.id,
@@ -1641,6 +1680,65 @@ assert.equal(conflictDashboard.overall.atEntry.conflictPct.sampleSize,1);
 assert.equal(conflictDashboard.overall.atEntry.conflictPct.mean,11.111111);
 assert.equal(conflictDashboard.overall.atEntry.conflictPct.sampleSufficient,false);
 assert.equal(conflictDashboard.lookAheadPolicy.postEntryUsedAsEntryData,false);
+const conflictValidationRecords=[
+  {
+    signalId:'conflict:low:tp2',timeframe:'15m',direction:'buy',score:11,
+    createdAt:qualityBase,status:'tp2',finalStatus:'tp2',closedAt:qualityBase+120_000,resultR:2.1,
+    mtfAnalysis:{matrix:{
+      measurementOnly:true,agreementPct:75,directionalAgreementPct:80,
+      conflictAtEntry:mtfMatrix.conflictAtEntry
+    },laterConfirmations:{summary:{count:1}}},
+    quality:{
+      measurementOnly:true,mfe:5,mae:1,mfeR:1.5,maeR:.3,
+      entryOpportunity:{available:true,late:false,timeMs:30_000},
+      timeToMfeMs:90_000,timeToMaeMs:60_000,timeToTp1Ms:60_000,timeToTp2Ms:120_000,timeToSlMs:null
+    },newsRisk:{postEntry:{windowCount:0,transitionCount:0}}
+  },
+  {
+    signalId:'conflict:medium:sl',timeframe:'15m',direction:'buy',score:11,
+    createdAt:qualityBase+1,status:'sl',finalStatus:'sl',closedAt:qualityBase+180_000,resultR:-1,
+    mtfAnalysis:{matrix:{
+      measurementOnly:true,agreementPct:50,directionalAgreementPct:50,
+      conflictAtEntry:mediumConflict
+    },laterConfirmations:{summary:{count:2}}},
+    quality:{
+      measurementOnly:true,mfe:1,mae:5,mfeR:.3,maeR:1,
+      entryOpportunity:{available:false,late:true,timeMs:null},
+      timeToMfeMs:60_000,timeToMaeMs:120_000,timeToTp1Ms:null,timeToTp2Ms:null,timeToSlMs:180_000
+    },newsRisk:{postEntry:{windowCount:0,transitionCount:0}}
+  },
+  {
+    signalId:'conflict:high:expired',timeframe:'15m',direction:'buy',score:11,
+    createdAt:qualityBase+2,status:'expired',finalStatus:'expired',closedAt:qualityBase+240_000,resultR:.2,
+    mtfAnalysis:{matrix:{
+      measurementOnly:true,agreementPct:25,directionalAgreementPct:25,
+      conflictAtEntry:highConflict
+    },laterConfirmations:{summary:{count:0}}},
+    quality:{
+      measurementOnly:true,mfe:2,mae:2,mfeR:.6,maeR:.6,
+      entryOpportunity:{available:true,late:false,timeMs:45_000},
+      timeToMfeMs:120_000,timeToMaeMs:180_000,timeToTp1Ms:null,timeToTp2Ms:null,timeToSlMs:null
+    },newsRisk:{postEntry:{windowCount:0,transitionCount:0}}
+  }
+];
+const conflictValidationDashboard=buildForwardValidationDashboard(conflictValidationRecords);
+const lowConflictGroup=conflictValidationDashboard.byConflictLevel.find(group=>group.key==='low');
+const mediumConflictGroup=conflictValidationDashboard.byConflictLevel.find(group=>group.key==='medium');
+const highConflictGroup=conflictValidationDashboard.byConflictLevel.find(group=>group.key==='high');
+assert.equal(lowConflictGroup.counts.wins,1);
+assert.equal(lowConflictGroup.postEntry.timeToTp1Ms.mean,60_000);
+assert.equal(lowConflictGroup.postEntry.timeToTp2Ms.mean,120_000);
+assert.equal(lowConflictGroup.postEntry.entryOpportunityPct.mean,100);
+assert.equal(mediumConflictGroup.counts.losses,1);
+assert.equal(mediumConflictGroup.postEntry.timeToSlMs.mean,180_000);
+assert.equal(mediumConflictGroup.postEntry.entryOpportunityPct.mean,0);
+assert.equal(mediumConflictGroup.postEntry.lateEntryPct.mean,100);
+assert.equal(highConflictGroup.counts.expired,1);
+assert.equal(highConflictGroup.winRate.denominator,0,
+  'Expired conflict samples must remain outside Win/Loss calculations');
+assert.equal(highConflictGroup.postEntry.mfe.mean,2);
+assert.equal(highConflictGroup.postEntry.mae.mean,2);
+assert.equal(conflictValidationDashboard.byConflictSource.find(group=>group.key==='both').counts.expired,1);
 assert.equal((await collectMtfDirectionAnalysisSafely({})).ok,false);
 
 const performanceResponse=await worker.default.fetch(new Request('https://example.com/performance?limit=2'),{
