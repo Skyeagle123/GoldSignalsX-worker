@@ -3951,7 +3951,7 @@ async function maybeNotifyHighImpactNews(env, brief) {
   const key = `news:sent:${id}`;
   if (await env.GSX_KV.get(key)) return;
   const text = [
-    '🚨 خبر مهم للذهب — GoldSignalsX',
+    '🚨 News Alert — خبر مهم للذهب — GoldSignalsX',
     item.titleAr || item.title,
     item.summaryAr || item.reason,
     `التأثير المتوقع: ${newsDirectionArabic(item.direction)} (${item.confidence}%)`,
@@ -3960,7 +3960,7 @@ async function maybeNotifyHighImpactNews(env, brief) {
     `تأكيد من ${new Set(items.map(value=>value.domain)).size} مصدرين مستقلين`,
     `المصدر: ${item.source}`,
     item.url,
-    'تنبيه: الخبر لا يُستخدم وحده كإشارة تداول.'
+    'هذا News Alert وليس Trading Signal.'
   ].join('\n');
   const delivery=await queueTelegramDelivery(
     env,{id:`news:${id}`,tf:'news',createdAt:Number(item.publishedAt)},'news',text,

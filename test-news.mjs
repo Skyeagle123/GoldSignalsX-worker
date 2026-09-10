@@ -2089,6 +2089,39 @@ const upcomingCalendar={ok:true,events:[{...riskEvent,eventAt:calendarTelegramNo
 await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
 await maybeNotifyCalendarEvents(calendarHarness.env,upcomingCalendar,calendarTelegramNow);
 assert.equal(calendarTelegramCalls,1,'stable calendar event IDs must prevent duplicate Telegram alerts');
+const claimsReleaseAt=Date.UTC(2026,8,10,12,30);
+const claimsEvent={
+  ...riskEvent,id:'dol:jobless-claims:request-13',type:'jobless_claims',name:'U.S. Initial Jobless Claims',
+  eventAt:claimsReleaseAt,riskBeforeMinutes:15,riskAfterMinutes:10,actual:null,
+  metadata:{...riskEvent.metadata,actualStatus:'pending-current-release-verification',sourceUpdatedAt:claimsReleaseAt-60_000}
+};
+const claimsHarness=await makeTelegramHarness();
+let claimsTelegramCalls=0;
+globalThis.fetch=async()=>{claimsTelegramCalls+=1;return {ok:true,status:200,json:async()=>({ok:true})};};
+Date.now=()=>claimsReleaseAt-15*60_000-1;
+await maybeNotifyCalendarEvents(claimsHarness.env,{ok:true,events:[claimsEvent]},Date.now());
+assert.equal(claimsTelegramCalls,0,'Jobless Claims must not alert before T-15');
+Date.now=()=>claimsReleaseAt-15*60_000;
+await maybeNotifyCalendarEvents(claimsHarness.env,{ok:true,events:[claimsEvent]},Date.now());
+assert.equal(claimsTelegramCalls,1,'Jobless Claims must alert exactly at T-15');
+Date.now=()=>claimsReleaseAt-5*60_000;
+await maybeNotifyCalendarEvents(claimsHarness.env,{ok:true,events:[claimsEvent]},Date.now());
+assert.equal(claimsTelegramCalls,1,'the T-15 Jobless Claims alert must remain deduplicated at T-5');
+Date.now=()=>claimsReleaseAt;
+await maybeNotifyCalendarEvents(claimsHarness.env,{ok:true,events:[claimsEvent]},Date.now());
+assert.equal(claimsTelegramCalls,2,'Jobless Claims must emit a release status at T0');
+const claimsTelegramRecords=[...new Map(
+  [...claimsHarness.storage.values.values()]
+    .filter(record=>record?.eventId?.includes('dol:jobless-claims:request-13')&&record?.text)
+    .map(record=>[record.eventId,record])
+).values()];
+assert.equal(claimsTelegramRecords.length,2);
+assert.ok(claimsTelegramRecords.every(record=>record.kind==='news'));
+assert.ok(claimsTelegramRecords.every(record=>/News Alert/.test(record.text)&&/ليس Trading Signal/.test(record.text)));
+assert.match(source,/🚨 News Alert — خبر مهم للذهب — GoldSignalsX/,
+  'generic high-impact Telegram news must be explicitly labeled as a News Alert');
+Date.now=()=>calendarTelegramNow;
+globalThis.fetch=async()=>{calendarTelegramCalls+=1;return {ok:true,status:200,json:async()=>({ok:true})};};
 const pendingReleaseEvent={...staleNfp,eventAt:calendarTelegramNow-60_000,riskAfterMinutes:15,
   metadata:{...staleNfp.metadata,releaseTimestamp:calendarTelegramNow-60_000}};
 await maybeNotifyCalendarEvents(calendarHarness.env,{ok:true,events:[pendingReleaseEvent]},calendarTelegramNow);
