@@ -39,6 +39,8 @@ const {
   pruneTickHistory,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
+  ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,
+  recordSignalTelemetry,recordSignalTelemetrySafely,readSignalTelemetry,
   recordProductionNewsRiskEvent,recordProductionNewsRiskSafely,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
   buildMtfDirectionMatrix,buildIndicatorMtfConflictAtEntry,buildMtfConfirmationAnalysis,
@@ -1160,6 +1162,110 @@ class MemoryD1 {
     }
   }
 }
+
+const telemetryDb=new MemoryD1();
+const telemetryNow=Date.UTC(2026,8,10,18,0,0);
+const telemetryEvaluations=new Map([
+  ['5m',{side:'buy',score:8.4,conf:81,lastTs:telemetryNow-300_000,evaluatedAt:telemetryNow,reasons:['official candidate']}],
+  ['15m',{side:'none',score:6.9,lastTs:telemetryNow-900_000,evaluatedAt:telemetryNow,reasons:['النقاط 6.9 أقل من 7.4']}],
+  ['30m',{side:'sell',score:9.1,conf:84,lastTs:telemetryNow-1_800_000,evaluatedAt:telemetryNow,reasons:['confirmation candidate']}],
+  ['60m',{side:'sell',score:8.8,conf:80,lastTs:telemetryNow-3_600_000,evaluatedAt:telemetryNow,reasons:['duplicate candidate']}]
+]);
+const telemetryEvaluationSnapshot=structuredClone([...telemetryEvaluations.entries()]);
+const telemetryCandidates=[
+  {id:'5m:telemetry:buy',tf:'5m',side:'buy',conf:81},
+  {id:'30m:telemetry:sell',tf:'30m',side:'sell',conf:84}
+];
+const telemetryDecisions=[
+  {signalId:'5m:telemetry:buy',tf:'5m',decision:'accepted',primarySignalId:'5m:telemetry:buy'},
+  {signalId:'30m:telemetry:sell',tf:'30m',decision:'confirmation',primarySignalId:'5m:telemetry:buy'}
+];
+const telemetryRows=buildSignalTelemetryRows({
+  evaluations:telemetryEvaluations,candidates:telemetryCandidates,decisions:telemetryDecisions,
+  officialPrimaryIds:new Set(['5m:telemetry:buy']),confirmationIds:new Set(['30m:telemetry:sell'])
+});
+assert.deepEqual([...telemetryEvaluations.entries()],telemetryEvaluationSnapshot,'telemetry must not mutate engine evaluations');
+assert.equal(telemetryRows.length,4);
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').officialPrimary,true);
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').rejected,false);
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').closedBarTs,telemetryNow-300_000);
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').direction,'buy');
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').score,8.4);
+assert.equal(telemetryRows.find(row=>row.timeframe==='5m').confidence,81);
+assert.equal(telemetryRows.find(row=>row.timeframe==='30m').confirmation,true);
+assert.equal(telemetryRows.find(row=>row.timeframe==='30m').rejected,true);
+assert.deepEqual(telemetryRows.find(row=>row.timeframe==='30m').rejectionReasons,['exposure_confirmation_only']);
+assert.deepEqual(telemetryRows.find(row=>row.timeframe==='15m').rejectionReasons,['score_below_threshold']);
+assert.deepEqual(telemetryRows.find(row=>row.timeframe==='60m').rejectionReasons,['duplicate_closed_candle']);
+assert.ok(telemetryRows.every(row=>row.measurementOnly===true&&row.decisionUse===false));
+const telemetryFrameCoverage=buildSignalTelemetryRows({
+  evaluations:new Map(['1m','5m','15m','30m','60m','240m','1d'].map((tf,index)=>[
+    tf,{side:'none',score:0,lastTs:telemetryNow-index-1,evaluatedAt:telemetryNow,reasons:['coverage']}
+  ]))
+});
+assert.deepEqual(telemetryFrameCoverage.map(row=>row.timeframe),['1m','5m','15m','30m','60m','240m','1d']);
+
+await recordSignalTelemetry({GSX_DB:telemetryDb},telemetryRows,telemetryNow);
+await recordSignalTelemetry({GSX_DB:telemetryDb},telemetryRows,telemetryNow);
+assert.equal(telemetryDb.database.prepare('SELECT COUNT(*) AS count FROM signal_evaluation_telemetry').get().count,4,
+  'telemetry retries must be idempotent');
+const telemetrySummary=await readSignalTelemetry(
+  {GSX_DB:telemetryDb},new URLSearchParams('days=1&limit=10'),telemetryNow
+);
+assert.deepEqual(telemetrySummary.summary.overall,{
+  evaluations:4,candidates:2,officialPrimary:1,confirmations:1,rejected:3
+});
+assert.equal(telemetrySummary.summary.byTimeframe['5m'].officialPrimary,1);
+assert.equal(telemetrySummary.summary.byTimeframe['30m'].confirmations,1);
+assert.equal(telemetrySummary.summary.byTimeframe['240m'].evaluations,0);
+assert.equal(telemetrySummary.summary.byTimeframe['1d'].evaluations,0);
+assert.equal(telemetrySummary.summary.rejectionReasons.byTimeframe['15m'].score_below_threshold,1);
+assert.equal(telemetrySummary.summary.rejectionReasons.byTimeframe['60m'].duplicate_closed_candle,1);
+assert.equal(telemetrySummary.measurementOnly,true);
+assert.equal(telemetrySummary.decisionUse,false);
+assert.equal(telemetrySummary.definitions.confidenceGate,false,'confidence must remain telemetry, not an acceptance gate');
+
+const oldTelemetryRow={
+  ...telemetryRows[0],evaluationId:'5m:telemetry:old',evaluatedAt:telemetryNow-31*24*60*60_000
+};
+await recordSignalTelemetry({GSX_DB:telemetryDb},[oldTelemetryRow],oldTelemetryRow.evaluatedAt);
+assert.equal(telemetryDb.database.prepare('SELECT COUNT(*) AS count FROM signal_evaluation_telemetry').get().count,5);
+await recordSignalTelemetry({GSX_DB:telemetryDb},[],telemetryNow);
+assert.equal(telemetryDb.database.prepare('SELECT COUNT(*) AS count FROM signal_evaluation_telemetry').get().count,4,
+  'telemetry older than 30 days must be pruned');
+
+const telemetryEndpoint=await worker.default.fetch(
+  new Request('https://example.com/telemetry?days=1&limit=10'),{GSX_DB:telemetryDb},{}
+);
+assert.equal(telemetryEndpoint.status,200);
+const telemetryEndpointPayload=await telemetryEndpoint.json();
+assert.equal(telemetryEndpointPayload.summary.overall.evaluations,4);
+assert.equal((await worker.default.fetch(
+  new Request('https://example.com/telemetry',{method:'POST'}),{GSX_DB:telemetryDb},{}
+)).status,405,'telemetry endpoint must remain read-only');
+assert.equal((await worker.default.fetch(
+  new Request('https://example.com/telemetry?tf=bad'),{GSX_DB:telemetryDb},{}
+)).status,400);
+
+const engineBeforeTelemetry=computeServerSignal([],{tf:'5m'});
+const telemetryFailure=await recordSignalTelemetrySafely({
+  GSX_DB:{exec:async()=>{throw new Error('D1 telemetry unavailable')}}
+},telemetryRows,telemetryNow);
+const engineAfterTelemetry=computeServerSignal([],{tf:'5m'});
+assert.equal(telemetryFailure.ok,false);
+assert.deepEqual(engineAfterTelemetry,engineBeforeTelemetry,
+  'telemetry storage failure must not change Signal Engine output');
+assert.deepEqual(signalTelemetryRejectionReasons(
+  {side:'none',reasons:['خارج جلسة نيويورك','Pivot غير متوفر']},null,null,{}
+),['ny_filter','pivot_filter']);
+assert.deepEqual(signalTelemetryRejectionReasons(
+  {side:'none',reasons:['official news window']},null,null,
+  {newsBlocked:true,newsReason:'official news window'}
+),['news_risk'],'News Risk must be attributed only when its actual engine reason is present');
+assert.equal(signalTelemetryRejectionReasons(
+  {side:'none',reasons:['نحتاج 40 شمعة على الأقل']},null,null,
+  {newsBlocked:true,newsReason:'official news window'}
+).includes('news_risk'),false,'News Risk must not be inferred from unrelated engine rejections');
 
 const performanceDb=new MemoryD1();
 await ensurePerformanceSchema({GSX_DB:performanceDb});

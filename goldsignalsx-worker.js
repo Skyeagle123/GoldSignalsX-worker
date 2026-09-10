@@ -28,6 +28,7 @@ import {
 //   GET  /calendar            → الرزنامة الاقتصادية الرسمية + نافذة المخاطر
 //   POST /backtest            → محاكاة read-only بمحرك الإشارات الرسمي
 //   GET  /performance         → سجل أداء Production الحقيقي (read-only)
+//   GET  /telemetry           → قياسات توزيع evaluations والرفض (read-only)
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST /notify                  → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
@@ -68,6 +69,10 @@ const PERFORMANCE_SOURCE = 'production';
 const PERFORMANCE_SYMBOL = 'XAUUSD';
 const PERFORMANCE_PAGE_DEFAULT = 50;
 const PERFORMANCE_PAGE_MAX = 100;
+const SIGNAL_TELEMETRY_RETENTION_DAYS = 30;
+const SIGNAL_TELEMETRY_RETENTION_MS = SIGNAL_TELEMETRY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const SIGNAL_TELEMETRY_PAGE_DEFAULT = 50;
+const SIGNAL_TELEMETRY_PAGE_MAX = 100;
 const FORWARD_VALIDATION_MIN_RESOLVED_SAMPLE = 10;
 const FORWARD_VALIDATION_MIN_ANALYSIS_SAMPLE = 3;
 const SIGNAL_QUALITY_WINDOWS_MINUTES = Object.freeze([1,5,15,30,60]);
@@ -1003,6 +1008,21 @@ export default {
           }
           console.error(JSON.stringify({message:'performance read failed',error:message}));
           return json({ok:false,error:'performance_read_failed'},corsHeaders,500);
+        }
+      }
+
+      if (path === '/telemetry') {
+        if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        if (!env.GSX_DB) return json({ok:false,error:'telemetry_storage_unavailable'},corsHeaders,503);
+        try {
+          return jsonNoStore(await readSignalTelemetry(env,url.searchParams),corsHeaders);
+        } catch (error) {
+          const message=String(error?.message||error);
+          if (message==='bad_telemetry_query') {
+            return json({ok:false,error:message},corsHeaders,400);
+          }
+          console.error(JSON.stringify({message:'signal telemetry read failed',error:message}));
+          return json({ok:false,error:'telemetry_read_failed'},corsHeaders,500);
         }
       }
 
@@ -2680,6 +2700,208 @@ async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySign
   return linked;
 }
 
+function signalTelemetryRejectionReasons(evaluation,candidate,decision,context={}) {
+  if (context.officialPrimary) return [];
+  const codes=new Set();
+  const exposureDecision=String(decision?.decision||'');
+  if (candidate) {
+    if (context.confirmation) codes.add('exposure_confirmation_only');
+    else if (exposureDecision==='blocked_opposite') codes.add('exposure_opposite');
+    else if (['blocked_cooldown','informational_cooldown'].includes(exposureDecision)) codes.add('exposure_cooldown');
+    else if (exposureDecision==='blocked_manager_unavailable') codes.add('exposure_manager_unavailable');
+    else if (exposureDecision==='informational') codes.add('informational_timeframe');
+    else if (exposureDecision==='confirmation') codes.add('confirmation_link_failed');
+    else codes.add('exposure_decision_unavailable');
+    return [...codes];
+  }
+
+  if (['buy','sell'].includes(String(evaluation?.side||''))) {
+    codes.add('duplicate_closed_candle');
+    return [...codes];
+  }
+  const reasons=Array.isArray(evaluation?.reasons)?evaluation.reasons.map(String):[];
+  for (const reason of reasons) {
+    if (reason.includes('نحتاج 40')) codes.add('insufficient_bars');
+    if (reason.includes('جودة الشموع')||reason.includes('ATR غير صالح')) codes.add('invalid_data');
+    if (reason.includes('بيانات الشموع قديمة')) codes.add('stale_bars');
+    if (reason.includes('وصول السعر')||reason.includes('توقيت السوق متأخر')) codes.add('stale_quote');
+    if (reason.includes('فرق السعر الحي')) codes.add('price_gap');
+    if (reason.includes('السعر والشموع غير متوافقين')) codes.add('source_mismatch');
+    if (reason.startsWith('النقاط ')) codes.add('score_below_threshold');
+    if (reason.includes('تعارض واضح')) codes.add('score_margin_conflict');
+    if (reason.includes('لا يوجد إغلاق شمعة مؤكِّد')) codes.add('candle_confirmation');
+    if (reason.includes('تأكيد MTF غير كافٍ')) codes.add('mtf_confirmation');
+    if (reason.includes('الأطر الأعلى تعاكس الإشارة')) codes.add('mtf_conflict');
+    if (reason.includes('خارج جلسة نيويورك')) codes.add('ny_filter');
+    if (reason.includes('Pivot غير متوفر')||reason.includes('السعر قريب من ')) codes.add('pivot_filter');
+  }
+  if (context.newsBlocked&&context.newsReason&&reasons.includes(String(context.newsReason))) codes.add('news_risk');
+  if (!codes.size) codes.add('other_engine_gate');
+  return [...codes];
+}
+
+function buildSignalTelemetryRows({evaluations,candidates=[],decisions=[],officialPrimaryIds=[],confirmationIds=[],newsBlocked=false,newsReason=''}={}) {
+  const entries=evaluations instanceof Map?[...evaluations.entries()]:Object.entries(evaluations||{});
+  const candidateByTf=new Map((Array.isArray(candidates)?candidates:[]).map(signal=>[String(signal?.tf||''),signal]));
+  const decisionById=decisions instanceof Map?decisions:new Map(
+    (Array.isArray(decisions)?decisions:[]).map(decision=>[String(decision?.signalId||''),decision])
+  );
+  const officialSet=officialPrimaryIds instanceof Set?officialPrimaryIds:new Set(officialPrimaryIds||[]);
+  const confirmationSet=confirmationIds instanceof Set?confirmationIds:new Set(confirmationIds||[]);
+  return entries.filter(([tf,evaluation])=>SIGNAL_TIMEFRAMES.includes(String(tf))&&evaluation).map(([tf,evaluation])=>{
+    const candidate=candidateByTf.get(String(tf))||null;
+    const decision=candidate?decisionById.get(String(candidate.id||''))||null:null;
+    const evaluatedAt=Number(evaluation.evaluatedAt)||0;
+    const closedBarTs=Number(evaluation.lastTs)||0;
+    const officialPrimary=Boolean(candidate&&officialSet.has(String(candidate.id||'')));
+    const confirmation=Boolean(candidate&&confirmationSet.has(String(candidate.id||'')));
+    const direction=['buy','sell'].includes(String(candidate?.side||evaluation.side||''))
+      ?String(candidate?.side||evaluation.side):'';
+    const score=Number(evaluation.score);
+    const confidence=Number(candidate?.conf??evaluation.conf);
+    return {
+      evaluationId:`${tf}:${evaluatedAt}:${closedBarTs}`,timeframe:String(tf),evaluatedAt,
+      closedBarTs:closedBarTs||null,result:String(evaluation.side||'none'),
+      candidate:Boolean(candidate),direction,score:Number.isFinite(score)?score:null,
+      confidence:Number.isFinite(confidence)?confidence:null,officialPrimary,confirmation,
+      rejected:!officialPrimary,exposureDecision:String(decision?.decision||''),
+      rejectionReasons:signalTelemetryRejectionReasons(evaluation,candidate,decision,{
+        officialPrimary,confirmation,newsBlocked:Boolean(newsBlocked),newsReason:String(newsReason||'')
+      }),
+      engineReasons:Array.isArray(evaluation.reasons)?evaluation.reasons.map(String):[],
+      measurementOnly:true,decisionUse:false
+    };
+  });
+}
+
+async function recordSignalTelemetry(env,rows,now=Date.now()) {
+  if (!env.GSX_DB) return {ok:false,error:'telemetry_storage_unavailable'};
+  await ensureSignalTelemetrySchema(env);
+  const records=(Array.isArray(rows)?rows:[]).filter(row=>
+    row?.evaluationId&&SIGNAL_TIMEFRAMES.includes(String(row.timeframe))&&Number.isFinite(Number(row.evaluatedAt))
+  );
+  if (records.length) {
+    const statements=records.map(row=>env.GSX_DB.prepare(`
+      INSERT INTO signal_evaluation_telemetry(
+        evaluation_id,timeframe,evaluated_at,closed_bar_ts,result,candidate,direction,score,confidence,
+        official_primary,confirmation,rejected,exposure_decision,rejection_reasons_json,engine_reasons_json,recorded_at
+      ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+      ON CONFLICT(evaluation_id) DO UPDATE SET
+        closed_bar_ts=excluded.closed_bar_ts,result=excluded.result,candidate=excluded.candidate,
+        direction=excluded.direction,score=excluded.score,confidence=excluded.confidence,
+        official_primary=excluded.official_primary,confirmation=excluded.confirmation,rejected=excluded.rejected,
+        exposure_decision=excluded.exposure_decision,rejection_reasons_json=excluded.rejection_reasons_json,
+        engine_reasons_json=excluded.engine_reasons_json,recorded_at=excluded.recorded_at
+    `).bind(
+      String(row.evaluationId),String(row.timeframe),Number(row.evaluatedAt),
+      row.closedBarTs==null?null:Number(row.closedBarTs),String(row.result||'none'),row.candidate?1:0,
+      String(row.direction||''),row.score==null?null:Number(row.score),
+      row.confidence==null?null:Number(row.confidence),row.officialPrimary?1:0,row.confirmation?1:0,
+      row.rejected?1:0,String(row.exposureDecision||''),JSON.stringify(row.rejectionReasons||[]),
+      JSON.stringify(row.engineReasons||[]),Number(now)
+    ));
+    await env.GSX_DB.batch(statements);
+  }
+  const cutoff=Number(now)-SIGNAL_TELEMETRY_RETENTION_MS;
+  await env.GSX_DB.prepare('DELETE FROM signal_evaluation_telemetry WHERE evaluated_at<?1').bind(cutoff).run();
+  return {ok:true,recorded:records.length,retentionDays:SIGNAL_TELEMETRY_RETENTION_DAYS};
+}
+
+async function recordSignalTelemetrySafely(env,rows,now=Date.now()) {
+  try {
+    return await recordSignalTelemetry(env,rows,now);
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'signal telemetry recording failed',error:error instanceof Error?error.message:String(error)
+    }));
+    return {ok:false,error:'telemetry_recording_failed'};
+  }
+}
+
+function emptyTelemetryCounter() {
+  return {evaluations:0,candidates:0,officialPrimary:0,confirmations:0,rejected:0};
+}
+
+async function readSignalTelemetry(env,searchParams=new URLSearchParams(),now=Date.now()) {
+  if (!env.GSX_DB) throw new Error('telemetry_storage_unavailable');
+  await ensureSignalTelemetrySchema(env);
+  const tf=String(searchParams.get('tf')||'');
+  if (tf&&!SIGNAL_TIMEFRAMES.includes(tf)) throw new Error('bad_telemetry_query');
+  const requestedDays=searchParams.has('days')?Number(searchParams.get('days')):SIGNAL_TELEMETRY_RETENTION_DAYS;
+  if (!Number.isInteger(requestedDays)||requestedDays<1||requestedDays>SIGNAL_TELEMETRY_RETENTION_DAYS) {
+    throw new Error('bad_telemetry_query');
+  }
+  const from=Number(now)-requestedDays*24*60*60_000;
+  const conditions=['telemetry.evaluated_at>=?1','telemetry.evaluated_at<=?2'];
+  const values=[from,Number(now)];
+  if (tf) {
+    values.push(tf);
+    conditions.push(`telemetry.timeframe=?${values.length}`);
+  }
+  const where=conditions.join(' AND ');
+  const counterRows=(await env.GSX_DB.prepare(`
+    SELECT telemetry.timeframe,COUNT(*) AS evaluations,SUM(candidate) AS candidates,
+      SUM(official_primary) AS official_primary,SUM(confirmation) AS confirmations,SUM(rejected) AS rejected
+    FROM signal_evaluation_telemetry AS telemetry WHERE ${where} GROUP BY telemetry.timeframe
+  `).bind(...values).all()).results||[];
+  const frames=tf?[tf]:SIGNAL_TIMEFRAMES;
+  const byTimeframe=Object.fromEntries(frames.map(frame=>[frame,emptyTelemetryCounter()]));
+  for (const row of counterRows) {
+    byTimeframe[String(row.timeframe)]={
+      evaluations:Number(row.evaluations||0),candidates:Number(row.candidates||0),
+      officialPrimary:Number(row.official_primary||0),confirmations:Number(row.confirmations||0),
+      rejected:Number(row.rejected||0)
+    };
+  }
+  const overall=Object.values(byTimeframe).reduce((total,row)=>{
+    for (const key of Object.keys(total)) total[key]+=Number(row[key]||0);
+    return total;
+  },emptyTelemetryCounter());
+  const reasonRows=(await env.GSX_DB.prepare(`
+    SELECT telemetry.timeframe,reason.value AS reason,COUNT(*) AS count
+    FROM signal_evaluation_telemetry AS telemetry,
+      json_each(telemetry.rejection_reasons_json) AS reason
+    WHERE ${where} GROUP BY telemetry.timeframe,reason.value
+  `).bind(...values).all()).results||[];
+  const rejectionReasons={overall:{},byTimeframe:Object.fromEntries(frames.map(frame=>[frame,{}]))};
+  for (const row of reasonRows) {
+    const frame=String(row.timeframe),reason=String(row.reason),count=Number(row.count||0);
+    if (rejectionReasons.byTimeframe[frame]) rejectionReasons.byTimeframe[frame][reason]=count;
+    rejectionReasons.overall[reason]=(rejectionReasons.overall[reason]||0)+count;
+  }
+  const limit=parseLimit(searchParams.get('limit'),SIGNAL_TELEMETRY_PAGE_DEFAULT,SIGNAL_TELEMETRY_PAGE_MAX);
+  const limitIndex=values.length+1;
+  const rows=(await env.GSX_DB.prepare(`
+    SELECT evaluation_id,timeframe,evaluated_at,closed_bar_ts,result,candidate,direction,score,confidence,
+      official_primary,confirmation,rejected,exposure_decision,rejection_reasons_json,engine_reasons_json,recorded_at
+    FROM signal_evaluation_telemetry AS telemetry WHERE ${where}
+    ORDER BY evaluated_at DESC,evaluation_id DESC LIMIT ?${limitIndex}
+  `).bind(...values,limit).all()).results||[];
+  const records=rows.map(row=>({
+    evaluationId:String(row.evaluation_id),timeframe:String(row.timeframe),evaluatedAt:Number(row.evaluated_at),
+    closedBarTs:row.closed_bar_ts==null?null:Number(row.closed_bar_ts),result:String(row.result),
+    candidate:Boolean(row.candidate),direction:String(row.direction||''),
+    score:row.score==null?null:Number(row.score),confidence:row.confidence==null?null:Number(row.confidence),
+    officialPrimary:Boolean(row.official_primary),confirmation:Boolean(row.confirmation),
+    rejected:Boolean(row.rejected),exposureDecision:String(row.exposure_decision||''),
+    rejectionReasons:safeJsonParse(row.rejection_reasons_json,[]),
+    engineReasons:safeJsonParse(row.engine_reasons_json,[]),recordedAt:Number(row.recorded_at),
+    measurementOnly:true,decisionUse:false
+  }));
+  return {
+    ok:true,source:'production-signal-evaluation-telemetry',measurementOnly:true,decisionUse:false,
+    retention:{days:SIGNAL_TELEMETRY_RETENTION_DAYS,policy:'rolling-delete-on-record'},
+    range:{from,to:Number(now),days:requestedDays},definitions:{
+      evaluations:'completed Signal Engine evaluations only',
+      candidates:'evaluation passed engine and duplicate closed-candle gate',
+      officialPrimary:'candidate accepted by Exposure Manager and persisted',
+      confirmations:'candidate linked to the active Primary Signal',
+      rejected:'evaluation did not become Official Primary; confirmations are a measured subset',
+      confidenceGate:false
+    },summary:{overall,byTimeframe,rejectionReasons},records
+  };
+}
+
 function candidateClosesAfterExistingSignal(existing,signalBarTs,tf) {
   if (!existing) return true;
   const barStart=Number(signalBarTs);
@@ -2783,6 +3005,8 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
 
   const decisions=new Map(exposureResult.decisions.map(decision=>[decision.signalId,decision]));
   const candidateByTf=new Map(candidates.map(signal=>[signal.tf,signal]));
+  const officialPrimaryTelemetryIds=new Set();
+  const confirmationTelemetryIds=new Set();
   for (const [tf,evaluation] of evaluations) {
     const candidate=candidateByTf.get(tf);
     const decision=candidate?decisions.get(candidate.id):null;
@@ -2803,6 +3027,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     if (decision?.decision!=='accepted') continue;
     try {
       await saveSignalState(env,signal,'created');
+      officialPrimaryTelemetryIds.add(signal.id);
     } catch (error) {
       if (exposureStub) {
         await exposureStub.cancelGoldExposureReservation({signalId:signal.id,now:Date.now()}).catch(()=>null);
@@ -2833,6 +3058,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     }
     primary=linked;
     signalsById.set(primarySignalId,linked);
+    confirmationTelemetryIds.add(signal.id);
     if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
       const options={
         rootSignalId:primarySignalId,primarySignalId,
@@ -2845,6 +3071,12 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       );
     }
   }
+  const telemetryRows=buildSignalTelemetryRows({
+    evaluations,candidates,decisions,officialPrimaryIds:officialPrimaryTelemetryIds,
+    confirmationIds:confirmationTelemetryIds,newsBlocked:Boolean(news?.safety?.blockTechnicalSignal),
+    newsReason:String(news?.safety?.reason||'خطر خبري شديد التأثير؛ تم إيقاف الدخول مؤقتاً حتى يهدأ تذبذب السوق')
+  });
+  await recordSignalTelemetrySafely(env,telemetryRows,now);
 }
 
 // ===== Helpers =====
@@ -4196,6 +4428,13 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_news_risk_signal_time ON production_signal_news_risk(primary_signal_id,event_at,event_id);');
 }
 
+async function ensureSignalTelemetrySchema(env) {
+  if (!env.GSX_DB) return;
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS signal_evaluation_telemetry (evaluation_id TEXT PRIMARY KEY, timeframe TEXT NOT NULL, evaluated_at INTEGER NOT NULL, closed_bar_ts INTEGER, result TEXT NOT NULL, candidate INTEGER NOT NULL DEFAULT 0, direction TEXT NOT NULL DEFAULT '', score REAL, confidence REAL, official_primary INTEGER NOT NULL DEFAULT 0, confirmation INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 1, exposure_decision TEXT NOT NULL DEFAULT '', rejection_reasons_json TEXT NOT NULL DEFAULT '[]', engine_reasons_json TEXT NOT NULL DEFAULT '[]', recorded_at INTEGER NOT NULL);");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_signal_telemetry_tf_time ON signal_evaluation_telemetry(timeframe,evaluated_at DESC);');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_signal_telemetry_time ON signal_evaluation_telemetry(evaluated_at DESC);');
+}
+
 async function ensureNewsCalendarSchema(env) {
   if (!env.GSX_DB) return;
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS economic_calendar_events (event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, name TEXT NOT NULL, event_at INTEGER NOT NULL, country TEXT NOT NULL DEFAULT 'United States', currency TEXT NOT NULL DEFAULT 'USD', impact TEXT NOT NULL, actual TEXT, forecast TEXT, previous TEXT, source TEXT NOT NULL, source_url TEXT NOT NULL, last_updated INTEGER NOT NULL, risk_before_min INTEGER NOT NULL DEFAULT 0, risk_after_min INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
@@ -4302,6 +4541,8 @@ export {
   isFreshSignalQuote,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
+  ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,
+  recordSignalTelemetry,recordSignalTelemetrySafely,readSignalTelemetry,
   recordProductionNewsRiskEvent,recordProductionNewsRiskSafely,
   computeSignalQualityMetrics,collectSignalQualityMetrics,collectSignalQualityMetricsSafely,
   buildMtfDirectionMatrix,buildIndicatorMtfConflictAtEntry,buildMtfConfirmationAnalysis,
