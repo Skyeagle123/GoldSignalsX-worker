@@ -2684,11 +2684,13 @@ function candidateClosesAfterExistingSignal(existing,signalBarTs,tf) {
   if (!existing) return true;
   const barStart=Number(signalBarTs);
   const duration=Number(SIGNAL_TF_MS[tf]);
-  const terminalAt=Number(existing.closedAt);
+  const closedAt=Number(existing.closedAt);
+  const closedBarTs=Number(existing.closedBarTs);
+  const terminalAt=Number.isFinite(closedAt)&&closedAt>0?closedAt:closedBarTs;
   if (Number.isFinite(barStart)&&Number.isFinite(duration)&&duration>0&&Number.isFinite(terminalAt)&&terminalAt>0) {
     return barStart+duration>terminalAt;
   }
-  return barStart>Number(existing.closedBarTs||existing.signalBarTs||0);
+  return barStart>Number(existing.signalBarTs||0);
 }
 
 async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {

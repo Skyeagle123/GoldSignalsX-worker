@@ -117,6 +117,36 @@ assert.equal(
   candidateClosesAfterExistingSignal(expired60m,Date.UTC(2026,8,2,4,0),'60m'),false,
   'a 60m candle that closed before expiration must remain ineligible'
 );
+const lifecycleClosedBarTs=Date.UTC(2026,8,2,5,9);
+const legacyTerminalSignal={
+  status:'expired',closedAt:null,closedBarTs:lifecycleClosedBarTs,
+  signalBarTs:Date.UTC(2026,8,1,16,0)
+};
+for (const [tf,candidateStart,previousStart] of [
+  ['5m',Date.UTC(2026,8,2,5,5),Date.UTC(2026,8,2,5,0)],
+  ['15m',Date.UTC(2026,8,2,5,0),Date.UTC(2026,8,2,4,45)],
+  ['30m',Date.UTC(2026,8,2,5,0),Date.UTC(2026,8,2,4,30)],
+  ['60m',Date.UTC(2026,8,2,5,0),Date.UTC(2026,8,2,4,0)],
+  ['240m',Date.UTC(2026,8,2,4,0),Date.UTC(2026,8,2,0,0)]
+]) {
+  assert.equal(
+    candidateClosesAfterExistingSignal({...legacyTerminalSignal,tf},candidateStart,tf),true,
+    `${tf}: candidate close time must be compared with the 1m lifecycle terminal timestamp`
+  );
+  assert.equal(
+    candidateClosesAfterExistingSignal({...legacyTerminalSignal,tf},previousStart,tf),false,
+    `${tf}: a candle closed before the lifecycle terminal timestamp must remain ineligible`
+  );
+  const observedMinuteStart=Date.UTC(2026,8,2,6,0);
+  const terminalLifecycle=updateSignalLifecycleAcrossBars({
+    id:`${tf}:lifecycle-timing`,tf,side:'buy',status:'active',createdAt:observedMinuteStart,
+    signalBarTs:candidateStart,lastProcessedBarTs:candidateStart,
+    entry:100,tp1:101,tp2:102,sl:99,tp1Hit:false,lastPrice:100
+  },[{t:observedMinuteStart,o:100,h:102.5,l:99.5,c:102}],NaN,observedMinuteStart+60_000);
+  assert.equal(terminalLifecycle.signal.status,'tp2',`${tf}: lifecycle must process the post-signal 1m observation`);
+  assert.equal(terminalLifecycle.signal.closedBarTs,observedMinuteStart,`${tf}: closedBarTs must preserve the observation bar timestamp`);
+  assert.equal(terminalLifecycle.signal.closedAt,observedMinuteStart+60_000,`${tf}: lifecycle event time must be the observation bar close`);
+}
 
 const bullish = classifyNewsArticle({
   title: 'Gold rises as Federal Reserve cuts rates and dollar falls',
