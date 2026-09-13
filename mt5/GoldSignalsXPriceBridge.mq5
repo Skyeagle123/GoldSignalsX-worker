@@ -55,8 +55,11 @@ void OnTimer()
    }
 
    bridgeSequence++;
-   const long mt5TimeMs=tick.time_msc>0?tick.time_msc:(long)tick.time*1000;
-   const long sentAtMs=(long)TimeGMT()*1000;
+   const long sentAtSeconds=(long)TimeGMT();
+   const long serverUtcOffsetMs=((long)TimeTradeServer()-sentAtSeconds)*1000;
+   const long rawMt5TimeMs=tick.time_msc>0?tick.time_msc:(long)tick.time*1000;
+   const long mt5TimeMs=rawMt5TimeMs-serverUtcOffsetMs;
+   const long sentAtMs=sentAtSeconds*1000;
    const int digits=(int)SymbolInfoInteger(mt5Symbol,SYMBOL_DIGITS);
    const string bid=DoubleToString(tick.bid,digits);
    const string ask=DoubleToString(tick.ask,digits);
