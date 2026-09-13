@@ -50,6 +50,9 @@ const TICK_HISTORY_QUERY_MAX = 2400;
 const SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS = 20 * 1000;
 const SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS = 90 * 1000;
 const SIGNAL_QUOTE_FUTURE_TOLERANCE_MS = 30 * 1000;
+const GOLD_MARKET_CLOCK = new Intl.DateTimeFormat('en-US',{
+  timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false
+});
 const GOLD_EXPOSURE_KEY = 'exposure:XAUUSD';
 const GOLD_EXPOSURE_COOLDOWN_MS = 30 * 60 * 1000;
 const GOLD_EXPOSURE_MAX_RECORDS = 50;
@@ -112,10 +115,25 @@ function appendTickHistory(history, tick) {
   return ticks.slice(Math.max(first, ticks.length - TICK_HISTORY_MAX));
 }
 
+function isGoldMarketOpen(value) {
+  const timestamp=Number(value);
+  const date=new Date(timestamp);
+  if (!Number.isFinite(timestamp)||!Number.isFinite(date.getTime())) return false;
+  const parts=GOLD_MARKET_CLOCK.formatToParts(date);
+  const get=type=>parts.find(part=>part.type===type)?.value||'';
+  const weekday=get('weekday');
+  const minute=(Number(get('hour'))%24)*60+Number(get('minute'));
+  if (!Number.isFinite(minute)||weekday==='Sat') return false;
+  if (weekday==='Sun') return minute>=18*60;
+  if (weekday==='Fri') return minute<17*60;
+  return true;
+}
+
 function isFreshSignalQuote(value, referenceTs = Date.now()) {
   const now=Number(referenceTs),price=Number(value?.price),providerTs=Number(value?.ts);
   const receivedAt=Number(value?.receivedAt??providerTs);
   if (![now,price,providerTs,receivedAt].every(Number.isFinite)) return false;
+  if (!isGoldMarketOpen(providerTs)) return false;
   const providerAge=now-providerTs,receiptAge=now-receivedAt;
   return receiptAge>=0&&receiptAge<=SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS&&
     providerAge>=-SIGNAL_QUOTE_FUTURE_TOLERANCE_MS&&providerAge<=SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS;
@@ -3492,7 +3510,9 @@ const TF = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60, '240m'
 function tfToMin(tf) { if (TF[tf]) return TF[tf]; throw new Error('bad tf'); }
 function closedBarsOnly(bars,tf,now=Date.now()) {
   const duration=tfToMin(tf)*60_000;
-  return (Array.isArray(bars)?bars:[]).filter(bar=>Number.isFinite(Number(bar?.t))&&Number(bar.t)+duration<=now);
+  return (Array.isArray(bars)?bars:[]).filter(bar=>
+    Number.isFinite(Number(bar?.t))&&Number(bar.t)+duration<=now&&isGoldMarketOpen(Number(bar.t))
+  );
 }
 function bucket(ts, min) { return Math.floor(ts / (min * 60000)) * (min * 60000); }
 function parseLimit(value, fallback, max) {
@@ -4538,7 +4558,7 @@ export {
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
-  isFreshSignalQuote,
+  isGoldMarketOpen,isFreshSignalQuote,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
   ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,

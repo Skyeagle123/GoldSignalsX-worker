@@ -36,7 +36,7 @@ const {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
+  pruneTickHistory,isGoldMarketOpen,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
   ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,
@@ -240,7 +240,8 @@ Date.now=providerClock;
 assert.equal(persistedBars.length, 1, 'one completed minute must be persisted');
 assert.deepEqual(persistedBars[0].slice(1,5), [4600,4602,4600,4602], 'OHLC must be built from the shared live stream');
 
-const tickNow=Date.now();
+const tickNow=Date.UTC(2026,7,27,9,2,10,500);
+Date.now=()=>tickNow;
 const recentTicks=[
   {ts:tickNow-20_000,price:4700.1},
   {ts:tickNow-10_000,price:4700.4},
@@ -283,12 +284,34 @@ const ticksBody=await ticksResponse.json();
 assert.ok(ticksBody.count>1,'the read endpoint must return historical ticks');
 assert.equal(ticksBody.retentionMs,60*60_000);
 assert.equal(ticksBody.maxTicks,2400);
+Date.now=providerClock;
 
 const fridayClose=Date.UTC(2026,8,4,20,59,0);
 const weekend=Date.UTC(2026,8,5,12,0,0);
+const sundayBeforeOpen=Date.UTC(2026,8,6,21,59,0);
+const sundayOpen=Date.UTC(2026,8,6,22,0,0);
+const incidentSunday=Date.UTC(2026,8,13,13,1,8,726);
+assert.equal(isGoldMarketOpen(fridayClose),true,'XAU/USD must remain open before Friday 17:00 New York');
+assert.equal(isGoldMarketOpen(fridayClose+60_000),false,'the weekly closure must begin Friday at 17:00 New York');
+assert.equal(isGoldMarketOpen(weekend),false,'Saturday must remain outside the XAU/USD trading session');
+assert.equal(isGoldMarketOpen(sundayBeforeOpen),false,'Sunday must remain closed before 18:00 New York');
+assert.equal(isGoldMarketOpen(sundayOpen),true,'the XAU/USD session must reopen Sunday at 18:00 New York');
+assert.equal(isGoldMarketOpen(incidentSunday),false,'the 2026-09-13 1d incident occurred during market closure');
 assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},fridayClose+1_000),true);
 assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},weekend),false,
   'a Friday close quote must not become a fresh weekend tick');
+assert.equal(isFreshSignalQuote({price:4690,ts:weekend,receivedAt:weekend},weekend),false,
+  'a fresh-timestamp Saturday quote must still be rejected');
+assert.equal(isFreshSignalQuote({price:4690,ts:sundayBeforeOpen,receivedAt:sundayBeforeOpen},sundayBeforeOpen),false,
+  'a fresh-timestamp Sunday quote before reopen must still be rejected');
+assert.equal(isFreshSignalQuote({price:4710,ts:sundayOpen,receivedAt:sundayOpen},sundayOpen),true,
+  'fresh quotes must be accepted again at the Sunday reopen');
+const validFridayDaily={t:Date.UTC(2026,8,4,0,0),o:4700,h:4710,l:4690,c:4705};
+const syntheticSaturdayDaily={t:Date.UTC(2026,8,5,0,0),o:4705,h:4706,l:4704,c:4705};
+assert.deepEqual(
+  closedBarsOnly([validFridayDaily,syntheticSaturdayDaily],'1d',incidentSunday),[validFridayDaily],
+  'a synthetic weekend D1 candle already stored in D1 must not enter trading evaluation'
+);
 const reopenValues=new Map([
   ['latestQuote',{event:'price',symbol:'XAU/USD',price:4700,ts:fridayClose,receivedAt:fridayClose,source:'twelve-data'}],
   ['currentBar',{t:Math.floor(fridayClose/60_000)*60_000,o:4700,h:4700,l:4700,c:4700,v:1,provider:'twelve-data'}],
@@ -304,21 +327,35 @@ const reopenStorage={
 const reopenCtx={storage:reopenStorage,blockConcurrencyWhile(fn){this.ready=fn();},getWebSockets:()=>[]};
 let reopenNow=fridayClose+1_000;
 Date.now=()=>reopenNow;
-const reopenFeed=new GoldFeed(reopenCtx,{});
+const reopenFeed=new GoldFeed(reopenCtx,{GSX_DB:fakeDb});
 await reopenCtx.ready;
 const fridayTickCount=reopenFeed.tickHistory.length;
+const persistedBeforeWeekend=persistedBars.length;
 reopenNow=weekend;
 await reopenFeed.handleProviderMessage(JSON.stringify({
   event:'price',symbol:'XAU/USD',price:4690,timestamp:fridayClose/1000
 }));
 assert.equal(reopenFeed.latestQuote.price,4700,'a stale reconnect replay must not replace the last accepted quote');
 assert.equal(reopenFeed.tickHistory.length,fridayTickCount,'a stale reconnect replay must not enter tick history');
+await reopenFeed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:4695,timestamp:weekend/1000
+}));
+assert.equal(reopenFeed.latestQuote.price,4700,'a fresh-timestamp weekend quote must not replace the last market quote');
+assert.equal(reopenFeed.tickHistory.length,fridayTickCount,'a fresh-timestamp weekend quote must not enter tick history');
+assert.equal(reopenFeed.currentBar.t,Math.floor(fridayClose/60_000)*60_000,
+  'a weekend quote must not form or update a trading candle');
+assert.equal(persistedBars.length,persistedBeforeWeekend,
+  'a weekend quote must not persist or roll up a trading candle in D1');
 reopenNow=Date.UTC(2026,8,6,22,1,0);
 await reopenFeed.handleProviderMessage(JSON.stringify({
   event:'price',symbol:'XAU/USD',price:4710,timestamp:(reopenNow-1_000)/1000
 }));
 assert.equal(reopenFeed.latestQuote.price,4710,'the first genuinely fresh reopen tick must be accepted');
 assert.equal(reopenFeed.tickHistory.at(-1).ts,reopenNow,'the reopen tick must use its actual receipt time');
+assert.equal(reopenFeed.currentBar.t,Math.floor((reopenNow-1_000)/60_000)*60_000,
+  'candle construction must resume with the first valid reopen quote');
+assert.equal(persistedBars.length,persistedBeforeWeekend+1,
+  'D1 persistence must resume with the first valid reopen quote');
 Date.now=providerClock;
 
 const exposureNow=Date.UTC(2026,7,31,14,0,0);
@@ -799,12 +836,12 @@ const fridaySignal={
   updatedAt:fridayClose-10*60_000,signalBarTs:fridayClose-10*60_000,
   lastProcessedBarTs:fridayClose-10*60_000,lastPrice:100
 };
-const staleWeekendQuote={price:98,ts:fridayClose,receivedAt:fridayClose};
+const freshWeekendQuote={price:98,ts:weekend,receivedAt:weekend};
 const closureLifecycle=updateSignalLifecycleAcrossBars(
-  fridaySignal,[],isFreshSignalQuote(staleWeekendQuote,weekend)?staleWeekendQuote.price:NaN,weekend
+  fridaySignal,[],isFreshSignalQuote(freshWeekendQuote,weekend)?freshWeekendQuote.price:NaN,weekend
 );
 assert.equal(closureLifecycle.signal.status,'expired','wall-clock expiry must remain deterministic during market closure');
-assert.equal(closureLifecycle.signal.lastPrice,100,'expiry must preserve the last genuinely observed price');
+assert.equal(closureLifecycle.signal.lastPrice,100,'a fresh-timestamp weekend stop price must not enter lifecycle');
 assert.deepEqual(closureLifecycle.events.map(item=>item.event),['expired']);
 const closureRetry=updateSignalLifecycleAcrossBars(closureLifecycle.signal,[],NaN,weekend+5*60_000);
 assert.deepEqual(closureRetry.events,[],'market-closure retries must not duplicate a terminal lifecycle event');
@@ -1234,6 +1271,7 @@ await recordSignalTelemetry({GSX_DB:telemetryDb},[],telemetryNow);
 assert.equal(telemetryDb.database.prepare('SELECT COUNT(*) AS count FROM signal_evaluation_telemetry').get().count,4,
   'telemetry older than 30 days must be pruned');
 
+Date.now=()=>telemetryNow;
 const telemetryEndpoint=await worker.default.fetch(
   new Request('https://example.com/telemetry?days=1&limit=10'),{GSX_DB:telemetryDb},{}
 );
@@ -1246,6 +1284,7 @@ assert.equal((await worker.default.fetch(
 assert.equal((await worker.default.fetch(
   new Request('https://example.com/telemetry?tf=bad'),{GSX_DB:telemetryDb},{}
 )).status,400);
+Date.now=providerClock;
 
 const engineBeforeTelemetry=computeServerSignal([],{tf:'5m'});
 const telemetryFailure=await recordSignalTelemetrySafely({
@@ -1279,6 +1318,9 @@ const productionSignal=(id,createdAt,overrides={})=>({
 
 const closureDb=new MemoryD1();
 closureDb.database.exec("CREATE TABLE bars_v2 (tf INTEGER NOT NULL,t INTEGER NOT NULL,o REAL NOT NULL,h REAL NOT NULL,l REAL NOT NULL,c REAL NOT NULL,v REAL NOT NULL DEFAULT 0,provider TEXT NOT NULL DEFAULT 'test',PRIMARY KEY(tf,t));");
+closureDb.database.prepare(
+  'INSERT INTO bars_v2(tf,t,o,h,l,c,v,provider) VALUES (1,?,?,?,?,?,?,?)'
+).run(weekend-60_000,100,100,80,80,1,'twelve-data');
 const closureKvValues=new Map();
 const closureKv={
   get:async (key,type)=>{
@@ -1299,7 +1341,7 @@ let closureExposure={
 const closureExposureInputs=[];
 const closureFeed={
   status:async()=>({latestQuote:{
-    event:'price',price:98,ts:fridayClose,receivedAt:fridayClose,source:'twelve-data'
+    event:'price',price:80,ts:weekend,receivedAt:weekend,source:'twelve-data'
   }}),
   manageGoldExposure:async input=>{
     closureExposureInputs.push(input);
@@ -1316,8 +1358,8 @@ Date.now=()=>weekend;
 await runSignalCycle(closureEnv,null,normalizeSignalFilters());
 const expiredCronSignal=JSON.parse(closureKvValues.get('signal:state:5m'));
 assert.equal(expiredCronSignal.status,'expired','weekend cron must expire by clock without applying a stale stop price');
-assert.equal(expiredCronSignal.lastPrice,100,'weekend cron must retain the last genuine signal price');
-assert.equal(closureExposureInputs[0].candidates.length,0,'stale market data must not create signals or confirmations');
+assert.equal(expiredCronSignal.lastPrice,100,'weekend cron must ignore fresh-timestamp quotes and stored weekend bars');
+assert.equal(closureExposureInputs[0].candidates.length,0,'weekend market data must not create signals or confirmations');
 assert.equal(closureExposure.status,'flat','Expired must close the official exposure consistently');
 await runSignalCycle(closureEnv,null,normalizeSignalFilters());
 assert.equal(closureExposureInputs[1].candidates.length,0,'a weekend retry must remain signal-free');
@@ -2195,6 +2237,7 @@ await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 await persistNewsEvents({GSX_DB:calendarDb},confirmedNews);
 assert.equal(calendarDb.database.prepare('SELECT COUNT(*) AS count FROM news_context_events').get().count,2,'news persistence must deduplicate stable event IDs');
 
+Date.now=()=>riskEvent.eventAt;
 const endpointCache=new Map([
   ['calendar:official:v4',JSON.stringify({ok:true,updatedAt:Date.now(),source:'official-multi-source',events:[riskEvent],sourceStatus:{bls:{ok:true}}})],
   ['news:brief:v2',JSON.stringify({...confirmedNews,updatedAt:Date.now()})]
