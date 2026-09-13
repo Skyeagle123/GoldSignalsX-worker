@@ -36,7 +36,8 @@ const {
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
-  pruneTickHistory,isGoldMarketOpen,isFreshSignalQuote,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
+  pruneTickHistory,isGoldMarketOpen,isFreshSignalQuote,normalizeMt5TickPayload,isMt5QuoteFresh,currentPriceForSignals,
+  decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
   ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,
@@ -286,6 +287,177 @@ assert.equal(ticksBody.retentionMs,60*60_000);
 assert.equal(ticksBody.maxTicks,2400);
 Date.now=providerClock;
 
+const mt5Start=Date.UTC(2026,8,10,14,0,10);
+const mt5Payload=(overrides={})=>({
+  symbol:'XAUUSD',bid:100,ask:100.2,mt5Time:mt5Start,sentAt:mt5Start,
+  sequence:1,sessionId:'phase-a-session',source:'mt5',...overrides
+});
+assert.equal(normalizeMt5TickPayload(mt5Payload(),mt5Start).ok,true);
+assert.equal(normalizeMt5TickPayload(mt5Payload({source:'twelve-data'}),mt5Start).error,'bad_source');
+assert.equal(normalizeMt5TickPayload(mt5Payload({symbol:'EURUSD'}),mt5Start).error,'bad_symbol');
+assert.equal(normalizeMt5TickPayload(mt5Payload({ask:99}),mt5Start).error,'bad_bid_ask');
+assert.equal(normalizeMt5TickPayload(mt5Payload({sequence:1.5}),mt5Start).error,'bad_sequence');
+assert.equal(normalizeMt5TickPayload(mt5Payload({sentAt:mt5Start-60_001}),mt5Start).error,'stale_sent_at');
+assert.equal(normalizeMt5TickPayload(mt5Payload({mt5Time:mt5Start-90_001}),mt5Start).error,'stale_mt5_time');
+
+const mt5PersistedBars=[];
+const mt5Db={
+  ...fakeDb,
+  batch:async statements=>{
+    for (const statement of statements) {
+      if (statement.__sql.includes('INSERT INTO bars_v2')&&statement.__values[0]===1) {
+        mt5PersistedBars.push(statement.__values.slice(1));
+      }
+    }
+  }
+};
+const mt5Values=new Map();
+const mt5Storage={
+  get:async keys=>Array.isArray(keys)
+    ?new Map(keys.filter(key=>mt5Values.has(key)).map(key=>[key,mt5Values.get(key)]))
+    :mt5Values.get(keys),
+  getAlarm:async()=>0,setAlarm:async()=>{},
+  put:async (key,value)=>{
+    if (typeof key==='string') mt5Values.set(key,value);
+    else Object.entries(key||{}).forEach(([name,item])=>mt5Values.set(name,item));
+  },
+  transaction:async callback=>callback({
+    get:async key=>mt5Values.get(key),
+    put:async (key,value)=>mt5Values.set(key,value)
+  })
+};
+const mt5Ctx={storage:mt5Storage,blockConcurrencyWhile(fn){this.ready=fn();},getWebSockets:()=>[]};
+let mt5Now=mt5Start;
+Date.now=()=>mt5Now;
+const mt5Feed=new GoldFeed(mt5Ctx,{GSX_DB:mt5Db,MT5_INGEST_TOKEN:'mt5-secret'});
+await mt5Ctx.ready;
+const firstMt5=await mt5Feed.ingestMt5Tick(mt5Payload());
+assert.equal(firstMt5.accepted,true,'the first authenticated, ordered MT5 tick must be accepted');
+assert.equal(mt5Feed.latestQuote.source,'mt5');
+assert.equal(mt5Feed.latestQuote.price,100.1);
+assert.equal(mt5Feed.currentBar.provider,'mt5');
+assert.equal(isMt5QuoteFresh(mt5Feed.latestQuote,mt5Now),true);
+
+mt5Now=mt5Start+5_000;
+const secondMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:101,ask:101.2,mt5Time:mt5Now,sentAt:mt5Now,sequence:2
+}));
+assert.equal(secondMt5.accepted,true);
+assert.equal(mt5Feed.currentBar.h,101.1);
+assert.equal(mt5Feed.currentBar.c,101.1);
+
+mt5Now=Date.UTC(2026,8,10,14,1,1);
+const thirdMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:100.5,ask:100.7,mt5Time:mt5Now,sentAt:mt5Now,sequence:3
+}));
+assert.equal(thirdMt5.accepted,true);
+assert.equal(mt5PersistedBars.length,1,'the next MT5 minute must persist one completed 1m candle');
+assert.deepEqual(mt5PersistedBars[0].slice(1,5),[100.1,101.1,100.1,101.1],
+  'MT5 mid prices must build the synchronized OHLC candle');
+assert.equal(mt5PersistedBars[0][6],'mt5');
+
+mt5Now+=1_000;
+const heartbeat=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:100.5,ask:100.7,mt5Time:mt5Now-1_000,sentAt:mt5Now,sequence:4
+}));
+assert.equal(heartbeat.accepted,false);
+assert.equal(heartbeat.reason,'no_new_tick','an unchanged quote timestamp must remain heartbeat-only');
+assert.equal(mt5Feed.latestQuote.receivedAt,mt5Now-1_000,'a heartbeat must not refresh a trading quote');
+const duplicateMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  mt5Time:mt5Now,sentAt:mt5Now,sequence:4
+}));
+assert.equal(duplicateMt5.error,'duplicate_or_out_of_order_sequence');
+const outOfOrderMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  mt5Time:mt5Start,sentAt:mt5Now,sequence:5
+}));
+assert.equal(outOfOrderMt5.error,'out_of_order_mt5_time');
+
+const primaryMt5PriceResponse=await worker.default.fetch(new Request('https://example.com/price'),{
+  MT5_INGEST_TOKEN:'mt5-secret',TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>({status:()=>mt5Feed.status()})}
+},{});
+assert.equal(primaryMt5PriceResponse.status,200);
+const primaryMt5Price=await primaryMt5PriceResponse.json();
+assert.equal(primaryMt5Price.source,'mt5');
+assert.equal(primaryMt5Price.primarySource,'mt5');
+assert.equal(primaryMt5Price.fallback,false);
+assert.equal(primaryMt5Price.bid,100.5);
+assert.equal(primaryMt5Price.ask,100.7);
+const primarySignalPrice=await currentPriceForSignals({
+  MT5_INGEST_TOKEN:'mt5-secret',TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>({status:()=>mt5Feed.status()})}
+});
+assert.equal(primarySignalPrice.source,'mt5','Signal Cycle must receive MT5 while it is the healthy primary');
+
+await mt5Feed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:99,timestamp:Math.floor(mt5Now/1000)
+}));
+assert.equal(mt5Feed.latestQuote.source,'mt5','Twelve Data must not replace a healthy MT5 primary quote');
+assert.equal(mt5Feed.currentBar.c,100.6,'Twelve Data must not update the candle while MT5 is healthy');
+
+mt5Now+=20_000;
+await mt5Feed.handleProviderMessage(JSON.stringify({
+  event:'price',symbol:'XAU/USD',price:99,timestamp:Math.floor(mt5Now/1000)
+}));
+const mt5FallbackStatus=await mt5Feed.status();
+assert.equal(mt5FallbackStatus.latestQuote.source,'twelve-data','fresh Twelve Data must become fallback after MT5 is stale');
+assert.equal(mt5FallbackStatus.fallback,true);
+assert.equal(mt5FallbackStatus.fallbackReason,'mt5_stale');
+assert.equal(mt5Feed.currentBar.provider,'mixed','an intraminute source switch must be declared on the candle');
+
+const mt5PriceResponse=await worker.default.fetch(new Request('https://example.com/price'),{
+  MT5_INGEST_TOKEN:'mt5-secret',TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>({status:()=>mt5Feed.status()})}
+},{});
+assert.equal(mt5PriceResponse.status,200);
+const mt5PriceBody=await mt5PriceResponse.json();
+assert.equal(mt5PriceBody.source,'twelve-data');
+assert.equal(mt5PriceBody.primarySource,'mt5');
+assert.equal(mt5PriceBody.fallback,true);
+assert.equal(mt5PriceBody.fallbackReason,'mt5_stale');
+
+let mt5RouteCalls=0;
+const mt5RouteStub={ingestMt5Tick:async body=>{
+  mt5RouteCalls+=1;
+  return {ok:true,accepted:true,sequence:body.sequence,source:'mt5'};
+}};
+const rejectedMt5Route=await worker.default.fetch(new Request('https://example.com/mt5/tick',{
+  method:'POST',headers:{'content-type':'application/json','x-mt5-token':'wrong'},body:JSON.stringify(mt5Payload())
+}),{MT5_INGEST_TOKEN:'mt5-secret',GOLD_FEED:{getByName:()=>mt5RouteStub}},{});
+assert.equal(rejectedMt5Route.status,401);
+assert.equal(mt5RouteCalls,0,'unauthorized MT5 requests must not reach the Durable Object');
+const acceptedMt5Route=await worker.default.fetch(new Request('https://example.com/mt5/tick',{
+  method:'POST',headers:{'content-type':'application/json','x-mt5-token':'mt5-secret'},body:JSON.stringify(mt5Payload())
+}),{MT5_INGEST_TOKEN:'mt5-secret',GOLD_FEED:{getByName:()=>mt5RouteStub}},{});
+assert.equal(acceptedMt5Route.status,202);
+assert.equal(mt5RouteCalls,1);
+
+const beforeWeekendQuote=mt5Feed.latestQuote;
+const beforeWeekendBar={...mt5Feed.currentBar};
+const beforeWeekendTicks=mt5Feed.tickHistory.length;
+const beforeWeekendPersisted=mt5PersistedBars.length;
+const mt5Weekend=Date.UTC(2026,8,12,12,0,0);
+mt5Now=mt5Weekend;
+const weekendMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:80,ask:80.2,mt5Time:mt5Weekend,sentAt:mt5Weekend,sequence:5
+}));
+assert.equal(weekendMt5.accepted,false);
+assert.equal(weekendMt5.reason,'market_closed');
+assert.deepEqual(mt5Feed.latestQuote,beforeWeekendQuote,'a weekend MT5 price must not replace the trading quote');
+assert.deepEqual(mt5Feed.currentBar,beforeWeekendBar,'a weekend MT5 price must not update OHLC');
+assert.equal(mt5Feed.tickHistory.length,beforeWeekendTicks,'a weekend MT5 price must not enter tick history');
+assert.equal(mt5PersistedBars.length,beforeWeekendPersisted,'a weekend MT5 price must not persist a candle');
+
+const mt5Reopen=Date.UTC(2026,8,13,22,0,1);
+mt5Now=mt5Reopen;
+const reopenedMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:102,ask:102.2,mt5Time:mt5Reopen,sentAt:mt5Reopen,sequence:6
+}));
+assert.equal(reopenedMt5.accepted,true,'the first valid MT5 tick after Sunday reopen must be accepted');
+assert.equal(mt5Feed.latestQuote.source,'mt5');
+assert.equal(mt5Feed.currentBar.provider,'mt5');
+Date.now=providerClock;
+
 const fridayClose=Date.UTC(2026,8,4,20,59,0);
 const weekend=Date.UTC(2026,8,5,12,0,0);
 const sundayBeforeOpen=Date.UTC(2026,8,6,21,59,0);
@@ -298,6 +470,9 @@ assert.equal(isGoldMarketOpen(sundayBeforeOpen),false,'Sunday must remain closed
 assert.equal(isGoldMarketOpen(sundayOpen),true,'the XAU/USD session must reopen Sunday at 18:00 New York');
 assert.equal(isGoldMarketOpen(incidentSunday),false,'the 2026-09-13 1d incident occurred during market closure');
 assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},fridayClose+1_000),true);
+assert.equal(isFreshSignalQuote({
+  price:4700,ts:fridayClose,receivedAt:fridayClose,timestampInferred:true
+},fridayClose+1_000),false,'an inferred fallback timestamp must never become signal-safe');
 assert.equal(isFreshSignalQuote({price:4700,ts:fridayClose,receivedAt:fridayClose},weekend),false,
   'a Friday close quote must not become a fresh weekend tick');
 assert.equal(isFreshSignalQuote({price:4690,ts:weekend,receivedAt:weekend},weekend),false,
@@ -1341,7 +1516,7 @@ let closureExposure={
 const closureExposureInputs=[];
 const closureFeed={
   status:async()=>({latestQuote:{
-    event:'price',price:80,ts:weekend,receivedAt:weekend,source:'twelve-data'
+    event:'price',price:80,bid:79.9,ask:80.1,ts:weekend,receivedAt:weekend,source:'mt5'
   }}),
   manageGoldExposure:async input=>{
     closureExposureInputs.push(input);

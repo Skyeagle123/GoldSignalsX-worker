@@ -22,6 +22,7 @@ import {
 //   GET  /health             → { ok: true }
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
+//   POST /mt5/tick           → authenticated read-only MT5 Bid/Ask ingest
 //   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → سياق إخباري مقروء فقط (GDELT)
@@ -37,6 +38,7 @@ import {
 //   UPSTREAM_URL, ALLOW_ORIGINS
 //   OANDA_TOKEN + OANDA_ACCOUNT_ID (secrets), OANDA_ENV, OANDA_INSTRUMENT
 //   TWELVE_DATA_API_KEY (secret)
+//   MT5_INGEST_TOKEN (secret)
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
@@ -50,6 +52,9 @@ const TICK_HISTORY_QUERY_MAX = 2400;
 const SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS = 20 * 1000;
 const SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS = 90 * 1000;
 const SIGNAL_QUOTE_FUTURE_TOLERANCE_MS = 30 * 1000;
+const MT5_PRIMARY_STALE_MS = 15 * 1000;
+const MT5_SENT_MAX_AGE_MS = 60 * 1000;
+const MT5_INGEST_BODY_BYTES = 2048;
 const GOLD_MARKET_CLOCK = new Intl.DateTimeFormat('en-US',{
   timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false
 });
@@ -133,10 +138,54 @@ function isFreshSignalQuote(value, referenceTs = Date.now()) {
   const now=Number(referenceTs),price=Number(value?.price),providerTs=Number(value?.ts);
   const receivedAt=Number(value?.receivedAt??providerTs);
   if (![now,price,providerTs,receivedAt].every(Number.isFinite)) return false;
+  if (value?.timestampInferred) return false;
   if (!isGoldMarketOpen(providerTs)) return false;
   const providerAge=now-providerTs,receiptAge=now-receivedAt;
   return receiptAge>=0&&receiptAge<=SIGNAL_QUOTE_RECEIPT_MAX_AGE_MS&&
     providerAge>=-SIGNAL_QUOTE_FUTURE_TOLERANCE_MS&&providerAge<=SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS;
+}
+
+function epochMilliseconds(value) {
+  if (value==null||value==='') return NaN;
+  let timestamp=Number(value);
+  if (!Number.isFinite(timestamp)) return NaN;
+  if (timestamp<1e12) timestamp*=1000;
+  return timestamp;
+}
+
+function normalizeMt5TickPayload(value,receivedAt=Date.now()) {
+  const now=Number(receivedAt);
+  const canonicalSymbol=String(value?.symbol||'').toUpperCase().replace(/[^A-Z]/g,'');
+  const bid=Number(value?.bid),ask=Number(value?.ask);
+  const mt5Time=epochMilliseconds(value?.mt5Time);
+  const sentAt=epochMilliseconds(value?.sentAt);
+  const sequence=Number(value?.sequence);
+  const sessionId=String(value?.sessionId||'').trim();
+  if (String(value?.source||'').toLowerCase()!=='mt5') return {ok:false,error:'bad_source'};
+  if (canonicalSymbol!=='XAUUSD') return {ok:false,error:'bad_symbol'};
+  if (![bid,ask].every(Number.isFinite)||bid<=0||ask<=0||ask<bid) return {ok:false,error:'bad_bid_ask'};
+  if (![now,mt5Time,sentAt].every(Number.isFinite)) return {ok:false,error:'bad_timestamp'};
+  if (!Number.isSafeInteger(sequence)||sequence<1) return {ok:false,error:'bad_sequence'};
+  if (!/^[A-Za-z0-9._:-]{1,80}$/.test(sessionId)) return {ok:false,error:'bad_session_id'};
+  const sentAge=now-sentAt,providerAge=now-mt5Time;
+  if (sentAge< -SIGNAL_QUOTE_FUTURE_TOLERANCE_MS||sentAge>MT5_SENT_MAX_AGE_MS) {
+    return {ok:false,error:'stale_sent_at'};
+  }
+  if (providerAge< -SIGNAL_QUOTE_FUTURE_TOLERANCE_MS||providerAge>SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS) {
+    return {ok:false,error:'stale_mt5_time'};
+  }
+  return {
+    ok:true,tick:{
+      event:'price',symbol:'XAUUSD',bid,ask,spread:ask-bid,price:(bid+ask)/2,
+      ts:mt5Time,mt5Time,sentAt,sequence,sessionId,receivedAt:now,source:'mt5'
+    }
+  };
+}
+
+function isMt5QuoteFresh(value,referenceTs=Date.now()) {
+  const now=Number(referenceTs),receivedAt=Number(value?.receivedAt);
+  return String(value?.source||'')==='mt5'&&Number.isFinite(now)&&Number.isFinite(receivedAt)&&
+    now-receivedAt>=0&&now-receivedAt<=MT5_PRIMARY_STALE_MS&&isFreshSignalQuote(value,now);
 }
 
 function normalizedExposureSignal(value) {
@@ -519,6 +568,8 @@ export class GoldFeed extends DurableObject {
     this.upstream = null;
     this.connecting = false;
     this.latestQuote = null;
+    this.latestTwelveQuote = null;
+    this.mt5State = null;
     this.currentBar = null;
     this.tickHistory = [];
     this.lastSnapshotWriteAt = 0;
@@ -526,8 +577,11 @@ export class GoldFeed extends DurableObject {
     this.telegramDrainPromise = null;
     this.telegramDrainRequested = false;
     this.ctx.blockConcurrencyWhile(async () => {
-      const stored = await this.ctx.storage.get(['latestQuote', 'currentBar', 'tickHistory']);
+      const stored = await this.ctx.storage.get(['latestQuote', 'latestTwelveQuote', 'mt5State', 'currentBar', 'tickHistory']);
       this.latestQuote = stored.get('latestQuote') || null;
+      this.latestTwelveQuote = stored.get('latestTwelveQuote') ||
+        (this.latestQuote?.source==='twelve-data'?this.latestQuote:null);
+      this.mt5State = stored.get('mt5State') || null;
       this.currentBar = stored.get('currentBar') || null;
       this.tickHistory = pruneTickHistory(stored.get('tickHistory'), Date.now());
       const alarm = await this.ctx.storage.getAlarm();
@@ -543,18 +597,98 @@ export class GoldFeed extends DurableObject {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
-    if (this.latestQuote) server.send(JSON.stringify(this.latestQuote));
+    const selected=this.selectLiveQuote(Date.now()).quote;
+    if (selected) server.send(JSON.stringify(selected));
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async status() {
+    const now=Date.now();
+    const selection=this.selectLiveQuote(now);
+    const mt5Tick=this.mt5State?.lastTick||null;
     return {
-      ok: Boolean(this.latestQuote),
-      provider: 'twelve-data',
+      ok: Boolean(selection.quote),
+      provider: selection.quote?.source||'',
+      primaryProvider: selection.primaryProvider,
+      fallback:selection.fallback,
+      fallbackReason:selection.fallbackReason,
       connected: this.upstream?.readyState === 1,
-      latestQuote: this.latestQuote,
+      latestQuote: selection.quote,
+      lastAcceptedQuote:this.latestQuote,
       currentBar: this.currentBar,
-      clients: this.ctx.getWebSockets().length
+      clients: this.ctx.getWebSockets().length,
+      mt5:{
+        configured:Boolean(String(this.env.MT5_INGEST_TOKEN||'').trim()),
+        healthy:isMt5QuoteFresh(mt5Tick,now),
+        lastSeenAt:Number(this.mt5State?.lastSeenAt||0),
+        lastAcceptedAt:Number(this.mt5State?.lastAcceptedAt||0)
+      }
+    };
+  }
+
+  selectLiveQuote(now=Date.now()) {
+    const mt5Configured=Boolean(String(this.env.MT5_INGEST_TOKEN||'').trim());
+    const mt5Tick=this.mt5State?.lastTick||null;
+    if (mt5Configured&&isMt5QuoteFresh(mt5Tick,now)) {
+      return {quote:mt5Tick,primaryProvider:'mt5',fallback:false,fallbackReason:''};
+    }
+    if (isFreshSignalQuote(this.latestTwelveQuote,now)) {
+      return {
+        quote:this.latestTwelveQuote,
+        primaryProvider:mt5Configured?'mt5':'twelve-data',
+        fallback:mt5Configured,
+        fallbackReason:mt5Configured?(mt5Tick?'mt5_stale':'mt5_offline'):''
+      };
+    }
+    return {
+      quote:null,primaryProvider:mt5Configured?'mt5':'twelve-data',fallback:mt5Configured,
+      fallbackReason:mt5Configured?(mt5Tick?'mt5_stale':'mt5_offline'):'twelve_data_stale'
+    };
+  }
+
+  async ingestMt5Tick(input={}) {
+    const receivedAt=Date.now();
+    const normalized=normalizeMt5TickPayload(input,receivedAt);
+    if (!normalized.ok) return normalized;
+    const tick=normalized.tick;
+    const ordered=await this.ctx.storage.transaction(async transaction=>{
+      const previous=await transaction.get('mt5State')||this.mt5State||{};
+      const sameSession=String(previous.sessionId||'')===tick.sessionId;
+      const previousSequence=Number(previous.lastSeenSequence||0);
+      const previousMt5Time=Number(previous.lastSeenMt5Time||previous.lastAcceptedMt5Time||0);
+      if (sameSession&&tick.sequence<=previousSequence) {
+        return {ok:false,error:'duplicate_or_out_of_order_sequence'};
+      }
+      if (previousMt5Time&&tick.mt5Time<previousMt5Time) {
+        return {ok:false,error:'out_of_order_mt5_time'};
+      }
+      const marketOpen=isGoldMarketOpen(tick.mt5Time);
+      const hasNewTick=!previousMt5Time||tick.mt5Time>previousMt5Time;
+      const next={
+        ...previous,sessionId:tick.sessionId,lastSeenSequence:tick.sequence,
+        lastSeenMt5Time:tick.mt5Time,lastSeenAt:receivedAt
+      };
+      if (marketOpen&&hasNewTick) {
+        next.lastAcceptedMt5Time=tick.mt5Time;
+        next.lastAcceptedAt=receivedAt;
+        next.lastTick=tick;
+      }
+      await transaction.put('mt5State',next);
+      return {ok:true,next,marketOpen,hasNewTick};
+    });
+    if (!ordered.ok) return ordered;
+    this.mt5State=ordered.next;
+    if (!ordered.marketOpen) {
+      return {ok:true,accepted:false,heartbeat:true,reason:'market_closed',receivedAt};
+    }
+    if (!ordered.hasNewTick) {
+      return {ok:true,accepted:false,heartbeat:true,reason:'no_new_tick',receivedAt};
+    }
+    const accepted=await this.acceptTradingQuote(tick);
+    if (!accepted) return {ok:false,accepted:false,error:'trading_quote_out_of_order'};
+    return {
+      ok:true,accepted:true,source:'mt5',sequence:tick.sequence,mt5Time:tick.mt5Time,
+      receivedAt,price:tick.price,bid:tick.bid,ask:tick.ask,spread:tick.spread
     };
   }
 
@@ -569,7 +703,7 @@ export class GoldFeed extends DurableObject {
       .slice(-limit);
     return {
       ok: true,
-      provider: 'twelve-data',
+      provider:this.selectLiveQuote(Date.now()).quote?.source||this.latestQuote?.source||'',
       retentionMs: TICK_HISTORY_RETENTION_MS,
       maxTicks: TICK_HISTORY_MAX,
       from,
@@ -781,20 +915,40 @@ export class GoldFeed extends DurableObject {
 
     const receivedAt=Number(message.receivedAt)||Date.now();
     if (!isFreshSignalQuote(message,receivedAt)) return;
-    const previousQuote=this.latestQuote;
+    const previousQuote=this.latestTwelveQuote;
     if (previousQuote) {
       const previousTs=Number(previousQuote.ts),previousPrice=Number(previousQuote.price);
       if (Number(message.ts)<previousTs||
           (Number(message.ts)===previousTs&&Number(message.price)===previousPrice)) return;
     }
 
+    this.latestTwelveQuote=message;
+    if (isMt5QuoteFresh(this.mt5State?.lastTick,receivedAt)) {
+      await this.persistFeedSnapshot(receivedAt);
+      return;
+    }
+    await this.acceptTradingQuote(message);
+  }
+
+  async acceptTradingQuote(message) {
+    if (!message||message.event!=='price'||!Number.isFinite(Number(message.price))||
+        !Number.isFinite(Number(message.ts))||!isGoldMarketOpen(Number(message.ts))) return false;
+    const previousQuote=this.latestQuote;
+    if (previousQuote&&String(previousQuote.source||'')===String(message.source||'')) {
+      const previousTs=Number(previousQuote.ts),previousPrice=Number(previousQuote.price);
+      if (Number(message.ts)<previousTs||
+          (Number(message.ts)===previousTs&&Number(message.price)===previousPrice)) return false;
+    }
+
     const minute = bucket(message.ts, 1);
     const previous = this.currentBar;
+    if (previous&&minute<Number(previous.t)) return false;
+    const provider=String(message.source||'fallback');
     if (!previous || previous.t !== minute) {
       if (previous && previous.t < minute) await this.persistCompletedBar(previous);
       this.currentBar = {
         t: minute, o: message.price, h: message.price, l: message.price,
-        c: message.price, v: 1, provider: 'twelve-data'
+        c: message.price, v: 1, provider
       };
     } else {
       this.currentBar = {
@@ -803,22 +957,23 @@ export class GoldFeed extends DurableObject {
         l: Math.min(previous.l, message.price),
         c: message.price,
         v: Number(previous.v || 0) + 1,
-        provider: 'twelve-data'
+        provider:previous.provider===provider?provider:'mixed'
       };
     }
     this.latestQuote = message;
     this.tickHistory = appendTickHistory(this.tickHistory, message);
-
-    const now = Date.now();
-    if (now - this.lastSnapshotWriteAt >= 15_000) {
-      await this.ctx.storage.put({
-        latestQuote:this.latestQuote,
-        currentBar:this.currentBar,
-        tickHistory:this.tickHistory
-      });
-      this.lastSnapshotWriteAt = now;
-    }
+    await this.persistFeedSnapshot(Date.now());
     this.broadcast(message);
+    return true;
+  }
+
+  async persistFeedSnapshot(now=Date.now()) {
+    if (now-this.lastSnapshotWriteAt<15_000) return;
+    await this.ctx.storage.put({
+      latestQuote:this.latestQuote,latestTwelveQuote:this.latestTwelveQuote,
+      mt5State:this.mt5State,currentBar:this.currentBar,tickHistory:this.tickHistory
+    });
+    this.lastSnapshotWriteAt=now;
   }
 
   async persistCompletedBar(bar) {
@@ -876,16 +1031,32 @@ export default {
       if (path === '/') return htmlHome(corsHeaders);
 
       if (path === '/health') {
-        const centralFeedConfigured = Boolean(env.GOLD_FEED && isTwelveDataConfigured(env));
+        const mt5Configured=Boolean(String(env.MT5_INGEST_TOKEN||'').trim());
+        const centralFeedConfigured = Boolean(env.GOLD_FEED && (mt5Configured||isTwelveDataConfigured(env)));
         return json({
           ok: true,
           version: APP_VERSION,
-          primaryProvider: centralFeedConfigured ? 'twelve-data' : (isOandaConfigured(env) ? 'oanda' : 'fallback'),
+          primaryProvider: mt5Configured?'mt5':(
+            centralFeedConfigured?'twelve-data':(isOandaConfigured(env)?'oanda':'fallback')
+          ),
+          mt5Configured,
           oandaConfigured: isOandaConfigured(env),
           twelveDataConfigured: isTwelveDataConfigured(env),
           centralFeedConfigured,
           writeAuthConfigured: Boolean(String(env.GSX_WRITE_TOKEN || '').trim())
         }, corsHeaders);
+      }
+
+      if (path === '/mt5/tick') {
+        const denied=await enforceMt5IngestRequest(req,env,corsHeaders);
+        if (denied) return denied;
+        if (!env.GOLD_FEED) return json({ok:false,error:'central_feed_unavailable'},corsHeaders,503);
+        const body=await readJsonBody(req,MT5_INGEST_BODY_BYTES);
+        const result=await env.GOLD_FEED.getByName('xau-usd').ingestMt5Tick(body);
+        const status=result.ok?(result.accepted?202:200):(
+          ['duplicate_or_out_of_order_sequence','out_of_order_mt5_time','trading_quote_out_of_order'].includes(result.error)?409:422
+        );
+        return jsonNoStore(result,corsHeaders,status);
       }
 
       if (path === '/stream') {
@@ -894,7 +1065,9 @@ export default {
           if (!origin || (!allow.includes('*') && !allow.includes(origin))) {
             return json({ ok:false, error:'origin_not_allowed' }, corsHeaders, 403);
           }
-          if (!isTwelveDataConfigured(env)) return json({ ok:false, error:'twelve_data_not_configured' }, corsHeaders, 503);
+          if (!isTwelveDataConfigured(env)&&!String(env.MT5_INGEST_TOKEN||'').trim()) {
+            return json({ok:false,error:'live_feed_not_configured'},corsHeaders,503);
+          }
           if ((req.headers.get('Upgrade') || '').toLowerCase() !== 'websocket') {
             return json({ ok:false, error:'websocket_upgrade_required' }, corsHeaders, 426);
           }
@@ -904,14 +1077,20 @@ export default {
       }
 
       if (path === '/price') {
-        if (env.GOLD_FEED && isTwelveDataConfigured(env)) {
+        let feedStatus=null;
+        if (env.GOLD_FEED && (isTwelveDataConfigured(env)||String(env.MT5_INGEST_TOKEN||'').trim())) {
           try {
-            const status = await env.GOLD_FEED.getByName('xau-usd').status();
-            const quote = status?.latestQuote;
-            if (quote?.event === 'price' && Number.isFinite(Number(quote.price)) && Date.now() - Number(quote.ts) <= 90_000) {
+            feedStatus=await env.GOLD_FEED.getByName('xau-usd').status();
+            const quote=feedStatus?.latestQuote;
+            if (quote?.event==='price'&&Number.isFinite(Number(quote.price))&&isFreshSignalQuote(quote,Date.now())) {
               return jsonNoStore({
-                ok:true, price:Number(quote.price), ts:Number(quote.ts), source:'twelve-data',
-                receivedAt:Number(quote.receivedAt || Date.now()), ageMs:Math.max(0,Date.now()-Number(quote.ts))
+                ok:true,price:Number(quote.price),ts:Number(quote.ts),source:String(quote.source||feedStatus.provider),
+                ...(Number.isFinite(Number(quote.bid))?{bid:Number(quote.bid)}:{}),
+                ...(Number.isFinite(Number(quote.ask))?{ask:Number(quote.ask)}:{}),
+                ...(Number.isFinite(Number(quote.spread))?{spread:Number(quote.spread)}:{}),
+                receivedAt:Number(quote.receivedAt||Date.now()),ageMs:Math.max(0,Date.now()-Number(quote.ts)),
+                primarySource:String(feedStatus.primaryProvider||''),fallback:Boolean(feedStatus.fallback),
+                fallbackReason:String(feedStatus.fallbackReason||'')
               }, corsHeaders);
             }
           } catch (error) {
@@ -926,13 +1105,20 @@ export default {
           ok: true,
           ...data,
           receivedAt: Date.now(),
-          ageMs: Math.max(0, Date.now() - data.ts)
+          ageMs: Math.max(0, Date.now() - data.ts),
+          primarySource:String(feedStatus?.primaryProvider||(
+            String(env.MT5_INGEST_TOKEN||'').trim()?'mt5':String(data.source||'fallback')
+          )),
+          fallback:Boolean(feedStatus?.fallback||String(env.MT5_INGEST_TOKEN||'').trim()),
+          fallbackReason:String(feedStatus?.fallbackReason||(
+            String(env.MT5_INGEST_TOKEN||'').trim()?'mt5_offline':''
+          ))
         }, corsHeaders);
       }
 
       if (path === '/ticks') {
         if (method !== 'GET') return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
-        if (!env.GOLD_FEED || !isTwelveDataConfigured(env)) {
+        if (!env.GOLD_FEED || (!isTwelveDataConfigured(env)&&!String(env.MT5_INGEST_TOKEN||'').trim())) {
           return json({ ok:false, error:'tick_history_unavailable' }, corsHeaders, 503);
         }
         const rawFrom = url.searchParams.get('from');
@@ -1441,22 +1627,27 @@ async function readExposureSnapshot(env) {
 }
 
 async function currentPriceForSignals(env) {
-  if (env.GOLD_FEED&&isTwelveDataConfigured(env)) {
+  let lastAcceptedQuote=null;
+  if (env.GOLD_FEED&&(isTwelveDataConfigured(env)||String(env.MT5_INGEST_TOKEN||'').trim())) {
     try {
       const status=await env.GOLD_FEED.getByName('xau-usd').status();
       const quote=status?.latestQuote;
       if (quote?.event==='price'&&Number.isFinite(Number(quote.price))) {
         return {
           price:Number(quote.price),ts:Number(quote.ts),receivedAt:Number(quote.receivedAt||Date.now()),
-          source:'twelve-data'
+          source:String(quote.source||status.provider||'fallback'),
+          ...(Number.isFinite(Number(quote.bid))?{bid:Number(quote.bid)}:{}),
+          ...(Number.isFinite(Number(quote.ask))?{ask:Number(quote.ask)}:{}),
+          ...(Number.isFinite(Number(quote.spread))?{spread:Number(quote.spread)}:{})
         };
       }
+      lastAcceptedQuote=status?.lastAcceptedQuote||null;
     } catch (error) {
       logProviderError('central-feed-signals',error);
     }
   }
   const result=await getPriceUnified(env);
-  if (!result.ok) return null;
+  if (!result.ok) return lastAcceptedQuote;
   return {...result.data,receivedAt:Date.now()};
 }
 
@@ -3107,6 +3298,19 @@ function parseAllow(v) {
   } catch { return []; }
 }
 
+async function enforceMt5IngestRequest(req,env,corsHeaders) {
+  if (req.method.toUpperCase()!=='POST') {
+    return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+  }
+  const configuredToken=String(env.MT5_INGEST_TOKEN||'').trim();
+  if (!configuredToken) return json({ok:false,error:'mt5_auth_not_configured'},corsHeaders,503);
+  const suppliedToken=String(req.headers.get('x-mt5-token')||'');
+  if (!(await constantTimeEqual(configuredToken,suppliedToken))) {
+    return json({ok:false,error:'unauthorized'},corsHeaders,401);
+  }
+  return null;
+}
+
 async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action) {
   if (req.method.toUpperCase() !== 'POST') {
     return json({ ok:false, error:'method_not_allowed' }, corsHeaders, 405);
@@ -3483,8 +3687,12 @@ async function priceFromResponse(response, source) {
   const price = Number(j.price ?? j.close ?? j.last);
   if (!Number.isFinite(price)) return null;
   const rawTs = j.ts ?? j.time ?? j.timestamp ?? j.updatedAt ?? j.updated_at;
+  let timestampInferred=rawTs==null||rawTs==='';
   let ts = typeof rawTs === 'string' ? Date.parse(rawTs) : Number(rawTs);
-  if (!Number.isFinite(ts)) ts = Date.now();
+  if (!Number.isFinite(ts)) {
+    ts=Date.now();
+    timestampInferred=true;
+  }
   if (ts < 1e12) ts *= 1000;
   const bid = Number(j.bid);
   const ask = Number(j.ask);
@@ -3492,6 +3700,7 @@ async function priceFromResponse(response, source) {
     source,
     price,
     ts,
+    timestampInferred,
     ...(Number.isFinite(bid) ? { bid } : {}),
     ...(Number.isFinite(ask) ? { ask } : {}),
     ...(Number.isFinite(bid) && Number.isFinite(ask) ? { spread: ask - bid } : {})
@@ -4558,7 +4767,7 @@ export {
   signalTelegramText,processTelegramOutbox,
   updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
-  isGoldMarketOpen,isFreshSignalQuote,
+  isGoldMarketOpen,isFreshSignalQuote,normalizeMt5TickPayload,isMt5QuoteFresh,currentPriceForSignals,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
   readProductionPerformance,buildPerformanceSummary,buildForwardValidationDashboard,signalResultR,
   ensureSignalTelemetrySchema,signalTelemetryRejectionReasons,buildSignalTelemetryRows,
