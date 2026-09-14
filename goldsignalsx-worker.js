@@ -703,7 +703,7 @@ export class GoldFeed extends DurableObject {
         ...previous,sessionId:tick.sessionId,lastSeenSequence:tick.sequence,
         lastSeenMt5Time:tick.mt5Time,lastSeenAt:receivedAt
       };
-      if (!sameSession) next.symbolMetadata=null;
+      if (!sameSession||(metadataProvided&&!metadataResult.ok)) next.symbolMetadata=null;
       if (metadataResult.ok) next.symbolMetadata=metadataResult.metadata;
       if (marketOpen&&hasNewTick) {
         next.lastAcceptedMt5Time=tick.mt5Time;

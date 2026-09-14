@@ -13,13 +13,22 @@ const rawMetadata={
   contractSize:100,tickSize:0.01,tickValue:1,tickValueProfit:1,tickValueLoss:1,
   volumeMin:0.01,volumeMax:100,volumeStep:0.01,volumeLimit:0,
   point:0.01,digits:2,tradeStopsLevel:0,
-  profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:0,tradeMode:4
+  profitCurrency:'USD',accountCurrency:'USD',
+  tradeCalcMode:'SYMBOL_CALC_MODE_CFD',tradeMode:4
 };
 const normalized=normalizeMt5SymbolMetadata(rawMetadata,{
   receivedAt:now,sessionId:'risk-session'
 });
 assert.equal(normalized.ok,true);
 assert.equal(normalized.metadata.brokerSymbol,'XAUUSDs');
+assert.equal(normalized.metadata.tradeCalcMode,'SYMBOL_CALC_MODE_CFD');
+assert.equal(normalizeMt5SymbolMetadata(
+  {...rawMetadata,tradeCalcMode:2},{receivedAt:now,sessionId:'risk-session'}
+).error,'metadata_unsupported_trade_calc_mode');
+assert.equal(normalizeMt5SymbolMetadata(
+  {...rawMetadata,tradeCalcMode:'SYMBOL_CALC_MODE_SERV_COLLATERAL'},
+  {receivedAt:now,sessionId:'risk-session'}
+).error,'metadata_unsupported_trade_calc_mode');
 assert.equal(normalizeMt5SymbolMetadata(
   {...rawMetadata,sessionId:'other'},{receivedAt:now,sessionId:'risk-session'}
 ).error,'metadata_session_mismatch');
@@ -84,6 +93,46 @@ assert.equal(sell.estimatedProfitTP1,310);
 assert.equal(sell.estimatedProfitTP2,496);
 assert.equal(sell.rrTP1,1.25);
 assert.equal(sell.rrTP2,2);
+
+const asymmetricNormalized=normalizeMt5SymbolMetadata({
+  ...rawMetadata,tickValueProfit:0.9,tickValueLoss:1.1
+},{receivedAt:now,sessionId:'risk-session'});
+assert.equal(asymmetricNormalized.ok,true);
+const asymmetricMetadata=mt5RiskMetadataStatus(asymmetricNormalized.metadata,{
+  now,sessionId:'risk-session',mt5Healthy:true
+});
+const asymmetricBuy=calculateRiskSizing({
+  signalId:buySignal.id,signal:buySignal,exposure:buyExposure,
+  accountValueUsd:100000,riskPercent:1,metadataStatus:asymmetricMetadata
+});
+assert.equal(asymmetricBuy.available,true);
+assert.equal(asymmetricBuy.suggestedLots,0.9);
+assert.equal(asymmetricBuy.estimatedLossAtSL,990);
+assert.equal(asymmetricBuy.estimatedProfitTP1,1012.5);
+assert.equal(asymmetricBuy.estimatedProfitTP2,1701);
+assert.equal(asymmetricBuy.rrTP1,1.0227);
+assert.equal(asymmetricBuy.rrTP2,1.7182);
+assert.equal(asymmetricBuy.rrTP1,
+  Math.round(asymmetricBuy.estimatedProfitTP1/asymmetricBuy.estimatedLossAtSL*10_000)/10_000);
+assert.equal(asymmetricBuy.rrTP2,
+  Math.round(asymmetricBuy.estimatedProfitTP2/asymmetricBuy.estimatedLossAtSL*10_000)/10_000);
+
+const asymmetricSell=calculateRiskSizing({
+  signalId:sellSignal.id,signal:sellSignal,
+  exposure:{status:'active',primarySignalId:sellSignal.id,primaryTf:'15m'},
+  accountValueUsd:50000,riskPercent:0.5,metadataStatus:asymmetricMetadata
+});
+assert.equal(asymmetricSell.available,true);
+assert.equal(asymmetricSell.suggestedLots,0.28);
+assert.equal(asymmetricSell.estimatedLossAtSL,246.4);
+assert.equal(asymmetricSell.estimatedProfitTP1,252);
+assert.equal(asymmetricSell.estimatedProfitTP2,403.2);
+assert.equal(asymmetricSell.rrTP1,1.0227);
+assert.equal(asymmetricSell.rrTP2,1.6364);
+assert.equal(asymmetricSell.rrTP1,
+  Math.round(asymmetricSell.estimatedProfitTP1/asymmetricSell.estimatedLossAtSL*10_000)/10_000);
+assert.equal(asymmetricSell.rrTP2,
+  Math.round(asymmetricSell.estimatedProfitTP2/asymmetricSell.estimatedLossAtSL*10_000)/10_000);
 
 const rounded=calculateRiskSizing({
   signalId:buySignal.id,signal:buySignal,exposure:buyExposure,

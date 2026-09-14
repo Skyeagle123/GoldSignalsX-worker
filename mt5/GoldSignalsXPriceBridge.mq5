@@ -43,17 +43,18 @@ string BuildSymbolMetadata(const string mt5Symbol,const long observedAtMs)
    const double point=SymbolInfoDouble(mt5Symbol,SYMBOL_POINT);
    const long digits=SymbolInfoInteger(mt5Symbol,SYMBOL_DIGITS);
    const long stopsLevel=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_STOPS_LEVEL);
-   const long calcMode=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_CALC_MODE);
+   const ENUM_SYMBOL_CALC_MODE calcMode=(ENUM_SYMBOL_CALC_MODE)SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_CALC_MODE);
+   const string calcModeName=EnumToString(calcMode);
    const long tradeMode=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_MODE);
    const string profitCurrency=SymbolInfoString(mt5Symbol,SYMBOL_CURRENCY_PROFIT);
    const string accountCurrency=AccountInfoString(ACCOUNT_CURRENCY);
    return StringFormat(
-      "{\"source\":\"mt5\",\"canonicalSymbol\":\"%s\",\"brokerSymbol\":\"%s\",\"sessionId\":\"%s\",\"observedAt\":%I64d,\"contractSize\":%s,\"tickSize\":%s,\"tickValue\":%s,\"tickValueProfit\":%s,\"tickValueLoss\":%s,\"volumeMin\":%s,\"volumeMax\":%s,\"volumeStep\":%s,\"volumeLimit\":%s,\"point\":%s,\"digits\":%I64d,\"tradeStopsLevel\":%I64d,\"profitCurrency\":\"%s\",\"accountCurrency\":\"%s\",\"tradeCalcMode\":%I64d,\"tradeMode\":%I64d}",
+      "{\"source\":\"mt5\",\"canonicalSymbol\":\"%s\",\"brokerSymbol\":\"%s\",\"sessionId\":\"%s\",\"observedAt\":%I64d,\"contractSize\":%s,\"tickSize\":%s,\"tickValue\":%s,\"tickValueProfit\":%s,\"tickValueLoss\":%s,\"volumeMin\":%s,\"volumeMax\":%s,\"volumeStep\":%s,\"volumeLimit\":%s,\"point\":%s,\"digits\":%I64d,\"tradeStopsLevel\":%I64d,\"profitCurrency\":\"%s\",\"accountCurrency\":\"%s\",\"tradeCalcMode\":\"%s\",\"tradeMode\":%I64d}",
       JsonEscape(InpCanonicalSymbol),JsonEscape(mt5Symbol),JsonEscape(bridgeSessionId),observedAtMs,
       JsonNumber(contractSize),JsonNumber(tickSize),JsonNumber(tickValue),
       JsonNumber(tickValueProfit),JsonNumber(tickValueLoss),
       JsonNumber(volumeMin),JsonNumber(volumeMax),JsonNumber(volumeStep),JsonNumber(volumeLimit),
-      JsonNumber(point),digits,stopsLevel,JsonEscape(profitCurrency),JsonEscape(accountCurrency),calcMode,tradeMode
+      JsonNumber(point),digits,stopsLevel,JsonEscape(profitCurrency),JsonEscape(accountCurrency),JsonEscape(calcModeName),tradeMode
    );
 }
 

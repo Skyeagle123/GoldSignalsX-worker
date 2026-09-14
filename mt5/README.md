@@ -60,7 +60,7 @@ it never sends account number, login, balance, equity, orders, or credentials.
     "tradeStopsLevel": 0,
     "profitCurrency": "USD",
     "accountCurrency": "USD",
-    "tradeCalcMode": 0,
+    "tradeCalcMode": "SYMBOL_CALC_MODE_CFD",
     "tradeMode": 4
   }
 }

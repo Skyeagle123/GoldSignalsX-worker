@@ -5,6 +5,19 @@ const DEFAULT_RISK_MAX_LOTS = 5;
 const DEFAULT_METADATA_MAX_AGE_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_ACCOUNT_VALUE_USD = 1_000_000_000;
 const FUTURE_TOLERANCE_MS = 30 * 1000;
+const SUPPORTED_TICK_VALUE_CALC_MODES = Object.freeze([
+  'SYMBOL_CALC_MODE_FOREX',
+  'SYMBOL_CALC_MODE_FOREX_NO_LEVERAGE',
+  'SYMBOL_CALC_MODE_FUTURES',
+  'SYMBOL_CALC_MODE_CFD',
+  'SYMBOL_CALC_MODE_CFDINDEX',
+  'SYMBOL_CALC_MODE_CFDLEVERAGE',
+  'SYMBOL_CALC_MODE_EXCH_STOCKS',
+  'SYMBOL_CALC_MODE_EXCH_FUTURES',
+  'SYMBOL_CALC_MODE_EXCH_FUTURES_FORTS',
+  'SYMBOL_CALC_MODE_EXCH_STOCKS_MOEX'
+]);
+
 
 function finitePositive(value) {
   const number=Number(value);
@@ -61,8 +74,8 @@ function metadataFieldError(metadata) {
   if (!Number.isInteger(Number(metadata.tradeStopsLevel))||Number(metadata.tradeStopsLevel)<0) {
     return 'metadata_invalid_tradeStopsLevel';
   }
-  if (!Number.isInteger(Number(metadata.tradeCalcMode))||Number(metadata.tradeCalcMode)<0) {
-    return 'metadata_invalid_tradeCalcMode';
+  if (!SUPPORTED_TICK_VALUE_CALC_MODES.includes(String(metadata.tradeCalcMode||''))) {
+    return 'metadata_unsupported_trade_calc_mode';
   }
   if (Number(metadata.volumeMax)<Number(metadata.volumeMin)||
       Number(metadata.volumeStep)>Number(metadata.volumeMax)||
@@ -125,7 +138,7 @@ function normalizeMt5SymbolMetadata(value,options={}) {
     tradeStopsLevel:Number(value?.tradeStopsLevel),
     profitCurrency:normalizeCurrency(value?.profitCurrency),
     accountCurrency:normalizeCurrency(value?.accountCurrency),
-    tradeCalcMode:Number(value?.tradeCalcMode),
+    tradeCalcMode:String(value?.tradeCalcMode||'').trim().toUpperCase(),
     tradeMode:Number.isFinite(Number(value?.tradeMode))?Number(value.tradeMode):null
   };
   const error=metadataFieldError(metadata)||metadataConsistencyError(metadata);
@@ -226,10 +239,9 @@ function calculateRiskSizing(input={}) {
 
   const slDistance=Math.abs(entry-sl);
   const tp1Distance=Math.abs(tp1-entry),tp2Distance=Math.abs(tp2-entry);
-  const rrTP1=tp1Distance/slDistance,rrTP2=tp2Distance/slDistance;
   const accountValueUsd=Number(input.accountValueUsd);
   const riskPercent=Number(input.riskPercent);
-  const partial={metadataStatus,signal:signalSummary,riskPercent,slDistance,rrTP1,rrTP2};
+  const partial={metadataStatus,signal:signalSummary,riskPercent,slDistance};
   if (!Number.isFinite(accountValueUsd)||accountValueUsd<=0||accountValueUsd>limits.maxAccountValueUsd) {
     return positionSizeUnavailable('invalid_account_value',partial);
   }
@@ -280,6 +292,8 @@ function calculateRiskSizing(input={}) {
   }
   const estimatedProfitTP1=suggestedLots*(tp1Distance/Number(metadata.tickSize))*Number(metadata.tickValueProfit);
   const estimatedProfitTP2=suggestedLots*(tp2Distance/Number(metadata.tickSize))*Number(metadata.tickValueProfit);
+  const rrTP1=estimatedProfitTP1/estimatedLossAtSL;
+  const rrTP2=estimatedProfitTP2/estimatedLossAtSL;
 
   return {
     ...baseResult(metadataStatus),available:true,status:'POSITION_SIZE_AVAILABLE',reason:'',

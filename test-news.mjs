@@ -299,7 +299,7 @@ const mt5SymbolMeta=(overrides={})=>({
   contractSize:100,tickSize:0.01,tickValue:1,tickValueProfit:1,tickValueLoss:1,
   volumeMin:0.01,volumeMax:100,volumeStep:0.01,volumeLimit:0,
   point:0.01,digits:2,tradeStopsLevel:0,
-  profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:0,tradeMode:4,
+  profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:'SYMBOL_CALC_MODE_CFD',tradeMode:4,
   ...overrides
 });
 assert.equal(normalizeMt5TickPayload(mt5Payload(),mt5Start).ok,true);
@@ -486,6 +486,22 @@ const newSessionMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
 assert.equal(newSessionMt5.accepted,true);
 assert.equal(newSessionMt5.metadata.accepted,true);
 assert.equal(mt5Feed.getRiskSizingMetadataStatus().metadata.sessionId,'phase-b-risk-session');
+
+mt5Now+=1_000;
+const invalidSameSessionMetadataMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:102.15,ask:102.35,mt5Time:mt5Now,sentAt:mt5Now,sequence:2,
+  sessionId:'phase-b-risk-session',
+  symbolMeta:mt5SymbolMeta({
+    sessionId:'phase-b-risk-session',observedAt:mt5Now,
+    tradeCalcMode:'SYMBOL_CALC_MODE_SERV_COLLATERAL'
+  })
+}));
+assert.equal(invalidSameSessionMetadataMt5.accepted,true,
+  'invalid metadata must not reject an otherwise valid price tick');
+assert.equal(invalidSameSessionMetadataMt5.metadata.accepted,false);
+assert.equal(invalidSameSessionMetadataMt5.metadata.reason,'metadata_unsupported_trade_calc_mode');
+assert.equal(mt5Feed.getRiskSizingMetadataStatus().reason,'metadata_missing',
+  'invalid metadata in the same session must invalidate the previous snapshot');
 
 mt5Now+=1_000;
 const invalidMetadataMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
@@ -2638,7 +2654,7 @@ const riskIntegrationMetadata={
     contractSize:100,tickSize:0.01,tickValue:1,tickValueProfit:1,tickValueLoss:1,
     volumeMin:0.01,volumeMax:100,volumeStep:0.01,volumeLimit:0,
     point:0.01,digits:2,tradeStopsLevel:0,
-    profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:0,tradeMode:4
+    profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:'SYMBOL_CALC_MODE_CFD',tradeMode:4
   }
 };
 let riskIntegrationWrites=0;
