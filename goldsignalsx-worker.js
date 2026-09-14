@@ -22,6 +22,14 @@ import {
   normalizeRiskSizingLimits,
   positionSizeUnavailable
 } from './risk-sizing.js';
+import {
+  calculateRiskBudget,
+  createImmutableRiskSnapshot,
+  normalizeRiskBudgetLimits,
+  normalizeStoredRiskSnapshot,
+  unavailableRiskBudget,
+  utcBudgetPeriodBounds
+} from './risk-budget.js';
 
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
@@ -48,6 +56,8 @@ import {
 //   TWELVE_DATA_API_KEY (secret)
 //   MT5_INGEST_TOKEN (secret)
 //   RISK_MAX_PERCENT / RISK_MAX_LOTS / RISK_METADATA_MAX_AGE_MS (non-secret safety caps)
+//   RISK_MAX_DAILY_LOSS_USD / RISK_MAX_WEEKLY_LOSS_USD / RISK_MAX_TOTAL_EXPOSURE_USD
+//   RISK_BUDGET_TIMEZONE (UTC only in Phase 3)
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
@@ -1682,10 +1692,100 @@ function riskSizingLimitsFromEnv(env={}) {
   });
 }
 
+function riskBudgetLimitsFromEnv(env={}) {
+  return normalizeRiskBudgetLimits({
+    maxRiskPercent:Number(env.RISK_MAX_PERCENT),
+    maxDailyLossUsd:Number(env.RISK_MAX_DAILY_LOSS_USD),
+    maxWeeklyLossUsd:Number(env.RISK_MAX_WEEKLY_LOSS_USD),
+    maxTotalExposureUsd:Number(env.RISK_MAX_TOTAL_EXPOSURE_USD),
+    timezone:String(env.RISK_BUDGET_TIMEZONE||'UTC')
+  });
+}
+
+async function storeImmutableRiskSnapshot(env,sizing,recordedAt=Date.now()) {
+  if (!env.GSX_DB) return {ok:false,error:'risk_snapshot_storage_unavailable'};
+  const built=createImmutableRiskSnapshot(sizing,recordedAt);
+  if (!built.ok) return built;
+  const snapshot=built.snapshot;
+  await ensurePerformanceSchema(env);
+  await env.GSX_DB.prepare(`
+    INSERT OR IGNORE INTO production_signal_risk_snapshots (
+      signal_id,schema_version,timeframe,side,account_basis,account_value_usd,risk_percent,risk_amount_usd,
+      suggested_lots,estimated_loss_at_sl,entry,contract_size,notional_usd,
+      metadata_session_id,metadata_observed_at,created_at,recorded_at
+    )
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17
+    FROM production_signals
+    WHERE signal_id=?1 AND source='production' AND timeframe=?3 AND direction=?4
+      AND created_at=?16 AND entry=?11
+  `).bind(
+    snapshot.signalId,snapshot.schemaVersion,snapshot.timeframe,snapshot.side,
+    snapshot.accountBasis,snapshot.accountValueUsd,snapshot.riskPercent,snapshot.riskAmountUsd,
+    snapshot.suggestedLots,snapshot.estimatedLossAtSL,snapshot.entry,snapshot.contractSize,
+    snapshot.notionalUsd,snapshot.metadataSessionId,snapshot.metadataObservedAt,
+    snapshot.createdAt,snapshot.recordedAt
+  ).run();
+  const row=await env.GSX_DB.prepare(`
+    SELECT signal_id,schema_version,timeframe,side,account_basis,account_value_usd,risk_percent,risk_amount_usd,
+      suggested_lots,estimated_loss_at_sl,entry,contract_size,notional_usd,
+      metadata_session_id,metadata_observed_at,created_at,recorded_at
+    FROM production_signal_risk_snapshots WHERE signal_id=?1
+  `).bind(snapshot.signalId).first();
+  const stored=normalizeStoredRiskSnapshot(row);
+  if (!stored) return {ok:false,error:'risk_snapshot_official_signal_missing'};
+  const numericFields=[
+    'accountValueUsd','riskPercent','riskAmountUsd','suggestedLots','estimatedLossAtSL',
+    'entry','contractSize','notionalUsd','createdAt'
+  ];
+  const mismatch=stored.signalId!==snapshot.signalId||stored.timeframe!==snapshot.timeframe||
+    stored.side!==snapshot.side||stored.accountBasis!==snapshot.accountBasis||
+    numericFields.some(field=>Math.abs(Number(stored[field])-Number(snapshot[field]))>1e-8);
+  return mismatch
+    ?{ok:false,error:'risk_snapshot_immutable_mismatch',snapshot:stored}
+    :{ok:true,snapshot:stored};
+}
+
+async function readRealizedLossRows(env,periods) {
+  if (!env.GSX_DB||!periods) return {ok:false,error:'realized_loss_data_unavailable'};
+  const result=await env.GSX_DB.prepare(`
+    SELECT signals.signal_id,signals.final_status,signals.closed_at,
+      snapshots.estimated_loss_at_sl
+    FROM production_signals signals
+    LEFT JOIN production_signal_risk_snapshots snapshots
+      ON snapshots.signal_id=signals.signal_id
+    WHERE signals.source='production' AND signals.final_status='sl'
+      AND signals.closed_at>=?1 AND signals.closed_at<=?2
+    ORDER BY signals.closed_at,signals.signal_id
+  `).bind(periods.weekStart,periods.asOf).all();
+  return {ok:true,rows:result.results||[]};
+}
+
+async function attachRiskBudgetSafely(env,sizing,exposure,now=Date.now()) {
+  const limits=riskBudgetLimitsFromEnv(env);
+  const periods=utcBudgetPeriodBounds(now);
+  if (!sizing?.available) {
+    return unavailableRiskBudget('position_sizing_unavailable',{limits,periods});
+  }
+  try {
+    const stored=await storeImmutableRiskSnapshot(env,sizing,now);
+    if (!stored.ok) return unavailableRiskBudget(stored.error,{limits,periods,snapshot:stored.snapshot});
+    const realized=await readRealizedLossRows(env,periods);
+    if (!realized.ok) return unavailableRiskBudget(realized.error,{limits,periods,snapshot:stored.snapshot});
+    return calculateRiskBudget({now,limits,snapshot:stored.snapshot,exposure,realizedLossRows:realized.rows});
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'risk budget calculation failed',
+      error:error instanceof Error?error.message:String(error)
+    }));
+    return unavailableRiskBudget('risk_budget_storage_unavailable',{limits,periods});
+  }
+}
+
 async function calculateOfficialActiveRiskSizing(env,input={}) {
   const limits=riskSizingLimitsFromEnv(env);
   if (!env.GOLD_FEED||!env.GSX_KV) {
-    return positionSizeUnavailable('risk_sizing_state_unavailable');
+    const sizing=positionSizeUnavailable('risk_sizing_state_unavailable');
+    return {...sizing,riskBudget:unavailableRiskBudget('position_sizing_unavailable')};
   }
   try {
     const feed=env.GOLD_FEED.getByName('xau-usd');
@@ -1697,19 +1797,22 @@ async function calculateOfficialActiveRiskSizing(env,input={}) {
     if (exposure?.status==='active'&&exposure.primarySignalId&&exposure.primaryTf) {
       signal=await readKvJson(env,`signal:state:${exposure.primaryTf}`);
     }
-    return calculateRiskSizing({
+    const sizing=calculateRiskSizing({
       signalId:String(input?.signalId||''),
       signal,exposure,metadataStatus,limits,
       accountBasis:String(input?.accountBasis||'equity'),
       accountValueUsd:Number(input?.accountValueUsd),
       riskPercent:Number(input?.riskPercent)
     });
+    const riskBudget=await attachRiskBudgetSafely(env,sizing,exposure,Date.now());
+    return {...sizing,riskBudget};
   } catch (error) {
     console.error(JSON.stringify({
       message:'risk sizing calculation failed',
       error:error instanceof Error?error.message:String(error)
     }));
-    return positionSizeUnavailable('risk_sizing_state_unavailable');
+    const sizing=positionSizeUnavailable('risk_sizing_state_unavailable');
+    return {...sizing,riskBudget:unavailableRiskBudget('position_sizing_unavailable')};
   }
 }
 
@@ -4751,6 +4854,7 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signals (signal_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT 'production' CHECK (source='production'), symbol TEXT NOT NULL DEFAULT 'XAUUSD', timeframe TEXT NOT NULL, direction TEXT NOT NULL CHECK (direction IN ('buy','sell')), created_at INTEGER NOT NULL, signal_bar_ts INTEGER NOT NULL DEFAULT 0, entry REAL NOT NULL, tp1 REAL NOT NULL, tp2 REAL NOT NULL, sl REAL NOT NULL, confidence REAL NOT NULL DEFAULT 0, score REAL, reasons_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', final_status TEXT, tp1_at INTEGER, tp1_price REAL, tp2_at INTEGER, tp2_price REAL, sl_at INTEGER, sl_price REAL, expired_at INTEGER, expired_price REAL, closed_at INTEGER, result_r REAL, recorded_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_created ON production_signals(created_at DESC,signal_id DESC);');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created ON production_signals(timeframe,created_at DESC);');
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_final_closed ON production_signals(final_status,closed_at,signal_id);');
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_signal_quality (primary_signal_id TEXT PRIMARY KEY, metrics_json TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
@@ -4759,6 +4863,8 @@ async function ensurePerformanceSchema(env) {
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_mtf_analysis_updated ON production_mtf_analysis(updated_at DESC,primary_signal_id);');
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_news_risk (event_id TEXT PRIMARY KEY, primary_signal_id TEXT NOT NULL, window_id TEXT NOT NULL, transition TEXT NOT NULL CHECK (transition IN ('started','changed','ended')), event_at INTEGER NOT NULL, risk_json TEXT NOT NULL, recorded_at INTEGER NOT NULL, UNIQUE(primary_signal_id,window_id,transition), FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_news_risk_signal_time ON production_signal_news_risk(primary_signal_id,event_at,event_id);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_risk_snapshots (signal_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1), timeframe TEXT NOT NULL, side TEXT NOT NULL CHECK (side IN ('buy','sell')), account_basis TEXT NOT NULL CHECK (account_basis IN ('balance','equity')), account_value_usd REAL NOT NULL CHECK (account_value_usd>0), risk_percent REAL NOT NULL CHECK (risk_percent>0), risk_amount_usd REAL NOT NULL CHECK (risk_amount_usd>0), suggested_lots REAL NOT NULL CHECK (suggested_lots>0), estimated_loss_at_sl REAL NOT NULL CHECK (estimated_loss_at_sl>0), entry REAL NOT NULL CHECK (entry>0), contract_size REAL NOT NULL CHECK (contract_size>0), notional_usd REAL NOT NULL CHECK (notional_usd>0), metadata_session_id TEXT NOT NULL, metadata_observed_at INTEGER NOT NULL, created_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
+  await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_risk_snapshots_created ON production_signal_risk_snapshots(created_at DESC,signal_id);');
 }
 
 async function ensureSignalTelemetrySchema(env) {
@@ -4885,6 +4991,7 @@ export {
   activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
   syncActiveExposureNewsRisk,readExposureSnapshot,
   createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation,
-  riskSizingLimitsFromEnv,calculateOfficialActiveRiskSizing,
+  riskSizingLimitsFromEnv,riskBudgetLimitsFromEnv,storeImmutableRiskSnapshot,
+  readRealizedLossRows,attachRiskBudgetSafely,calculateOfficialActiveRiskSizing,
   runSignalCycle
 };

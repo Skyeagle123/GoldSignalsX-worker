@@ -61,6 +61,8 @@ CREATE INDEX IF NOT EXISTS idx_production_signals_created
   ON production_signals(created_at DESC, signal_id DESC);
 CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created
   ON production_signals(timeframe, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_production_signals_final_closed
+  ON production_signals(final_status, closed_at, signal_id);
 
 CREATE TABLE IF NOT EXISTS production_signal_events (
   event_id TEXT PRIMARY KEY,
@@ -77,6 +79,31 @@ CREATE TABLE IF NOT EXISTS production_signal_events (
 
 CREATE INDEX IF NOT EXISTS idx_production_events_signal_time
   ON production_signal_events(signal_id, event_at, event_type);
+
+-- Immutable advisory risk snapshot captured by the first valid sizing request for a signal.
+CREATE TABLE IF NOT EXISTS production_signal_risk_snapshots (
+  signal_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version = 1),
+  timeframe TEXT NOT NULL,
+  side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+  account_basis TEXT NOT NULL CHECK (account_basis IN ('balance', 'equity')),
+  account_value_usd REAL NOT NULL CHECK (account_value_usd > 0),
+  risk_percent REAL NOT NULL CHECK (risk_percent > 0),
+  risk_amount_usd REAL NOT NULL CHECK (risk_amount_usd > 0),
+  suggested_lots REAL NOT NULL CHECK (suggested_lots > 0),
+  estimated_loss_at_sl REAL NOT NULL CHECK (estimated_loss_at_sl > 0),
+  entry REAL NOT NULL CHECK (entry > 0),
+  contract_size REAL NOT NULL CHECK (contract_size > 0),
+  notional_usd REAL NOT NULL CHECK (notional_usd > 0),
+  metadata_session_id TEXT NOT NULL,
+  metadata_observed_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  recorded_at INTEGER NOT NULL,
+  FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_production_risk_snapshots_created
+  ON production_signal_risk_snapshots(created_at DESC, signal_id);
 
 -- Permanent official economic calendar. KV is only a short-lived response cache.
 CREATE TABLE IF NOT EXISTS economic_calendar_events (

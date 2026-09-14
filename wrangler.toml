@@ -25,6 +25,10 @@ NEWS_GEOPOLITICAL_AFTER_MIN = "15"
 RISK_MAX_PERCENT = "2"
 RISK_MAX_LOTS = "5"
 RISK_METADATA_MAX_AGE_MS = "900000"
+RISK_MAX_DAILY_LOSS_USD = "0" # 0 = unconfigured; risk budget reports unavailable
+RISK_MAX_WEEKLY_LOSS_USD = "0" # 0 = unconfigured; risk budget reports unavailable
+RISK_MAX_TOTAL_EXPOSURE_USD = "0" # notional USD; 0 = unconfigured
+RISK_BUDGET_TIMEZONE = "UTC"
 
 # ======== KV (يبقى كما هو) ========
 [[kv_namespaces]]
