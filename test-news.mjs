@@ -1540,6 +1540,85 @@ await runSignalCycle(closureEnv,null,normalizeSignalFilters());
 assert.equal(closureExposureInputs[1].candidates.length,0,'a weekend retry must remain signal-free');
 assert.equal([...closureKvValues.keys()].filter(key=>key===`signal:log:${cronSignal.id}:expired`).length,1,
   'weekend retries must keep one idempotent expiry lifecycle record');
+
+const invalidSessionDb=new MemoryD1();
+invalidSessionDb.database.exec("CREATE TABLE bars_v2 (tf INTEGER NOT NULL,t INTEGER NOT NULL,o REAL NOT NULL,h REAL NOT NULL,l REAL NOT NULL,c REAL NOT NULL,v REAL NOT NULL DEFAULT 0,provider TEXT NOT NULL DEFAULT 'test',PRIMARY KEY(tf,t));");
+const invalidSessionKvValues=new Map();
+const invalidSessionKv={
+  get:async (key,type)=>{
+    const value=invalidSessionKvValues.get(key);
+    return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
+  },
+  put:async (key,value)=>invalidSessionKvValues.set(key,value)
+};
+const invalidDailySignal=productionSignal('1d:1789171200000:sell',incidentSunday,{
+  tf:'1d',side:'sell',signalBarTs:Date.UTC(2026,8,12),lastProcessedBarTs:Date.UTC(2026,8,12),
+  entry:4348.36302,tp1:4216.520358163763,tp2:4126.867348115122,sl:4453.837149468989,
+  lastPrice:4332.756
+});
+invalidSessionKvValues.set('signal:state:1d',JSON.stringify(invalidDailySignal));
+let invalidSessionExposure={
+  symbol:'XAUUSD',status:'active',side:'sell',maxPositions:1,
+  primarySignalId:invalidDailySignal.id,primaryTf:'1d',openedAt:invalidDailySignal.createdAt,
+  updatedAt:invalidDailySignal.createdAt,cooldownUntil:0,confirmations:[],blocked:[]
+};
+let invalidSessionTelegramEvents=0;
+const invalidSessionExposureInputs=[];
+const invalidSessionFeed={
+  status:async()=>({latestQuote:{
+    event:'price',price:4332.756,bid:4332.7,ask:4332.8,
+    ts:Date.UTC(2026,8,14,7,5,38),receivedAt:Date.UTC(2026,8,14,7,5,38),source:'mt5'
+  }}),
+  manageGoldExposure:async input=>{
+    invalidSessionExposureInputs.push(input);
+    const result=decideGoldExposure(invalidSessionExposure,input);
+    invalidSessionExposure=result.state;
+    return result;
+  },
+  goldExposureStatus:async()=>invalidSessionExposure,
+  queueTelegramEvent:async()=>{ invalidSessionTelegramEvents+=1; return {ok:true}; }
+};
+const invalidSessionEnv={
+  GSX_DB:invalidSessionDb,GSX_KV:invalidSessionKv,TWELVE_DATA_API_KEY:'configured',
+  GOLD_FEED:{getByName:()=>invalidSessionFeed},SIGNAL_ALERTS_ENABLED:'1'
+};
+const invalidSessionCleanupAt=Date.UTC(2026,8,14,7,5,38);
+Date.now=()=>invalidSessionCleanupAt;
+await runSignalCycle(invalidSessionEnv,null,normalizeSignalFilters());
+const cleanedDailySignal=JSON.parse(invalidSessionKvValues.get('signal:state:1d'));
+assert.equal(cleanedDailySignal.status,'expired','a legacy signal created during market closure must expire neutrally');
+assert.equal(cleanedDailySignal.expiryReason,'invalid_market_session_created_at');
+assert.equal(invalidSessionExposure.status,'flat','the invalid signal must release its linked exposure');
+assert.equal(invalidSessionExposure.closeReason,'expired');
+assert.equal(invalidSessionTelegramEvents,0,'legacy cleanup must not emit a Telegram trading event');
+const invalidSessionSignalsResponse=await worker.default.fetch(
+  new Request('https://example.com/signals?tf=1d'),invalidSessionEnv,{}
+);
+const invalidSessionSignalsPayload=await invalidSessionSignalsResponse.json();
+assert.equal(invalidSessionSignalsPayload.signals[0].state.status,'expired');
+assert.equal(invalidSessionSignalsPayload.exposure.status,'flat',
+  'Current Advice inputs must no longer contain an active signal or exposure');
+const exposureClosedAt=invalidSessionExposure.closedAt;
+await runSignalCycle(invalidSessionEnv,null,normalizeSignalFilters());
+assert.equal(invalidSessionTelegramEvents,0,'cleanup retry must remain silent');
+assert.equal(invalidSessionExposure.closedAt,exposureClosedAt,'cleanup retry must not close the exposure again');
+assert.equal(
+  invalidSessionDb.database.prepare(
+    "SELECT COUNT(*) AS count FROM production_signal_events WHERE signal_id=? AND event_type='expired'"
+  ).get(invalidDailySignal.id).count,
+  1,
+  'cleanup retry must retain one idempotent expiry event'
+);
+assert.equal([...invalidSessionKvValues.keys()].filter(
+  key=>key===`signal:log:${invalidDailySignal.id}:expired`
+).length,1,'cleanup retry must retain one idempotent KV expiry record');
+const nextPrimary=productionSignal('5m:post-cleanup:buy',invalidSessionCleanupAt+300_000);
+const postCleanupAdmission=decideGoldExposure(invalidSessionExposure,{
+  now:invalidSessionCleanupAt+300_000,officialSignals:[cleanedDailySignal],candidates:[nextPrimary]
+});
+assert.equal(postCleanupAdmission.decisions[0].decision,'accepted',
+  'other timeframes must be eligible for a new Primary Signal after cleanup');
+assert.equal(postCleanupAdmission.state.primarySignalId,nextPrimary.id);
 Date.now=providerClock;
 
 const qualityBase=Date.UTC(2026,8,1,9,0,0);

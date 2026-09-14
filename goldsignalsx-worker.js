@@ -3150,6 +3150,23 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       if (existing.status==='tp1'||existing.tp1Hit) {
         await recordProductionPerformanceSafely(env,existing,'tp1');
       }
+      const existingCreatedAt=Number(existing.createdAt);
+      if (Number.isFinite(existingCreatedAt)&&!isGoldMarketOpen(existingCreatedAt)) {
+        const expired={
+          ...existing,status:'expired',updatedAt:now,closedAt:now,
+          expiryReason:'invalid_market_session_created_at'
+        };
+        await Promise.all([
+          env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(expired),{expirationTtl:90*24*60*60}),
+          env.GSX_KV.put(
+            `signal:log:${existing.id}:expired`,JSON.stringify({...expired,event:'expired'}),
+            {expirationTtl:90*24*60*60}
+          ),
+          recordProductionPerformanceSafely(env,expired,'expired')
+        ]);
+        currentSignals[tf]=expired;
+        continue;
+      }
       const lifecycle=updateSignalLifecycleAcrossBars(
         existing,trackingBars,liveFresh?live.price:NaN,now
       );
