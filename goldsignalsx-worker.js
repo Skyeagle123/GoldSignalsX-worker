@@ -15,6 +15,13 @@ import {
   formatCalendarEvent,
   normalizeCalendarSettings
 } from './economic-calendar.js';
+import {
+  calculateRiskSizing,
+  mt5RiskMetadataStatus,
+  normalizeMt5SymbolMetadata,
+  normalizeRiskSizingLimits,
+  positionSizeUnavailable
+} from './risk-sizing.js';
 
 // GoldSignalsX Worker — OANDA-ready unified XAU/USD price + candles
 // Endpoints:
@@ -22,7 +29,8 @@ import {
 //   GET  /health             → { ok: true }
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
-//   POST /mt5/tick           → authenticated read-only MT5 Bid/Ask ingest
+//   POST /mt5/tick           → authenticated read-only MT5 Bid/Ask + optional symbol metadata ingest
+//   POST /risk-sizing        → advisory server-side sizing for the matching Official Active Signal
 //   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → سياق إخباري مقروء فقط (GDELT)
@@ -39,12 +47,13 @@ import {
 //   OANDA_TOKEN + OANDA_ACCOUNT_ID (secrets), OANDA_ENV, OANDA_INSTRUMENT
 //   TWELVE_DATA_API_KEY (secret)
 //   MT5_INGEST_TOKEN (secret)
+//   RISK_MAX_PERCENT / RISK_MAX_LOTS / RISK_METADATA_MAX_AGE_MS (non-secret safety caps)
 //   GSX_KV (اختياري), GSX_DB (اختياري)
 //   KV_OFF = "1" لتعطيل القراءة/الكتابة على KV بالكامل
 //   TELEGRAM_TOKEN / TELEGRAM_CHAT
 //   GSX_WRITE_TOKEN (secret; required for every write endpoint)
 
-const APP_VERSION = '2026.09.01.4';
+const APP_VERSION = '2026.09.14.1';
 const SIGNAL_FILTERS_KEY = 'system:signal-filters';
 const TICK_HISTORY_RETENTION_MS = 60 * 60 * 1000;
 const TICK_HISTORY_MAX = 2400;
@@ -54,7 +63,8 @@ const SIGNAL_QUOTE_PROVIDER_MAX_AGE_MS = 90 * 1000;
 const SIGNAL_QUOTE_FUTURE_TOLERANCE_MS = 30 * 1000;
 const MT5_PRIMARY_STALE_MS = 15 * 1000;
 const MT5_SENT_MAX_AGE_MS = 60 * 1000;
-const MT5_INGEST_BODY_BYTES = 2048;
+const MT5_INGEST_BODY_BYTES = 4096;
+const RISK_SIZING_BODY_BYTES = 4096;
 const GOLD_MARKET_CLOCK = new Intl.DateTimeFormat('en-US',{
   timeZone:'America/New_York',weekday:'short',hour:'2-digit',minute:'2-digit',hour12:false
 });
@@ -606,6 +616,7 @@ export class GoldFeed extends DurableObject {
     const now=Date.now();
     const selection=this.selectLiveQuote(now);
     const mt5Tick=this.mt5State?.lastTick||null;
+    const metadataStatus=this.getRiskSizingMetadataStatus({now});
     return {
       ok: Boolean(selection.quote),
       provider: selection.quote?.source||'',
@@ -621,9 +632,21 @@ export class GoldFeed extends DurableObject {
         configured:Boolean(String(this.env.MT5_INGEST_TOKEN||'').trim()),
         healthy:isMt5QuoteFresh(mt5Tick,now),
         lastSeenAt:Number(this.mt5State?.lastSeenAt||0),
-        lastAcceptedAt:Number(this.mt5State?.lastAcceptedAt||0)
+        lastAcceptedAt:Number(this.mt5State?.lastAcceptedAt||0),
+        symbolMetadata:metadataStatus
       }
     };
+  }
+
+  getRiskSizingMetadataStatus(options={}) {
+    const now=Number(options.now??Date.now());
+    const maxAgeMs=Number(options.maxAgeMs);
+    const mt5Tick=this.mt5State?.lastTick||null;
+    return mt5RiskMetadataStatus(this.mt5State?.symbolMetadata||null,{
+      now,sessionId:String(this.mt5State?.sessionId||''),
+      mt5Healthy:isMt5QuoteFresh(mt5Tick,now),
+      ...(Number.isFinite(maxAgeMs)&&maxAgeMs>0?{maxAgeMs}:{})
+    });
   }
 
   selectLiveQuote(now=Date.now()) {
@@ -651,6 +674,18 @@ export class GoldFeed extends DurableObject {
     const normalized=normalizeMt5TickPayload(input,receivedAt);
     if (!normalized.ok) return normalized;
     const tick=normalized.tick;
+    const metadataProvided=input?.symbolMeta!=null;
+    const metadataResult=metadataProvided
+      ?normalizeMt5SymbolMetadata(input.symbolMeta,{
+        receivedAt,sessionId:tick.sessionId,
+        maxAgeMs:Number(this.env.RISK_METADATA_MAX_AGE_MS)
+      })
+      :{ok:false,error:'metadata_not_provided'};
+    const metadataAck=metadataProvided
+      ?(metadataResult.ok
+        ?{provided:true,accepted:true,status:'MT5_METADATA_ACCEPTED'}
+        :{provided:true,accepted:false,status:'POSITION_SIZE_UNAVAILABLE',reason:metadataResult.error})
+      :{provided:false,accepted:false,status:'POSITION_SIZE_UNAVAILABLE',reason:'metadata_not_provided'};
     const ordered=await this.ctx.storage.transaction(async transaction=>{
       const previous=await transaction.get('mt5State')||this.mt5State||{};
       const sameSession=String(previous.sessionId||'')===tick.sessionId;
@@ -668,6 +703,8 @@ export class GoldFeed extends DurableObject {
         ...previous,sessionId:tick.sessionId,lastSeenSequence:tick.sequence,
         lastSeenMt5Time:tick.mt5Time,lastSeenAt:receivedAt
       };
+      if (!sameSession) next.symbolMetadata=null;
+      if (metadataResult.ok) next.symbolMetadata=metadataResult.metadata;
       if (marketOpen&&hasNewTick) {
         next.lastAcceptedMt5Time=tick.mt5Time;
         next.lastAcceptedAt=receivedAt;
@@ -679,16 +716,17 @@ export class GoldFeed extends DurableObject {
     if (!ordered.ok) return ordered;
     this.mt5State=ordered.next;
     if (!ordered.marketOpen) {
-      return {ok:true,accepted:false,heartbeat:true,reason:'market_closed',receivedAt};
+      return {ok:true,accepted:false,heartbeat:true,reason:'market_closed',receivedAt,metadata:metadataAck};
     }
     if (!ordered.hasNewTick) {
-      return {ok:true,accepted:false,heartbeat:true,reason:'no_new_tick',receivedAt};
+      return {ok:true,accepted:false,heartbeat:true,reason:'no_new_tick',receivedAt,metadata:metadataAck};
     }
     const accepted=await this.acceptTradingQuote(tick);
     if (!accepted) return {ok:false,accepted:false,error:'trading_quote_out_of_order'};
     return {
       ok:true,accepted:true,source:'mt5',sequence:tick.sequence,mt5Time:tick.mt5Time,
-      receivedAt,price:tick.price,bid:tick.bid,ask:tick.ask,spread:tick.spread
+      receivedAt,price:tick.price,bid:tick.bid,ask:tick.ask,spread:tick.spread,
+      metadata:metadataAck
     };
   }
 
@@ -1114,6 +1152,16 @@ export default {
             String(env.MT5_INGEST_TOKEN||'').trim()?'mt5_offline':''
           ))
         }, corsHeaders);
+      }
+
+      if (path === '/risk-sizing') {
+        if (method!=='POST') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+        if (origin&&(!allow.includes('*')&&!allow.includes(origin))) {
+          return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
+        }
+        const body=await readJsonBody(req,RISK_SIZING_BODY_BYTES);
+        const result=await calculateOfficialActiveRiskSizing(env,body);
+        return jsonNoStore(result,corsHeaders,200);
       }
 
       if (path === '/ticks') {
@@ -1623,6 +1671,45 @@ async function readExposureSnapshot(env) {
     };
   } catch {
     return null;
+  }
+}
+
+function riskSizingLimitsFromEnv(env={}) {
+  return normalizeRiskSizingLimits({
+    maxRiskPercent:Number(env.RISK_MAX_PERCENT),
+    maxLots:Number(env.RISK_MAX_LOTS),
+    metadataMaxAgeMs:Number(env.RISK_METADATA_MAX_AGE_MS)
+  });
+}
+
+async function calculateOfficialActiveRiskSizing(env,input={}) {
+  const limits=riskSizingLimitsFromEnv(env);
+  if (!env.GOLD_FEED||!env.GSX_KV) {
+    return positionSizeUnavailable('risk_sizing_state_unavailable');
+  }
+  try {
+    const feed=env.GOLD_FEED.getByName('xau-usd');
+    const [exposure,metadataStatus]=await Promise.all([
+      feed.goldExposureStatus(),
+      feed.getRiskSizingMetadataStatus({maxAgeMs:limits.metadataMaxAgeMs})
+    ]);
+    let signal=null;
+    if (exposure?.status==='active'&&exposure.primarySignalId&&exposure.primaryTf) {
+      signal=await readKvJson(env,`signal:state:${exposure.primaryTf}`);
+    }
+    return calculateRiskSizing({
+      signalId:String(input?.signalId||''),
+      signal,exposure,metadataStatus,limits,
+      accountBasis:String(input?.accountBasis||'equity'),
+      accountValueUsd:Number(input?.accountValueUsd),
+      riskPercent:Number(input?.riskPercent)
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      message:'risk sizing calculation failed',
+      error:error instanceof Error?error.message:String(error)
+    }));
+    return positionSizeUnavailable('risk_sizing_state_unavailable');
   }
 }
 
@@ -4798,5 +4885,6 @@ export {
   activeExposureNewsRisk,applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
   syncActiveExposureNewsRisk,readExposureSnapshot,
   createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation,
+  riskSizingLimitsFromEnv,calculateOfficialActiveRiskSizing,
   runSignalCycle
 };

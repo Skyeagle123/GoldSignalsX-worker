@@ -8,8 +8,10 @@ input string InpMt5Symbol      = "";
 input string InpCanonicalSymbol= "XAUUSD";
 input int    InpIntervalMs     = 1000;
 input int    InpTimeoutMs      = 5000;
+input int    InpMetadataIntervalMs = 300000;
 
 ulong  bridgeSequence=0;
+ulong  bridgeMetadataSentAt=0;
 string bridgeSessionId="";
 
 string JsonEscape(const string value)
@@ -18,6 +20,41 @@ string JsonEscape(const string value)
    StringReplace(escaped,"\\","\\\\");
    StringReplace(escaped,"\"","\\\"");
    return escaped;
+}
+
+string JsonNumber(const double value)
+{
+   if(!MathIsValidNumber(value))
+      return "null";
+   return DoubleToString(value,8);
+}
+
+string BuildSymbolMetadata(const string mt5Symbol,const long observedAtMs)
+{
+   const double contractSize=SymbolInfoDouble(mt5Symbol,SYMBOL_TRADE_CONTRACT_SIZE);
+   const double tickSize=SymbolInfoDouble(mt5Symbol,SYMBOL_TRADE_TICK_SIZE);
+   const double tickValue=SymbolInfoDouble(mt5Symbol,SYMBOL_TRADE_TICK_VALUE);
+   const double tickValueProfit=SymbolInfoDouble(mt5Symbol,SYMBOL_TRADE_TICK_VALUE_PROFIT);
+   const double tickValueLoss=SymbolInfoDouble(mt5Symbol,SYMBOL_TRADE_TICK_VALUE_LOSS);
+   const double volumeMin=SymbolInfoDouble(mt5Symbol,SYMBOL_VOLUME_MIN);
+   const double volumeMax=SymbolInfoDouble(mt5Symbol,SYMBOL_VOLUME_MAX);
+   const double volumeStep=SymbolInfoDouble(mt5Symbol,SYMBOL_VOLUME_STEP);
+   const double volumeLimit=SymbolInfoDouble(mt5Symbol,SYMBOL_VOLUME_LIMIT);
+   const double point=SymbolInfoDouble(mt5Symbol,SYMBOL_POINT);
+   const long digits=SymbolInfoInteger(mt5Symbol,SYMBOL_DIGITS);
+   const long stopsLevel=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_STOPS_LEVEL);
+   const long calcMode=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_CALC_MODE);
+   const long tradeMode=SymbolInfoInteger(mt5Symbol,SYMBOL_TRADE_MODE);
+   const string profitCurrency=SymbolInfoString(mt5Symbol,SYMBOL_CURRENCY_PROFIT);
+   const string accountCurrency=AccountInfoString(ACCOUNT_CURRENCY);
+   return StringFormat(
+      "{\"source\":\"mt5\",\"canonicalSymbol\":\"%s\",\"brokerSymbol\":\"%s\",\"sessionId\":\"%s\",\"observedAt\":%I64d,\"contractSize\":%s,\"tickSize\":%s,\"tickValue\":%s,\"tickValueProfit\":%s,\"tickValueLoss\":%s,\"volumeMin\":%s,\"volumeMax\":%s,\"volumeStep\":%s,\"volumeLimit\":%s,\"point\":%s,\"digits\":%I64d,\"tradeStopsLevel\":%I64d,\"profitCurrency\":\"%s\",\"accountCurrency\":\"%s\",\"tradeCalcMode\":%I64d,\"tradeMode\":%I64d}",
+      JsonEscape(InpCanonicalSymbol),JsonEscape(mt5Symbol),JsonEscape(bridgeSessionId),observedAtMs,
+      JsonNumber(contractSize),JsonNumber(tickSize),JsonNumber(tickValue),
+      JsonNumber(tickValueProfit),JsonNumber(tickValueLoss),
+      JsonNumber(volumeMin),JsonNumber(volumeMax),JsonNumber(volumeStep),JsonNumber(volumeLimit),
+      JsonNumber(point),digits,stopsLevel,JsonEscape(profitCurrency),JsonEscape(accountCurrency),calcMode,tradeMode
+   );
 }
 
 int OnInit()
@@ -63,9 +100,16 @@ void OnTimer()
    const int digits=(int)SymbolInfoInteger(mt5Symbol,SYMBOL_DIGITS);
    const string bid=DoubleToString(tick.bid,digits);
    const string ask=DoubleToString(tick.ask,digits);
+   const ulong monotonicNow=GetTickCount64();
+   const ulong metadataInterval=(ulong)MathMax(60000,InpMetadataIntervalMs);
+   const bool includeMetadata=(bridgeMetadataSentAt==0 || monotonicNow-bridgeMetadataSentAt>=metadataInterval);
+   const string metadataSuffix=includeMetadata
+      ? ",\"symbolMeta\":"+BuildSymbolMetadata(mt5Symbol,sentAtMs)
+      : "";
    const string payload=StringFormat(
-      "{\"symbol\":\"%s\",\"bid\":%s,\"ask\":%s,\"mt5Time\":%I64d,\"sentAt\":%I64d,\"sequence\":%I64u,\"sessionId\":\"%s\",\"source\":\"mt5\"}",
-      JsonEscape(InpCanonicalSymbol),bid,ask,mt5TimeMs,sentAtMs,bridgeSequence,JsonEscape(bridgeSessionId)
+      "{\"symbol\":\"%s\",\"bid\":%s,\"ask\":%s,\"mt5Time\":%I64d,\"sentAt\":%I64d,\"sequence\":%I64u,\"sessionId\":\"%s\",\"source\":\"mt5\"%s}",
+      JsonEscape(InpCanonicalSymbol),bid,ask,mt5TimeMs,sentAtMs,bridgeSequence,
+      JsonEscape(bridgeSessionId),metadataSuffix
    );
 
    char requestBody[];
@@ -82,5 +126,10 @@ void OnTimer()
       return;
    }
    if(status<200 || status>=300)
+   {
       PrintFormat("GoldSignalsX bridge ingest rejected with HTTP %d.",status);
+      return;
+   }
+   if(includeMetadata)
+      bridgeMetadataSentAt=monotonicNow;
 }

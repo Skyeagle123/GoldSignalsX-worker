@@ -50,7 +50,8 @@ const {
   persistCalendarEvents,persistNewsEvents,getOfficialCalendar,createMtfAtEntrySnapshot,
   linkMtfConfirmation,persistLinkedMtfConfirmation,activeExposureNewsRisk,
   applyActiveExposureNewsRisk,activeExposureNewsRiskTelegramText,
-  syncActiveExposureNewsRisk,readExposureSnapshot,runSignalCycle
+  syncActiveExposureNewsRisk,readExposureSnapshot,
+  calculateOfficialActiveRiskSizing,runSignalCycle
 } = worker;
 const {
   normalizeCalendarSettings,parseBlsIcs,parseBeaScheduleHtml,parseFedCalendarHtml,
@@ -292,6 +293,15 @@ const mt5Payload=(overrides={})=>({
   symbol:'XAUUSD',bid:100,ask:100.2,mt5Time:mt5Start,sentAt:mt5Start,
   sequence:1,sessionId:'phase-a-session',source:'mt5',...overrides
 });
+const mt5SymbolMeta=(overrides={})=>({
+  source:'mt5',canonicalSymbol:'XAUUSD',brokerSymbol:'XAUUSDs',
+  sessionId:'phase-a-session',observedAt:mt5Start,
+  contractSize:100,tickSize:0.01,tickValue:1,tickValueProfit:1,tickValueLoss:1,
+  volumeMin:0.01,volumeMax:100,volumeStep:0.01,volumeLimit:0,
+  point:0.01,digits:2,tradeStopsLevel:0,
+  profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:0,tradeMode:4,
+  ...overrides
+});
 assert.equal(normalizeMt5TickPayload(mt5Payload(),mt5Start).ok,true);
 assert.equal(normalizeMt5TickPayload(mt5Payload({source:'twelve-data'}),mt5Start).error,'bad_source');
 assert.equal(normalizeMt5TickPayload(mt5Payload({symbol:'EURUSD'}),mt5Start).error,'bad_symbol');
@@ -340,9 +350,15 @@ assert.equal(isMt5QuoteFresh(mt5Feed.latestQuote,mt5Now),true);
 
 mt5Now=mt5Start+5_000;
 const secondMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
-  bid:101,ask:101.2,mt5Time:mt5Now,sentAt:mt5Now,sequence:2
+  bid:101,ask:101.2,mt5Time:mt5Now,sentAt:mt5Now,sequence:2,
+  symbolMeta:mt5SymbolMeta({observedAt:mt5Now})
 }));
 assert.equal(secondMt5.accepted,true);
+assert.equal(secondMt5.metadata.accepted,true);
+const acceptedMetadataStatus=mt5Feed.getRiskSizingMetadataStatus();
+assert.equal(acceptedMetadataStatus.available,true);
+assert.equal(acceptedMetadataStatus.metadata.brokerSymbol,'XAUUSDs');
+assert.equal(acceptedMetadataStatus.metadata.sessionId,'phase-a-session');
 assert.equal(mt5Feed.currentBar.h,101.1);
 assert.equal(mt5Feed.currentBar.c,101.1);
 
@@ -456,6 +472,35 @@ const reopenedMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
 assert.equal(reopenedMt5.accepted,true,'the first valid MT5 tick after Sunday reopen must be accepted');
 assert.equal(mt5Feed.latestQuote.source,'mt5');
 assert.equal(mt5Feed.currentBar.provider,'mt5');
+assert.equal(mt5Feed.getRiskSizingMetadataStatus().reason,'metadata_stale',
+  'old symbol metadata must not become trusted again merely because prices resumed');
+
+mt5Now=mt5Reopen+1_000;
+const newSessionMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:102.1,ask:102.3,mt5Time:mt5Now,sentAt:mt5Now,sequence:1,
+  sessionId:'phase-b-risk-session',
+  symbolMeta:mt5SymbolMeta({
+    sessionId:'phase-b-risk-session',observedAt:mt5Now
+  })
+}));
+assert.equal(newSessionMt5.accepted,true);
+assert.equal(newSessionMt5.metadata.accepted,true);
+assert.equal(mt5Feed.getRiskSizingMetadataStatus().metadata.sessionId,'phase-b-risk-session');
+
+mt5Now+=1_000;
+const invalidMetadataMt5=await mt5Feed.ingestMt5Tick(mt5Payload({
+  bid:102.2,ask:102.4,mt5Time:mt5Now,sentAt:mt5Now,sequence:1,
+  sessionId:'phase-b-invalid-metadata',
+  symbolMeta:mt5SymbolMeta({
+    sessionId:'phase-b-invalid-metadata',observedAt:mt5Now,accountCurrency:'EUR'
+  })
+}));
+assert.equal(invalidMetadataMt5.accepted,true,
+  'invalid sizing metadata must never reject an otherwise valid trading tick');
+assert.equal(invalidMetadataMt5.metadata.accepted,false);
+assert.equal(invalidMetadataMt5.metadata.reason,'metadata_account_currency_not_usd');
+assert.equal(mt5Feed.getRiskSizingMetadataStatus().reason,'metadata_missing',
+  'a new MT5 session must never reuse metadata from a previous session');
 Date.now=providerClock;
 
 const fridayClose=Date.UTC(2026,8,4,20,59,0);
@@ -2574,5 +2619,88 @@ assert.match(releasedTelegramRecord.text,/Previous \[2026-07\]: 200/);
 assert.match(releasedTelegramRecord.text,/www\.bls\.gov\/news\.release\/empsit\.nr0\.htm/,'release alert must link to the current official release');
 assert.match(releasedTelegramRecord.text,/api\.bls\.gov\/publicAPI\/v1\/timeseries\/data/,'release alert must link to the current official data source');
 Date.now=realDateNow;globalThis.fetch=originalFetch;
+
+// Request 12 Phase 2: server-side advisory sizing must use only the matching Official Active Signal.
+const riskIntegrationNow=Date.UTC(2026,8,14,12,0,0);
+const riskIntegrationSignal={
+  id:'5m:risk-integration:buy',tf:'5m',side:'buy',status:'active',origin:'server',
+  createdAt:riskIntegrationNow,entry:2000,sl:1990,tp1:2012.5,tp2:2021
+};
+const riskIntegrationExposure={
+  symbol:'XAUUSD',status:'active',primarySignalId:riskIntegrationSignal.id,primaryTf:'5m'
+};
+const riskIntegrationMetadata={
+  source:'mt5',fresh:true,available:true,status:'MT5_METADATA_VERIFIED',
+  sessionId:'risk-integration-session',observedAt:riskIntegrationNow,ageMs:0,reason:'',
+  metadata:{
+    source:'mt5',canonicalSymbol:'XAUUSD',brokerSymbol:'XAUUSDs',
+    sessionId:'risk-integration-session',observedAt:riskIntegrationNow,receivedAt:riskIntegrationNow,
+    contractSize:100,tickSize:0.01,tickValue:1,tickValueProfit:1,tickValueLoss:1,
+    volumeMin:0.01,volumeMax:100,volumeStep:0.01,volumeLimit:0,
+    point:0.01,digits:2,tradeStopsLevel:0,
+    profitCurrency:'USD',accountCurrency:'USD',tradeCalcMode:0,tradeMode:4
+  }
+};
+let riskIntegrationWrites=0;
+const riskIntegrationFeed={
+  goldExposureStatus:async()=>riskIntegrationExposure,
+  getRiskSizingMetadataStatus:async()=>riskIntegrationMetadata
+};
+const riskIntegrationEnv={
+  RISK_MAX_PERCENT:'2',RISK_MAX_LOTS:'5',RISK_METADATA_MAX_AGE_MS:'900000',
+  ALLOW_ORIGINS:'["*"]',
+  GOLD_FEED:{getByName:()=>riskIntegrationFeed},
+  GSX_KV:{
+    get:async key=>key==='signal:state:'+riskIntegrationSignal.tf?riskIntegrationSignal:null,
+    put:async()=>{riskIntegrationWrites+=1;}
+  }
+};
+const riskIntegrationResult=await calculateOfficialActiveRiskSizing(riskIntegrationEnv,{
+  signalId:riskIntegrationSignal.id,accountBasis:'equity',accountValueUsd:25000,riskPercent:1
+});
+assert.equal(riskIntegrationResult.available,true);
+assert.equal(riskIntegrationResult.suggestedLots,0.25);
+assert.equal(riskIntegrationResult.estimatedLossAtSL,250);
+assert.equal(riskIntegrationResult.measurementOnly,true);
+assert.equal(riskIntegrationResult.decisionUse,false);
+assert.equal(riskIntegrationWrites,0,'risk sizing must not write signal or exposure state');
+
+const riskSizingResponse=await worker.default.fetch(new Request('https://example.com/risk-sizing',{
+  method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({
+    signalId:riskIntegrationSignal.id,accountBasis:'equity',
+    accountValueUsd:25000,riskPercent:1
+  })
+}),riskIntegrationEnv,{});
+assert.equal(riskSizingResponse.status,200);
+const riskSizingPayload=await riskSizingResponse.json();
+assert.equal(riskSizingPayload.status,'POSITION_SIZE_AVAILABLE');
+assert.equal(riskSizingPayload.signal.id,riskIntegrationSignal.id);
+assert.equal(riskSizingPayload.estimatesExclude.includes('commission'),true);
+assert.equal(riskIntegrationWrites,0,'the advisory API must remain side-effect free');
+
+const noActiveRisk=await calculateOfficialActiveRiskSizing({
+  ...riskIntegrationEnv,
+  GOLD_FEED:{getByName:()=>({
+    goldExposureStatus:async()=>({symbol:'XAUUSD',status:'flat'}),
+    getRiskSizingMetadataStatus:async()=>riskIntegrationMetadata
+  })}
+},{signalId:riskIntegrationSignal.id,accountValueUsd:25000,riskPercent:1});
+assert.equal(noActiveRisk.status,'POSITION_SIZE_UNAVAILABLE');
+assert.equal(noActiveRisk.reason,'no_active_official_signal');
+
+const staleRisk=await calculateOfficialActiveRiskSizing({
+  ...riskIntegrationEnv,
+  GOLD_FEED:{getByName:()=>({
+    goldExposureStatus:async()=>riskIntegrationExposure,
+    getRiskSizingMetadataStatus:async()=>({
+      source:'mt5',available:false,fresh:false,status:'POSITION_SIZE_UNAVAILABLE',
+      reason:'metadata_stale',sessionId:'risk-integration-session'
+    })
+  })}
+},{signalId:riskIntegrationSignal.id,accountValueUsd:25000,riskPercent:1});
+assert.equal(staleRisk.status,'POSITION_SIZE_UNAVAILABLE');
+assert.equal(staleRisk.reason,'metadata_stale');
+assert.equal(riskIntegrationWrites,0);
 
 console.log('news intelligence tests passed');
