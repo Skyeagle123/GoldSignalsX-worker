@@ -30,6 +30,9 @@ assert.equal(normalizeMt5SymbolMetadata(
   {receivedAt:now,sessionId:'risk-session'}
 ).error,'metadata_unsupported_trade_calc_mode');
 assert.equal(normalizeMt5SymbolMetadata(
+  {...rawMetadata,tradeMode:99},{receivedAt:now,sessionId:'risk-session'}
+).error,'metadata_unsupported_trade_mode');
+assert.equal(normalizeMt5SymbolMetadata(
   {...rawMetadata,sessionId:'other'},{receivedAt:now,sessionId:'risk-session'}
 ).error,'metadata_session_mismatch');
 assert.equal(normalizeMt5SymbolMetadata(
@@ -93,6 +96,27 @@ assert.equal(sell.estimatedProfitTP1,310);
 assert.equal(sell.estimatedProfitTP2,496);
 assert.equal(sell.rrTP1,1.25);
 assert.equal(sell.rrTP2,2);
+
+const riskWithTradeMode=(tradeMode,signal,exposure)=>calculateRiskSizing({
+  signalId:signal.id,signal,exposure,accountValueUsd:100000,riskPercent:1,
+  metadataStatus:mt5RiskMetadataStatus(
+    normalizeMt5SymbolMetadata({...rawMetadata,tradeMode},{
+      receivedAt:now,sessionId:'risk-session'
+    }).metadata,
+    {now,sessionId:'risk-session',mt5Healthy:true}
+  )
+});
+assert.equal(riskWithTradeMode(0,buySignal,buyExposure).reason,'trade_mode_disabled');
+assert.equal(riskWithTradeMode(3,buySignal,buyExposure).reason,'trade_mode_close_only');
+assert.equal(riskWithTradeMode(2,buySignal,buyExposure).reason,'trade_mode_buy_not_allowed');
+assert.equal(riskWithTradeMode(
+  1,sellSignal,{status:'active',primarySignalId:sellSignal.id,primaryTf:'15m'}
+).reason,'trade_mode_sell_not_allowed');
+assert.equal(riskWithTradeMode(1,buySignal,buyExposure).available,true);
+assert.equal(riskWithTradeMode(
+  2,sellSignal,{status:'active',primarySignalId:sellSignal.id,primaryTf:'15m'}
+).available,true);
+assert.equal(riskWithTradeMode(4,buySignal,buyExposure).available,true);
 
 const asymmetricNormalized=normalizeMt5SymbolMetadata({
   ...rawMetadata,tickValueProfit:0.9,tickValueLoss:1.1

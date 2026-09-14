@@ -77,6 +77,9 @@ function metadataFieldError(metadata) {
   if (!SUPPORTED_TICK_VALUE_CALC_MODES.includes(String(metadata.tradeCalcMode||''))) {
     return 'metadata_unsupported_trade_calc_mode';
   }
+  if (!Number.isInteger(Number(metadata.tradeMode))||![0,1,2,3,4].includes(Number(metadata.tradeMode))) {
+    return 'metadata_unsupported_trade_mode';
+  }
   if (Number(metadata.volumeMax)<Number(metadata.volumeMin)||
       Number(metadata.volumeStep)>Number(metadata.volumeMax)||
       (Number(metadata.volumeLimit)>0&&Number(metadata.volumeLimit)<Number(metadata.volumeMin))) {
@@ -259,6 +262,11 @@ function calculateRiskSizing(input={}) {
   const metadata=metadataStatus.metadata;
   const metadataError=metadataFieldError(metadata)||metadataConsistencyError(metadata);
   if (metadataError) return positionSizeUnavailable(metadataError,partial);
+  const tradeMode=Number(metadata.tradeMode);
+  if (tradeMode===0) return positionSizeUnavailable('trade_mode_disabled',partial);
+  if (tradeMode===3) return positionSizeUnavailable('trade_mode_close_only',partial);
+  if (side==='buy'&&tradeMode===2) return positionSizeUnavailable('trade_mode_buy_not_allowed',partial);
+  if (side==='sell'&&tradeMode===1) return positionSizeUnavailable('trade_mode_sell_not_allowed',partial);
 
   const brokerMinStop=Number(metadata.tradeStopsLevel)*Number(metadata.point);
   if (!Number.isFinite(slDistance)||slDistance<=0||
