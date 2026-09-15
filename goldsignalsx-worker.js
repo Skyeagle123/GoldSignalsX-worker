@@ -116,6 +116,7 @@ const CALENDAR_CACHE_KEY = 'calendar:official:v4';
 const CALENDAR_CACHE_MS = 15 * 60 * 1000;
 const NEWS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 const NEWS_ARABIC_ITEM_LIMIT = 12;
+const HEALTH_CRON_STALE_MS = 10 * 60 * 1000;
 
 function pruneTickHistory(value, referenceTs = Date.now()) {
   const cutoff = Number(referenceTs) - TICK_HISTORY_RETENTION_MS;
@@ -1081,6 +1082,7 @@ export default {
       if (path === '/health') {
         const mt5Configured=Boolean(String(env.MT5_INGEST_TOKEN||'').trim());
         const centralFeedConfigured = Boolean(env.GOLD_FEED && (mt5Configured||isTwelveDataConfigured(env)));
+        const operational=await buildOperationalHealth(env,{now:Date.now(),kvOff:KV_OFF});
         return json({
           ok: true,
           version: APP_VERSION,
@@ -1091,7 +1093,8 @@ export default {
           oandaConfigured: isOandaConfigured(env),
           twelveDataConfigured: isTwelveDataConfigured(env),
           centralFeedConfigured,
-          writeAuthConfigured: Boolean(String(env.GSX_WRITE_TOKEN || '').trim())
+          writeAuthConfigured: Boolean(String(env.GSX_WRITE_TOKEN || '').trim()),
+          ...operational
         }, corsHeaders);
       }
 
@@ -1525,10 +1528,11 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
     : backfillSignalRollups(env);
   tasks.push(historyPromise.then(()=>Promise.all([newsPromise,calendarPromise])).then(async ([news,calendar])=>{
     const filters=await readSignalFilters(env);
-    await runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
-    const quality=await collectSignalQualityMetricsSafely(env);
-    const mtfAnalysis=await collectMtfDirectionAnalysisSafely(env);
-    return {quality,mtfAnalysis};
+    const signalCycle=await runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
+    if (signalCycle?.ok===false) {
+      throw new Error(`signal_cycle_failed:${signalCycle.error||'failed'}`);
+    }
+    return runIndependentOperationalCollectors(env,signalCycle?.telemetry);
   }));
   const results = await Promise.allSettled(tasks);
   const errors=[];
@@ -1544,6 +1548,24 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
       status:errors.length?'partial':'completed',source,startedAt,completedAt:Date.now(),errors:errors.slice(0,5)
     }));
   }
+}
+
+async function runIndependentOperationalCollectors(env,signalTelemetry,collectors={}) {
+  const qualityCollector=collectors.quality||collectSignalQualityMetricsSafely;
+  const mtfCollector=collectors.mtf||collectMtfDirectionAnalysisSafely;
+  const [qualityResult,mtfResult]=await Promise.allSettled([
+    qualityCollector(env),mtfCollector(env)
+  ]);
+  const quality=qualityResult.status==='fulfilled'
+    ?qualityResult.value:{ok:false,error:'quality_metrics_collection_failed'};
+  const mtfAnalysis=mtfResult.status==='fulfilled'
+    ?mtfResult.value:{ok:false,error:'mtf_analysis_collection_failed'};
+  const failures=[];
+  if (signalTelemetry?.ok===false) failures.push(`signal_telemetry:${signalTelemetry.error||'failed'}`);
+  if (quality?.ok===false) failures.push(`signal_quality:${quality.error||'failed'}`);
+  if (mtfAnalysis?.ok===false) failures.push(`mtf_analysis:${mtfAnalysis.error||'failed'}`);
+  if (failures.length) throw new Error(`operational_collectors_failed:${failures.join(',')}`);
+  return {quality,mtfAnalysis};
 }
 
 const TWELVE_HISTORY_FRAMES = [
@@ -1610,6 +1632,197 @@ async function readKvJson(env,key) {
   } catch {
     return null;
   }
+}
+
+// Health-path reads deliberately preserve the distinction between a missing
+// key and a storage read failure. The normal readKvJson helper remains
+// intentionally forgiving for trading compatibility; /health must not be.
+async function readHealthKvJson(env,key,{kvOff=false}={}) {
+  if (kvOff) return {ok:false,present:false,value:null,error:'disabled'};
+  if (!env.GSX_KV) return {ok:false,present:false,value:null,error:'binding_missing'};
+  try {
+    const value=await env.GSX_KV.get(key,'json');
+    return {ok:true,present:value!==null&&value!==undefined,value:value??null,error:''};
+  } catch (error) {
+    return {ok:false,present:false,value:null,error:'read_error'};
+  }
+}
+
+function operationalFailureNested(value) {
+  if (!value||typeof value!=='object') return false;
+  if (value.ok===false) return true;
+  return Object.values(value).some(operationalFailureNested);
+}
+
+function healthComponent(state,details={}) {
+  return {state,...details};
+}
+
+function deriveHealthOverall(components) {
+  const states=Object.values(components).map(component=>String(component?.state||''));
+  if (states.includes('unavailable')) return 'unavailable';
+  if (states.includes('degraded')) return 'degraded';
+  if (states.includes('market_closed')) return 'market_closed';
+  return 'healthy';
+}
+
+function publicMt5OperationalHealth(mt5) {
+  if (!mt5||typeof mt5!=='object') return null;
+  const metadata=mt5.symbolMetadata&&typeof mt5.symbolMetadata==='object'
+    ?mt5.symbolMetadata:null;
+  return {
+    configured:Boolean(mt5.configured),healthy:Boolean(mt5.healthy),
+    lastSeenAt:Number(mt5.lastSeenAt||0)||null,
+    lastAcceptedAt:Number(mt5.lastAcceptedAt||0)||null,
+    metadata:metadata?{
+      available:Boolean(metadata.available),fresh:Boolean(metadata.fresh),
+      status:String(metadata.status||''),reason:String(metadata.reason||'')
+    }:{available:false,fresh:false,status:'unavailable',reason:'metadata_status_missing'}
+  };
+}
+
+function deriveFeedHealth(feedStatus,now,marketOpen) {
+  if (!feedStatus) return healthComponent('unavailable',{reason:'feed_status_unavailable'});
+  if (!marketOpen) {
+    return healthComponent('market_closed',{
+      reason:'market_closed',
+      selectedFeed:String(feedStatus?.provider||feedStatus?.latestQuote?.source||''),
+      fallback:Boolean(feedStatus?.fallback),fallbackReason:String(feedStatus?.fallbackReason||''),
+      latestQuoteAt:Number(feedStatus?.latestQuote?.ts||0)||null,
+      latestQuoteAgeMs:Number.isFinite(Number(feedStatus?.latestQuote?.ts))
+        ?Math.max(0,now-Number(feedStatus.latestQuote.ts)):null,
+      mt5:publicMt5OperationalHealth(feedStatus?.mt5)
+    });
+  }
+  const selectedFeed=String(feedStatus.provider||feedStatus.latestQuote?.source||'');
+  const latestQuoteAt=Number(feedStatus.latestQuote?.ts||0)||null;
+  const details={
+    selectedFeed,fallback:Boolean(feedStatus.fallback),
+    fallbackReason:String(feedStatus.fallbackReason||''),
+    latestQuoteAt,
+    latestQuoteAgeMs:latestQuoteAt==null?null:Math.max(0,now-latestQuoteAt),
+    mt5:publicMt5OperationalHealth(feedStatus.mt5)
+  };
+  if (!feedStatus.ok) return healthComponent('unavailable',{...details,reason:'no_fresh_quote'});
+  if (feedStatus.fallback) return healthComponent('degraded',{...details,reason:String(feedStatus.fallbackReason||'fallback_active')});
+  return healthComponent('healthy',details);
+}
+
+function deriveCycleHealth(cycle,now,kvAvailable) {
+  if (!kvAvailable) return healthComponent('unavailable',{reason:'kv_unavailable'});
+  if (!cycle?.value) return healthComponent('degraded',{reason:'cycle_status_missing',lastCompletionAt:null,lastError:null});
+  const value=cycle.value, completedAt=Number(value.completedAt||0)||null;
+  const errors=Array.isArray(value.errors)?value.errors.filter(Boolean):[];
+  if (value.status==='running') return healthComponent('degraded',{
+    reason:'cycle_running',lastCompletionAt:completedAt,lastError:errors
+  });
+  if (value.status==='partial'||errors.length) return healthComponent('degraded',{
+    reason:'cycle_partial',lastCompletionAt:completedAt,lastError:errors
+  });
+  if (value.status==='completed'&&completedAt&&now-completedAt<=HEALTH_CRON_STALE_MS) {
+    return healthComponent('healthy',{lastCompletionAt:completedAt,lastError:null});
+  }
+  return healthComponent('degraded',{
+    reason:'cycle_stale',lastCompletionAt:completedAt,lastError:null
+  });
+}
+
+function deriveCachedHealth(cache,now,{kind,maxAgeMs}={}) {
+  if (!cache?.value) return healthComponent('unavailable',{reason:`${kind||'cache'}_missing`,updatedAt:null,ageMs:null});
+  const value=cache.value,updatedAt=Number(value.updatedAt||0)||null;
+  const ageMs=updatedAt==null?null:Math.max(0,now-updatedAt);
+  const stale=Boolean(value.stale)||ageMs==null||ageMs>Number(maxAgeMs||NEWS_MAX_AGE_MS);
+  const refreshError=String(value.refreshError||'');
+  const sourceFallback=operationalFailureNested(value.sourceStatus);
+  if (stale||refreshError||sourceFallback) return healthComponent('degraded',{
+    reason:refreshError|| (sourceFallback?'source_fallback':'stale_cache'),
+    updatedAt,ageMs,refreshError:refreshError||null,stale,source:String(value.source||'')
+  });
+  return healthComponent('healthy',{updatedAt,ageMs,refreshError:null,stale:false,source:String(value.source||'')});
+}
+
+async function readHealthD1(env) {
+  if (!env.GSX_DB) return {component:healthComponent('unavailable',{reason:'binding_missing'}),latestTelemetryAt:null};
+  try {
+    const probe=env.GSX_DB.prepare('SELECT 1 AS ok');
+    if (typeof probe.first==='function') await probe.first();
+    else if (typeof probe.all==='function') await probe.all();
+  } catch {
+    return {component:healthComponent('unavailable',{reason:'read_error'}),latestTelemetryAt:null};
+  }
+  let latestTelemetryAt=null,telemetryState='healthy',telemetryReason='';
+  try {
+    const row=await env.GSX_DB.prepare(
+      'SELECT MAX(recorded_at) AS latest_recorded_at FROM signal_evaluation_telemetry'
+    ).first();
+    latestTelemetryAt=Number(row?.latest_recorded_at||0)||null;
+    if (!latestTelemetryAt) { telemetryState='degraded'; telemetryReason='telemetry_missing'; }
+  } catch (error) {
+    const message=String(error?.message||error).toLowerCase();
+    telemetryState=message.includes('no such table')?'degraded':'unavailable';
+    telemetryReason=message.includes('no such table')?'telemetry_table_missing':'read_error';
+  }
+  return {
+    component:healthComponent('healthy',{probe:'ok'}),
+    telemetry:healthComponent(telemetryState,{reason:telemetryReason||null,latestRecordedAt:latestTelemetryAt}),
+    latestTelemetryAt
+  };
+}
+
+async function buildOperationalHealth(env,{now=Date.now(),kvOff=false}={}) {
+  const marketOpen=isGoldMarketOpen(now);
+  let feedStatus=null,feedError='';
+  if (env.GOLD_FEED) {
+    try { feedStatus=await env.GOLD_FEED.getByName('xau-usd').status(); }
+    catch { feedError='feed_status_read_error'; }
+  }
+  const feed=feedError?healthComponent('unavailable',{reason:feedError}):deriveFeedHealth(feedStatus,now,marketOpen);
+  const [cycle,history,telegramHealth,lastDelivery,lastSuccess,calendarCache,newsCache]=await Promise.all([
+    readHealthKvJson(env,'system:signal-cycle',{kvOff}),
+    readHealthKvJson(env,'system:history-status',{kvOff}),
+    readHealthKvJson(env,'telegram:health',{kvOff}),
+    readHealthKvJson(env,'telegram:last-delivery',{kvOff}),
+    readHealthKvJson(env,'telegram:last-success',{kvOff}),
+    readHealthKvJson(env,CALENDAR_CACHE_KEY,{kvOff}),
+    readHealthKvJson(env,'news:brief:v2',{kvOff})
+  ]);
+  const kvReads=[cycle,history,telegramHealth,lastDelivery,lastSuccess,calendarCache,newsCache];
+  const kvReadError=kvReads.find(read=>!read.ok&&read.error==='read_error');
+  const kv=kvOff||!env.GSX_KV
+    ?healthComponent('unavailable',{reason:kvOff?'disabled':'binding_missing'})
+    :kvReadError
+      ?healthComponent('unavailable',{reason:'read_error'})
+      :healthComponent('healthy',{keys:{cycle:cycle.present?'present':'missing',history:history.present?'present':'missing'}});
+  const d1=await readHealthD1(env);
+  const cron=deriveCycleHealth(cycle,now,kv.state==='healthy');
+  const news=kv.state==='healthy'
+    ?deriveCachedHealth(newsCache,now,{kind:'news',maxAgeMs:NEWS_MAX_AGE_MS})
+    :healthComponent('unavailable',{reason:'kv_unavailable'});
+  const calendar=kv.state==='healthy'
+    ?deriveCachedHealth(calendarCache,now,{kind:'calendar',maxAgeMs:NEWS_MAX_AGE_MS})
+    :healthComponent('unavailable',{reason:'kv_unavailable'});
+  const telegramValue=telegramHealth.value;
+  let telegram;
+  if (kv.state!=='healthy') telegram=healthComponent('unavailable',{reason:'kv_unavailable'});
+  else if (!telegramValue) telegram=healthComponent('degraded',{reason:'health_missing',lastCheckedAt:null,lastSuccessfulDeliveryAt:null});
+  else if (telegramValue.botOk&&telegramValue.chatOk&&!telegramValue.error) telegram=healthComponent('healthy',{
+    lastCheckedAt:Number(telegramValue.checkedAt||0)||null,lastSuccessfulDeliveryAt:Number(lastSuccess.value?.sentAt||0)||null,
+    lastDelivery:lastDelivery.value?publicTelegramDelivery(lastDelivery.value):null
+  });
+  else telegram=healthComponent('degraded',{
+    reason:String(telegramValue.error||'telegram_unhealthy'),lastCheckedAt:Number(telegramValue.checkedAt||0)||null,
+    lastSuccessfulDeliveryAt:Number(lastSuccess.value?.sentAt||0)||null,
+    lastDelivery:lastDelivery.value?publicTelegramDelivery(lastDelivery.value):null
+  });
+  const components={feed,cron,kv,d1:d1.component,news,calendar,telegram,telemetry:d1.telemetry||healthComponent('unavailable',{reason:'d1_unavailable'})};
+  const overallState=deriveHealthOverall(components);
+  return {
+    healthSchema:1,overall:{state:overallState},market:{state:marketOpen?'open':'closed',isOpen:marketOpen,checkedAt:now},
+    selectedPriceFeed:feed.selectedFeed||String(feedStatus?.provider||''),fallback:Boolean(feedStatus?.fallback),
+    fallbackReason:String(feedStatus?.fallbackReason||feed.reason||''),components,
+    latestOperationalTelemetryAt:d1.latestTelemetryAt||null,
+    history:history.value?{updatedAt:Number(history.value.updatedAt||0)||null,frames:history.value.frames||[]} : null
+  };
 }
 
 function signalFiltersFromSearchParams(searchParams) {
@@ -3315,10 +3528,15 @@ function candidateClosesAfterExistingSignal(existing,signalBarTs,tf) {
 }
 
 async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
-  if (String(env.SIGNALS_ENABLED||'1').trim()==='0'||!env.GSX_DB||!env.GSX_KV) return;
+  if (String(env.SIGNALS_ENABLED||'1').trim()==='0') return {ok:true,skipped:'signals_disabled'};
+  if (!env.GSX_DB||!env.GSX_KV) return {ok:false,error:'signal_cycle_storage_unavailable'};
   await ensurePerformanceSchema(env);
   const live=await currentPriceForSignals(env);
-  if (!live) return;
+  if (!live) {
+    return isGoldMarketOpen(Date.now())
+      ?{ok:false,error:'signal_cycle_price_unavailable'}
+      :{ok:true,skipped:'market_closed'};
+  }
   const limits={'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60};
   const frames={};
   const now=Date.now();
@@ -3492,7 +3710,8 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     confirmationIds:confirmationTelemetryIds,newsBlocked:Boolean(news?.safety?.blockTechnicalSignal),
     newsReason:String(news?.safety?.reason||'خطر خبري شديد التأثير؛ تم إيقاف الدخول مؤقتاً حتى يهدأ تذبذب السوق')
   });
-  await recordSignalTelemetrySafely(env,telemetryRows,now);
+  const telemetry=await recordSignalTelemetrySafely(env,telemetryRows,now);
+  return {telemetry};
 }
 
 // ===== Helpers =====
@@ -4712,6 +4931,19 @@ async function persistTelegramDelivery(env,key,record) {
     env.GSX_KV.put(key,JSON.stringify(record),{expirationTtl:TELEGRAM_DELIVERY_TTL}),
     env.GSX_KV.put('telegram:last-delivery',JSON.stringify(publicTelegramDelivery(record)),{expirationTtl:TELEGRAM_DELIVERY_TTL})
   ]);
+  if (record.status==='sent') {
+    try {
+      await env.GSX_KV.put(
+        'telegram:last-success',JSON.stringify(publicTelegramDelivery(record)),
+        {expirationTtl:TELEGRAM_DELIVERY_TTL}
+      );
+    } catch (error) {
+      console.error(JSON.stringify({
+        message:'telegram last-success status write failed',
+        error:error instanceof Error?error.message:String(error)
+      }));
+    }
+  }
 }
 
 async function queueTelegramDelivery(env,signal,event,text,options={}) {
@@ -4993,5 +5225,7 @@ export {
   createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation,
   riskSizingLimitsFromEnv,riskBudgetLimitsFromEnv,storeImmutableRiskSnapshot,
   readRealizedLossRows,attachRiskBudgetSafely,calculateOfficialActiveRiskSizing,
-  runSignalCycle
+  runSignalCycle,runIndependentOperationalCollectors,
+  readHealthKvJson,deriveHealthOverall,buildOperationalHealth,
+  persistTelegramDelivery
 };
