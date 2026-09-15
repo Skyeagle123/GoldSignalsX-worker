@@ -1298,37 +1298,93 @@ const snapshot=await snapshotResponse.json();
 assert.equal(snapshot.signals[0].state.id,'test-signal');
 
 const filterStore=new Map([
-  ['system:signal-cycle',JSON.stringify({status:'running',startedAt:Date.now()})]
+  ['system:signal-cycle',JSON.stringify({status:'running',startedAt:Date.now()})],
+  ['system:signal-filters',JSON.stringify({
+    nyFilterOn:true,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:0.7
+  })]
 ]);
+const filterPutCalls=[];
 const filterKv={
   get:async (key,type)=>{
     const value=filterStore.get(key);
     return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;
   },
-  put:async (key,value)=>filterStore.set(key,value)
+  put:async (key,value)=>{
+    filterPutCalls.push({key,value});
+    filterStore.set(key,value);
+  }
 };
-const syncFiltersResponse=await worker.default.fetch(new Request(
+let signalsReadWaitUntilCalls=0;
+const readWithFilterQuery=await worker.default.fetch(new Request(
   'https://example.com/signals?tf=5m&nyFilterOn=0&nyStart=08%3A00&nyEnd=17%3A00&pivotFilterOn=1&pivotDistance=1.25',
   {headers:{Origin:allowedOrigin}}
 ),{
   ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:filterKv
-},{waitUntil:()=>{}});
-assert.equal(syncFiltersResponse.status,200,'an allowed PWA origin must be able to synchronize bounded signal filters');
-const syncedPayload=await syncFiltersResponse.json();
-assert.deepEqual(syncedPayload.filters,{
-  nyFilterOn:false,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:1.25
+},{waitUntil:()=>{signalsReadWaitUntilCalls++;}});
+assert.equal(readWithFilterQuery.status,200,'GET /signals must remain backward-compatible with legacy query strings');
+const readWithFilterPayload=await readWithFilterQuery.json();
+assert.equal(readWithFilterPayload.readOnly,true);
+assert.equal(readWithFilterPayload.refreshing,false);
+assert.deepEqual(readWithFilterPayload.filters,{
+  nyFilterOn:true,nyStart:'08:00',nyEnd:'17:00',pivotFilterOn:true,pivotDistance:0.7
 });
-assert.deepEqual(await readSignalFilters({GSX_KV:filterKv}),syncedPayload.filters);
+assert.equal(filterPutCalls.length,0,'GET /signals must not write NY/Pivot configuration');
+assert.equal(signalsReadWaitUntilCalls,0,'GET /signals must not start a mutating signal cycle');
 
-const beforeRejectedSync=filterStore.get('system:signal-filters');
-const rejectedFilterSync=await worker.default.fetch(new Request(
+const forgedOriginRead=await worker.default.fetch(new Request(
   'https://example.com/signals?tf=5m&nyFilterOn=1&nyStart=08%3A00&nyEnd=17%3A00&pivotFilterOn=0&pivotDistance=0.7',
   {headers:{Origin:'https://attacker.example'}}
 ),{
   ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:filterKv
 },{waitUntil:()=>{}});
-assert.equal(rejectedFilterSync.status,403,'a disallowed browser origin must not change signal filters');
-assert.equal(filterStore.get('system:signal-filters'),beforeRejectedSync);
+assert.equal(forgedOriginRead.status,200,'read access must not become an implicit write authorization check');
+assert.equal(filterPutCalls.length,0,'a forged Origin and query parameters must not change configuration');
+
+const unauthorizedFilterWrite=await worker.default.fetch(new Request('https://example.com/signals/filters',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':'wrong-token'},
+  body:JSON.stringify({nyFilterOn:false,nyStart:'09:15',nyEnd:'16:45',pivotFilterOn:false,pivotDistance:1.25})
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:filterKv
+},{});
+assert.equal(unauthorizedFilterWrite.status,401,'an unauthorized filter write must be rejected');
+assert.equal(filterPutCalls.length,0,'an unauthorized filter write must not touch KV');
+
+const filtersBeforeMalformed=filterStore.get('system:signal-filters');
+const malformedFilterWrite=await worker.default.fetch(new Request('https://example.com/signals/filters',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken},
+  body:JSON.stringify({nyFilterOn:false,pivotFilterOn:false})
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:filterKv
+},{});
+assert.equal(malformedFilterWrite.status,400,'a malformed authenticated filter write must be rejected');
+assert.equal(filterStore.get('system:signal-filters'),filtersBeforeMalformed,
+  'a malformed write must not change persisted signal filters');
+
+const authorizedFilters={
+  nyFilterOn:false,nyStart:'09:15',nyEnd:'16:45',pivotFilterOn:false,pivotDistance:1.25
+};
+const authorizedFilterWrite=await worker.default.fetch(new Request('https://example.com/signals/filters',{
+  method:'POST',
+  headers:{Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken},
+  body:JSON.stringify(authorizedFilters)
+}),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_WRITE_TOKEN:writeToken,GSX_KV:filterKv
+},{});
+assert.equal(authorizedFilterWrite.status,200,'the authenticated filter write path must succeed');
+const authorizedFilterPayload=await authorizedFilterWrite.json();
+assert.equal(authorizedFilterPayload.changed,true);
+assert.deepEqual(authorizedFilterPayload.filters,authorizedFilters);
+assert.deepEqual(await readSignalFilters({GSX_KV:filterKv}),authorizedFilters);
+
+const readAfterWrite=await worker.default.fetch(new Request('https://example.com/signals?tf=5m'),{
+  ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),GSX_KV:filterKv
+},{waitUntil:()=>{signalsReadWaitUntilCalls++;}});
+assert.equal(readAfterWrite.status,200);
+assert.deepEqual((await readAfterWrite.json()).filters,authorizedFilters,
+  'a read after an authenticated write must reflect the persisted configuration');
+assert.equal(signalsReadWaitUntilCalls,0);
 
 let aiCalls = 0;
 const translated = await enrichNewsBriefArabic({

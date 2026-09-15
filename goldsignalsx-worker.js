@@ -46,6 +46,7 @@ import {
 //   POST /backtest            → محاكاة read-only بمحرك الإشارات الرسمي
 //   GET  /performance         → سجل أداء Production الحقيقي (read-only)
 //   GET  /telemetry           → قياسات توزيع evaluations والرفض (read-only)
+//   POST /signals/filters      → authenticated Signal Engine filter configuration
 //   GET  /export.csv?tf=1m        → تنزيل CSV للأعمدة time,o,h,l,c,v
 //   POST /notify                  → Telegram (TELEGRAM_TOKEN/CHAT)
 //   POST /decision                → يحفظ قرار/ملخص في KV
@@ -1291,31 +1292,35 @@ export default {
         }
       }
 
+      if (path === '/signals/filters') {
+        const denied=await enforceWriteRequest(req,env,allow,corsHeaders,'signal-filters');
+        if (denied) return denied;
+        if (!env.GSX_KV||KV_OFF) return json({ok:false,error:'signals_storage_unavailable'},corsHeaders,503);
+        const requested=signalFiltersFromInput(await readJsonBody(req));
+        if (!requested.ok) return json({ok:false,error:'bad_signal_filters'},corsHeaders,400);
+        const current=await readSignalFilters(env);
+        const changed=JSON.stringify(current)!==JSON.stringify(requested.filters);
+        if (changed) {
+          await env.GSX_KV.put(
+            SIGNAL_FILTERS_KEY,JSON.stringify({...requested.filters,updatedAt:Date.now()})
+          );
+        }
+        return jsonNoStore({ok:true,filters:requested.filters,changed},corsHeaders);
+      }
+
       if (path === '/signals') {
         if (method!=='GET') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
         const tf=url.searchParams.get('tf')||'';
         if (tf&&!SIGNAL_TIMEFRAMES.includes(tf)) return json({ok:false,error:'bad_tf'},corsHeaders,400);
-        const requested=signalFiltersFromSearchParams(url.searchParams);
-        if (!requested.ok) return json({ok:false,error:'bad_signal_filters'},corsHeaders,400);
-        let filters=await readSignalFilters(env);
-        let filtersChanged=false;
-        if (requested.provided) {
-          if (!origin||(!allow.includes('*')&&!allow.includes(origin))) {
-            return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
-          }
-          if (!env.GSX_KV||KV_OFF) return json({ok:false,error:'signals_storage_unavailable'},corsHeaders,503);
-          filtersChanged=JSON.stringify(filters)!==JSON.stringify(requested.filters);
-          if (filtersChanged) {
-            filters=requested.filters;
-            await env.GSX_KV.put(SIGNAL_FILTERS_KEY,JSON.stringify({...filters,updatedAt:Date.now()}));
-          }
-        }
+        const filters=await readSignalFilters(env);
         const [snapshot,exposure]=await Promise.all([
           readSignalSnapshot(env,tf||null),readExposureSnapshot(env)
         ]);
         const stale=Date.now()-Number(snapshot.updatedAt||0)>6*60_000;
-        if ((stale||filtersChanged)&&ctx?.waitUntil) ctx.waitUntil(runScheduledTasksGuarded(env,'signals-read'));
-        return jsonNoStore({...snapshot,exposure,filters,refreshing:stale||filtersChanged},corsHeaders);
+        return jsonNoStore({
+          ...snapshot,exposure,filters,filtersSource:'official-server',readOnly:true,
+          stale,refreshing:false
+        },corsHeaders);
       }
 
       if (path === '/diagnostics') {
@@ -1846,6 +1851,20 @@ function signalFiltersFromSearchParams(searchParams) {
     provided:true,
     filters:normalizeSignalFilters({nyFilterOn,nyStart,nyEnd,pivotFilterOn,pivotDistance})
   };
+}
+
+function signalFiltersFromInput(input) {
+  if (!input||typeof input!=='object'||Array.isArray(input)) {
+    return {ok:false,filters:null};
+  }
+  const names=['nyFilterOn','nyStart','nyEnd','pivotFilterOn','pivotDistance'];
+  if (!names.every(name=>Object.prototype.hasOwnProperty.call(input,name))) {
+    return {ok:false,filters:null};
+  }
+  const params=new URLSearchParams();
+  for (const name of names) params.set(name,String(input[name]));
+  const parsed=signalFiltersFromSearchParams(params);
+  return {ok:parsed.ok,filters:parsed.filters};
 }
 
 async function readSignalFilters(env) {
@@ -5207,7 +5226,7 @@ export {
   applyArabicNewsEnrichment,buildNewsBrief,classifyNewsArticle,enrichNewsBriefArabic,getGoldNewsBrief,
   parseGdeltSeenDate,parseTwelveDataTimeSeries,sendTelegramText,queueTelegramDelivery,
   signalTelegramText,processTelegramOutbox,
-  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,readSignalFilters,
+  updateSignalLifecycleAcrossBars,closedBarsOnly,signalFiltersFromSearchParams,signalFiltersFromInput,readSignalFilters,
   pruneTickHistory,decideGoldExposure,candidateClosesAfterExistingSignal,ensurePerformanceSchema,
   isGoldMarketOpen,isFreshSignalQuote,normalizeMt5TickPayload,isMt5QuoteFresh,currentPriceForSignals,
   recordProductionPerformanceEvent,recordProductionPerformanceSafely,
