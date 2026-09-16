@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: node --check goldsignalsx-worker.js
       - run: node --check signal-engine.js
       - run: node test-news.mjs
