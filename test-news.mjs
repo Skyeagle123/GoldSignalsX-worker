@@ -1243,14 +1243,14 @@ const restartEventId='trade:240m:restart:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${restartEventId}`,{
   schema:2,eventId:restartEventId,rootSignalId:'240m:restart:buy',signalId:'240m:restart:buy',
   tf:'240m',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.09.01.4',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:duplicateResults[0].queuedVersion,
   status:'sending',attempts:0,nextAttemptAt:telegramNow,text:'ambiguous restart event'
 });
 const deploymentEventId='trade:1d:old-deploy:buy:new_signal';
 restartHarness.storage.values.set(`telegram:event:v2:${deploymentEventId}`,{
   schema:2,eventId:deploymentEventId,rootSignalId:'1d:old-deploy:buy',signalId:'1d:old-deploy:buy',
   tf:'1d',kind:'new_signal',event:'new_signal',eventAt:telegramNow,signalCreatedAt:telegramNow,
-  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'2026.08.31.7',
+  queuedAt:telegramNow,createdAt:telegramNow,updatedAt:telegramNow,queuedVersion:'previous-test-deployment',
   status:'pending',attempts:0,nextAttemptAt:telegramNow,text:'previous deployment event'
 });
 await restartHarness.feed.processTelegramEvents();
