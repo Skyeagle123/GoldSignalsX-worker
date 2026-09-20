@@ -38,7 +38,8 @@ import {
 //   GET  /price              → { ok, price, bid, ask, spread, ts, ageMs, source }
 //   GET  /stream             → WebSocket live XAU/USD stream (Twelve Data)
 //   POST /mt5/tick           → authenticated read-only MT5 Bid/Ask + optional symbol metadata ingest
-//   POST /risk-sizing        → advisory server-side sizing for the matching Official Active Signal
+//   POST /risk-sizing        → authenticated server-authoritative sizing for the matching Official Active Signal
+//   GET  /risk-sizing/verify → authenticated read-only sizing verification without snapshot persistence
 //   GET  /ticks?from=&to=     → recent timestamped price ticks
 //   GET  /bars?tf=1m&limit=1200   → OHLC JSON (من D1 إن موجود، وإلا من KV ticks)
 //   GET  /news                → سياق إخباري مقروء فقط (GDELT)
@@ -57,6 +58,7 @@ import {
 //   TWELVE_DATA_API_KEY (secret)
 //   MT5_INGEST_TOKEN (secret)
 //   RISK_MAX_PERCENT / RISK_MAX_LOTS / RISK_METADATA_MAX_AGE_MS (non-secret safety caps)
+//   RISK_ACCOUNT_BASIS / RISK_ACCOUNT_VALUE_USD / RISK_PERCENT (trusted server-side sizing inputs)
 //   RISK_MAX_DAILY_LOSS_USD / RISK_MAX_WEEKLY_LOSS_USD / RISK_MAX_TOTAL_EXPOSURE_USD
 //   RISK_BUDGET_TIMEZONE (UTC only in Phase 3)
 //   GSX_KV (اختياري), GSX_DB (اختياري)
@@ -1169,12 +1171,41 @@ export default {
       }
 
       if (path === '/risk-sizing') {
-        if (method!=='POST') return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
-        if (origin&&(!allow.includes('*')&&!allow.includes(origin))) {
-          return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
+        const denied=await enforceWriteRequest(req,env,allow,corsHeaders,'risk-sizing');
+        if (denied) return denied;
+        let body;
+        try {
+          body=await readJsonBody(req,RISK_SIZING_BODY_BYTES);
+        } catch (error) {
+          const message=String(error?.message||error);
+          const safe=['invalid_json','payload_too_large'].includes(message)
+            ?message:'bad_risk_sizing_input';
+          return json({ok:false,error:safe},corsHeaders,400);
         }
-        const body=await readJsonBody(req,RISK_SIZING_BODY_BYTES);
-        const result=await calculateOfficialActiveRiskSizing(env,body);
+        const requested=riskSizingRequestFromInput(body);
+        if (!requested.ok) return json({ok:false,error:'bad_risk_sizing_input'},corsHeaders,400);
+        const authority=riskSizingAuthorityFromEnv(env);
+        if (!authority.ok) {
+          return json({ok:false,error:'risk_sizing_authority_not_configured'},corsHeaders,503);
+        }
+        const result=await calculateOfficialActiveRiskSizing(env,{
+          signalId:requested.signalId,...authority.input
+        });
+        return jsonNoStore(result,corsHeaders,200);
+      }
+
+      if (path === '/risk-sizing/verify') {
+        const denied=await enforceProtectedReadRequest(req,env,allow,corsHeaders);
+        if (denied) return denied;
+        const requested=riskSizingRequestFromSearchParams(url.searchParams);
+        if (!requested.ok) return json({ok:false,error:'bad_risk_sizing_input'},corsHeaders,400);
+        const authority=riskSizingAuthorityFromEnv(env);
+        if (!authority.ok) {
+          return json({ok:false,error:'risk_sizing_authority_not_configured'},corsHeaders,503);
+        }
+        const result=await calculateOfficialActiveRiskSizingReadOnly(env,{
+          signalId:requested.signalId,...authority.input
+        });
         return jsonNoStore(result,corsHeaders,200);
       }
 
@@ -1533,7 +1564,9 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
     : backfillSignalRollups(env);
   tasks.push(historyPromise.then(()=>Promise.all([newsPromise,calendarPromise])).then(async ([news,calendar])=>{
     const filters=await readSignalFilters(env);
-    const signalCycle=await runSignalCycle(env,mergeSignalRiskContext(news,calendar),filters);
+    const signalCycle=await runSignalCycle(env,mergeSignalRiskContext(news,calendar,Date.now(),{
+      cycleId:`${String(source)}:${Number(startedAt)}`,cycleStartedAt:Number(startedAt)
+    }),filters);
     if (signalCycle?.ok===false) {
       throw new Error(`signal_cycle_failed:${signalCycle.error||'failed'}`);
     }
@@ -1867,6 +1900,44 @@ function signalFiltersFromInput(input) {
   return {ok:parsed.ok,filters:parsed.filters};
 }
 
+function riskSizingRequestFromInput(input) {
+  if (!input||typeof input!=='object'||Array.isArray(input)) return {ok:false,signalId:''};
+  const allowed=['signalId'];
+  const required=['signalId'];
+  const keys=Object.keys(input);
+  if (keys.some(key=>!allowed.includes(key))||
+      !required.every(key=>Object.prototype.hasOwnProperty.call(input,key))) {
+    return {ok:false,signalId:''};
+  }
+  const signalId=typeof input.signalId==='string'?input.signalId.trim():'';
+  return signalId&&signalId.length<=200
+    ?{ok:true,signalId}
+    :{ok:false,signalId:''};
+}
+
+function riskSizingRequestFromSearchParams(searchParams) {
+  const keys=[...searchParams.keys()];
+  const signalIds=searchParams.getAll('signalId');
+  if (keys.some(key=>key!=='signalId')||signalIds.length!==1) {
+    return {ok:false,signalId:''};
+  }
+  return riskSizingRequestFromInput({signalId:signalIds[0]});
+}
+
+function riskSizingAuthorityFromEnv(env={}) {
+  const accountBasis=String(env.RISK_ACCOUNT_BASIS||'').trim();
+  const rawAccountValue=String(env.RISK_ACCOUNT_VALUE_USD||'').trim();
+  const rawRiskPercent=String(env.RISK_PERCENT||'').trim();
+  const accountValueUsd=Number(rawAccountValue);
+  const riskPercent=Number(rawRiskPercent);
+  if (!['balance','equity'].includes(accountBasis)||!rawAccountValue||!rawRiskPercent||
+      !Number.isFinite(accountValueUsd)||accountValueUsd<=0||
+      !Number.isFinite(riskPercent)||riskPercent<=0) {
+    return {ok:false,input:null};
+  }
+  return {ok:true,input:{accountBasis,accountValueUsd,riskPercent}};
+}
+
 async function readSignalFilters(env) {
   return normalizeSignalFilters(await readKvJson(env,SIGNAL_FILTERS_KEY)||{});
 }
@@ -2013,11 +2084,13 @@ async function attachRiskBudgetSafely(env,sizing,exposure,now=Date.now()) {
   }
 }
 
-async function calculateOfficialActiveRiskSizing(env,input={}) {
+async function loadOfficialActiveRiskSizing(env,input={}) {
   const limits=riskSizingLimitsFromEnv(env);
   if (!env.GOLD_FEED||!env.GSX_KV) {
-    const sizing=positionSizeUnavailable('risk_sizing_state_unavailable');
-    return {...sizing,riskBudget:unavailableRiskBudget('position_sizing_unavailable')};
+    return {
+      sizing:positionSizeUnavailable('risk_sizing_state_unavailable'),
+      exposure:null
+    };
   }
   try {
     const feed=env.GOLD_FEED.getByName('xau-usd');
@@ -2036,16 +2109,34 @@ async function calculateOfficialActiveRiskSizing(env,input={}) {
       accountValueUsd:Number(input?.accountValueUsd),
       riskPercent:Number(input?.riskPercent)
     });
-    const riskBudget=await attachRiskBudgetSafely(env,sizing,exposure,Date.now());
-    return {...sizing,riskBudget};
+    return {sizing,exposure};
   } catch (error) {
     console.error(JSON.stringify({
       message:'risk sizing calculation failed',
       error:error instanceof Error?error.message:String(error)
     }));
-    const sizing=positionSizeUnavailable('risk_sizing_state_unavailable');
-    return {...sizing,riskBudget:unavailableRiskBudget('position_sizing_unavailable')};
+    return {
+      sizing:positionSizeUnavailable('risk_sizing_state_unavailable'),
+      exposure:null
+    };
   }
+}
+
+async function calculateOfficialActiveRiskSizingReadOnly(env,input={}) {
+  const {sizing}=await loadOfficialActiveRiskSizing(env,input);
+  return {
+    ...sizing,
+    verification:{
+      readOnly:true,persistence:'disabled',
+      d1Writes:0,kvWrites:0,durableObjectWrites:0
+    }
+  };
+}
+
+async function calculateOfficialActiveRiskSizing(env,input={}) {
+  const {sizing,exposure}=await loadOfficialActiveRiskSizing(env,input);
+  const riskBudget=await attachRiskBudgetSafely(env,sizing,exposure,Date.now());
+  return {...sizing,riskBudget};
 }
 
 async function currentPriceForSignals(env) {
@@ -2081,11 +2172,8 @@ function telegramIsoTime(value) {
 function signalTelegramText(signal,event='created',options={}) {
   const kind=canonicalTelegramEvent(event);
   const side=signal.side==='buy'?'شراء':'بيع';
-  const eventAt=Number(options.eventAt)||(
-    kind==='new_signal'?Number(signal.createdAt):
-    ['tp2','sl','expired'].includes(kind)?Number(signal.closedAt||signal.updatedAt):
-    Number(signal.updatedAt||signal.createdAt)
-  );
+  const eventAt=Number(options.eventAt)||(kind==='new_signal'
+    ?Number(signal.createdAt):performanceEventAt(signal,kind));
   const signalCreatedAt=Number(options.signalCreatedAt||signal.createdAt);
   if (kind==='confirmation') {
     return [
@@ -2099,9 +2187,11 @@ function signalTelegramText(signal,event='created',options={}) {
   }
   if (kind!=='new_signal') {
     const status=kind==='tp1'?'تحقق TP1':kind==='tp2'?'تحقق TP2':kind==='sl'?'ضُرب SL':'انتهت صلاحية الإشارة';
+    const eventPrice=options.eventPrice!=null&&Number.isFinite(Number(options.eventPrice))
+      ?Number(options.eventPrice):performanceEventPrice(signal,kind);
     return [
       `🔔 تحديث إشارة ${side} — ${signal.tf}`,status,
-      `السعر: ${Number(signal.lastPrice).toFixed(2)}`,
+      `السعر: ${Number(eventPrice).toFixed(2)}`,
       `Entry: ${signal.entry.toFixed(2)} • TP1: ${signal.tp1.toFixed(2)} • TP2: ${signal.tp2.toFixed(2)} • SL: ${signal.sl.toFixed(2)}`,
       `وقت الحدث: ${telegramIsoTime(eventAt)}`,
       `وقت إنشاء الإشارة: ${telegramIsoTime(signalCreatedAt)}`
@@ -2131,11 +2221,17 @@ function canonicalPerformanceEvent(event) {
 
 function performanceEventAt(signal,event) {
   if (event==='created') return Number(signal?.createdAt)||0;
+  if (String(signal?.triggerEvent||'')===event&&signal?.triggeredAt!=null&&Number.isFinite(Number(signal.triggeredAt))) {
+    return Number(signal.triggeredAt);
+  }
   if (['tp2','sl','expired'].includes(event)) return Number(signal?.closedAt||signal?.updatedAt)||0;
   return Number(signal?.updatedAt||signal?.createdAt)||0;
 }
 
 function performanceEventPrice(signal,event) {
+  if (String(signal?.triggerEvent||'')===event&&signal?.triggerPrice!=null&&Number.isFinite(Number(signal.triggerPrice))) {
+    return Number(signal.triggerPrice);
+  }
   const observed=Number(signal?.lastPrice);
   if (Number.isFinite(observed)) return observed;
   if (event==='created') return Number(signal?.entry);
@@ -2143,6 +2239,17 @@ function performanceEventPrice(signal,event) {
   if (event==='tp2') return Number(signal?.tp2);
   if (event==='sl') return Number(signal?.sl);
   return Number(signal?.entry);
+}
+
+function performanceTriggerDetails(signal,event) {
+  if (String(signal?.triggerEvent||'')!==event) return {price:null,at:null,source:null};
+  const price=signal?.triggerPrice==null?NaN:Number(signal.triggerPrice);
+  const at=signal?.triggeredAt==null?NaN:Number(signal.triggeredAt);
+  return {
+    price:Number.isFinite(price)?price:null,
+    at:Number.isFinite(at)?at:null,
+    source:String(signal?.triggerSource||'')||null
+  };
 }
 
 function performanceEventLevel(signal,event) {
@@ -2715,6 +2822,7 @@ async function recordProductionPerformanceEvent(env,signal,event) {
   if (!Number.isFinite(eventAt)||eventAt<Number(signal.createdAt)) return {ok:false,error:'invalid_event_time'};
   const recordedAt=Date.now(),price=performanceEventPrice(signal,eventType);
   const level=performanceEventLevel(signal,eventType);
+  const trigger=performanceTriggerDetails(signal,eventType);
   const reasons=JSON.stringify(Array.isArray(signal.reasons)?signal.reasons.slice(0,8):[]);
   const statements=[
     env.GSX_DB.prepare(`
@@ -2734,6 +2842,15 @@ async function recordProductionPerformanceEvent(env,signal,event) {
     `).bind(`production:${signalId}:created`,signalId,Number(signal.createdAt),Number(signal.entry),recordedAt)
   ];
 
+  if (eventType==='created'&&signal.admissionContext) {
+    statements.push(env.GSX_DB.prepare(`
+      INSERT OR IGNORE INTO production_signal_admission_context
+        (signal_id,context_json,created_at,recorded_at)
+      SELECT signal_id,?2,created_at,?3 FROM production_signals
+      WHERE signal_id=?1 AND source='production'
+    `).bind(signalId,JSON.stringify(signal.admissionContext),recordedAt));
+  }
+
   if (eventType==='tp1'||eventType==='tp2') {
     statements.push(
       env.GSX_DB.prepare(`
@@ -2743,11 +2860,15 @@ async function recordProductionPerformanceEvent(env,signal,event) {
       `).bind(signalId,eventAt,price,recordedAt),
       env.GSX_DB.prepare(`
         INSERT OR IGNORE INTO production_signal_events
-          (event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at)
-        SELECT ?1,signal_id,'tp1',tp1_at,tp1_price,tp1,'production_lifecycle',?4
+          (event_id,signal_id,event_type,event_at,observed_price,level,
+           trigger_price,triggered_at,trigger_source,source,recorded_at)
+        SELECT ?1,signal_id,'tp1',tp1_at,tp1_price,tp1,?4,?5,?6,'production_lifecycle',?7
         FROM production_signals
         WHERE signal_id=?2 AND tp1_at=?3
-      `).bind(`production:${signalId}:tp1`,signalId,eventAt,recordedAt)
+      `).bind(
+        `production:${signalId}:tp1`,signalId,eventAt,
+        trigger.price,trigger.at,trigger.source,recordedAt
+      )
     );
   }
 
@@ -2764,11 +2885,15 @@ async function recordProductionPerformanceEvent(env,signal,event) {
       `).bind(signalId,eventType,eventAt,price,finalR,recordedAt),
       env.GSX_DB.prepare(`
         INSERT OR IGNORE INTO production_signal_events
-          (event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at)
-        SELECT ?1,signal_id,?3,?4,?5,?6,'production_lifecycle',?7
+          (event_id,signal_id,event_type,event_at,observed_price,level,
+           trigger_price,triggered_at,trigger_source,source,recorded_at)
+        SELECT ?1,signal_id,?3,?4,?5,?6,?7,?8,?9,'production_lifecycle',?10
         FROM production_signals
         WHERE signal_id=?2 AND final_status=?3 AND ${timeColumn}=?4
-      `).bind(`production:${signalId}:${eventType}`,signalId,eventType,eventAt,price,level,recordedAt)
+      `).bind(
+        `production:${signalId}:${eventType}`,signalId,eventType,eventAt,price,level,
+        trigger.price,trigger.at,trigger.source,recordedAt
+      )
     );
   }
 
@@ -2836,6 +2961,7 @@ function mapPerformanceSignal(row) {
   const quality=safeJsonParse(row?.quality_metrics_json,null);
   const mtfMatrix=safeJsonParse(row?.mtf_matrix_json,null);
   const mtfConfirmations=safeJsonParse(row?.mtf_confirmations_json,null);
+  const admissionContext=safeJsonParse(row?.admission_context_json,null);
   const createdAt=Number(row?.created_at||0);
   const finalStatus=row?.final_status?String(row.final_status):null;
   const resultR=row?.result_r==null?null:Number(row.result_r);
@@ -2870,7 +2996,7 @@ function mapPerformanceSignal(row) {
     timeToTp1Ms:row?.tp1_at==null?null:Number(row.tp1_at)-createdAt,
     timeToTp2Ms:row?.tp2_at==null?null:Number(row.tp2_at)-createdAt,
     timeToSlMs:row?.sl_at==null?null:Number(row.sl_at)-createdAt,
-    quality,mtfAnalysis,
+    quality,mtfAnalysis,admissionContext,
     newsRisk:{
       available:Number(row?.news_risk_window_count||0)>0,atEntry:null,
       postEntry:{
@@ -3219,6 +3345,8 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
       WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_matrix_json,
     (SELECT confirmations_json FROM production_mtf_analysis analysis
       WHERE analysis.primary_signal_id=production_signals.signal_id) AS mtf_confirmations_json,
+    (SELECT context_json FROM production_signal_admission_context admission
+      WHERE admission.signal_id=production_signals.signal_id) AS admission_context_json,
     (SELECT COUNT(DISTINCT window_id) FROM production_signal_news_risk risk
       WHERE risk.primary_signal_id=production_signals.signal_id) AS news_risk_window_count,
     (SELECT COUNT(*) FROM production_signal_news_risk risk
@@ -3248,7 +3376,8 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
   if (records.length) {
     const placeholders=records.map((_,index)=>`?${index+1}`).join(',');
     const events=(await env.GSX_DB.prepare(`
-      SELECT event_id,signal_id,event_type,event_at,observed_price,level,source,recorded_at
+      SELECT event_id,signal_id,event_type,event_at,observed_price,level,
+        trigger_price,triggered_at,trigger_source,source,recorded_at
       FROM production_signal_events WHERE signal_id IN (${placeholders})
       ORDER BY event_at,CASE event_type WHEN 'created' THEN 1 WHEN 'tp1' THEN 2 ELSE 3 END,event_id
     `).bind(...records.map(record=>record.signalId)).all()).results||[];
@@ -3258,6 +3387,9 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
       list.push({
         eventId:String(event.event_id),type:String(event.event_type),eventAt:Number(event.event_at),
         price:Number(event.observed_price),level:Number(event.level),source:String(event.source),
+        triggerPrice:event.trigger_price==null?null:Number(event.trigger_price),
+        triggeredAt:event.triggered_at==null?null:Number(event.triggered_at),
+        triggerSource:event.trigger_source==null?null:String(event.trigger_source),
         recordedAt:Number(event.recorded_at)
       });
       bySignal.set(String(event.signal_id),list);
@@ -3595,7 +3727,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
         continue;
       }
       const lifecycle=updateSignalLifecycleAcrossBars(
-        existing,trackingBars,liveFresh?live.price:NaN,now
+        existing,trackingBars,liveFresh?live.price:NaN,now,60_000,String(live?.source||'unknown')
       );
       for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event);
       if (!lifecycle.events.length) {
@@ -3627,7 +3759,15 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       mtf:normalizeMtfSummary(result.mtf),
       mtfAtEntry:createMtfAtEntrySnapshot(tf,result.mtf,mtf,now),mtfConfirmations:[],
       origin:'server',
-      provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters
+      provider:frame.provider,newsBias:news?.goldBias?.direction||'neutral',filters,
+      ...(news?.admissionContext?{admissionContext:{
+        ...news.admissionContext,
+        cycle:{...news.admissionContext.cycle,evaluatedAt:now},
+        effectiveAdmissionDecision:{
+          ...news.admissionContext.effectiveAdmissionDecision,accepted:null,status:'candidate',
+          reason:'technical-candidate-awaiting-exposure-admission'
+        }
+      }}:{})
     };
     candidates.push(signal);
   }
@@ -3678,6 +3818,15 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   for (const signal of candidates) {
     const decision=decisions.get(signal.id);
     if (decision?.decision!=='accepted') continue;
+    if (signal.admissionContext) {
+      signal.admissionContext={
+        ...signal.admissionContext,
+        effectiveAdmissionDecision:{
+          ...signal.admissionContext.effectiveAdmissionDecision,
+          accepted:true,status:'accepted',reason:'technical-and-exposure-admission-accepted'
+        }
+      };
+    }
     try {
       await saveSignalState(env,signal,'created');
       officialPrimaryTelemetryIds.add(signal.id);
@@ -3780,6 +3929,25 @@ async function enforceWriteRequest(req, env, allowedOrigins, corsHeaders, action
     const count = Number(await env.GSX_KV.get(key) || 0) + 1;
     if (count > limit) return json({ ok:false, error:'rate_limited' }, corsHeaders, 429);
     await env.GSX_KV.put(key, String(count), { expirationTtl:120 });
+  }
+  return null;
+}
+
+async function enforceProtectedReadRequest(req,env,allowedOrigins,corsHeaders) {
+  if (req.method.toUpperCase()!=='GET') {
+    return json({ok:false,error:'method_not_allowed'},corsHeaders,405);
+  }
+  const origin=req.headers.get('Origin')||'';
+  if (!origin||(!allowedOrigins.includes('*')&&!allowedOrigins.includes(origin))) {
+    return json({ok:false,error:'origin_not_allowed'},corsHeaders,403);
+  }
+  const configuredToken=String(env.GSX_WRITE_TOKEN||'').trim();
+  if (!configuredToken) {
+    return json({ok:false,error:'write_auth_not_configured'},corsHeaders,503);
+  }
+  const suppliedToken=String(req.headers.get('x-gsx-write-token')||'');
+  if (!(await constantTimeEqual(configuredToken,suppliedToken))) {
+    return json({ok:false,error:'unauthorized'},corsHeaders,401);
   }
   return null;
 }
@@ -4375,20 +4543,82 @@ async function getOfficialCalendar(env,{refresh=false}={}) {
   }
 }
 
-function mergeSignalRiskContext(news,calendar,now=Date.now()) {
+function boundedAdmissionTimestamp(value) {
+  const timestamp=Number(value);
+  return Number.isFinite(timestamp)&&timestamp>0?timestamp:null;
+}
+
+function admissionSnapshotStatus(snapshot) {
+  if (snapshot?.refreshError||snapshot?.error) return 'refresh-failed';
+  if (!snapshot?.ok) return 'unavailable';
+  return snapshot?.stale?'stale':'fresh';
+}
+
+function admissionSnapshotAge(snapshot,now) {
+  const explicit=Number(snapshot?.ageMs);
+  if (Number.isFinite(explicit)&&explicit>=0) return explicit;
+  const updatedAt=boundedAdmissionTimestamp(snapshot?.updatedAt);
+  return updatedAt==null?null:Math.max(0,Number(now)-updatedAt);
+}
+
+function mergeSignalRiskContext(news,calendar,now=Date.now(),cycle={}) {
   const settings=normalizeCalendarSettings({}),calendarRisk=calendarRiskSnapshot(calendar?.events,now,settings);
   const newsSafety=news?.safety||{};
-  const calendarBlocks=calendar?.ok&&!calendar?.stale&&calendarRisk.blockTechnicalSignal;
-  const newsBlocks=news?.ok&&!news?.stale&&newsSafety.blockTechnicalSignal;
+  const calendarTrusted=Boolean(calendar?.ok&&!calendar?.stale);
+  const calendarBlocks=Boolean(calendarTrusted&&calendarRisk.blockTechnicalSignal);
+  const newsBlocks=Boolean(news?.ok&&!news?.stale&&newsSafety.blockTechnicalSignal);
   const blockTechnicalSignal=Boolean(calendarBlocks||newsBlocks);
+  const cycleStartedAt=boundedAdmissionTimestamp(cycle.cycleStartedAt)||Number(now);
+  const cycleId=String(cycle.cycleId||`signal-cycle:${cycleStartedAt}`);
+  const matchedEvents=(Array.isArray(calendarRisk.activeEvents)?calendarRisk.activeEvents:[]).slice(0,8).map(event=>{
+    const eventAt=boundedAdmissionTimestamp(event?.eventAt);
+    const before=Number(event?.riskBeforeMinutes),after=Number(event?.riskAfterMinutes);
+    return {
+      eventId:String(event?.id||''),eventAt,impact:String(event?.impact||''),
+      windowStartAt:eventAt!=null&&Number.isFinite(before)?eventAt-before*60_000:null,
+      windowEndAt:eventAt!=null&&Number.isFinite(after)?eventAt+after*60_000:null
+    };
+  });
+  const effectiveReason=calendarBlocks?calendarRisk.reason:
+    newsBlocks?(newsSafety.reason||'High-impact news risk'):
+      calendarTrusted?'no-blocking-calendar-event':'calendar-unavailable-or-stale';
+  const admissionContext={
+    schema:1,
+    cycle:{cycleId,cycleStartedAt,evaluatedAt:Number(now)},
+    calendar:{
+      ok:Boolean(calendar?.ok),stale:Boolean(calendar?.stale),cache:String(calendar?.cache||''),
+      source:String(calendar?.source||''),updatedAt:boundedAdmissionTimestamp(calendar?.updatedAt),
+      fetchedAt:boundedAdmissionTimestamp(calendar?.fetchedAt||calendar?.updatedAt),
+      ageMs:admissionSnapshotAge(calendar,now),refreshStatus:admissionSnapshotStatus(calendar),
+      refreshError:String(calendar?.refreshError||calendar?.error||'')
+    },
+    matchedEvents,
+    calendarRisk:{
+      active:Boolean(calendarRisk.active),trusted:calendarTrusted,
+      blockTechnicalSignal:calendarBlocks,reason:calendarBlocks?String(calendarRisk.reason||''):
+        (calendarTrusted?'no-blocking-calendar-event':'calendar-unavailable-or-stale'),
+      blockUntil:boundedAdmissionTimestamp(calendarBlocks?calendarRisk.blockUntil:null)
+    },
+    news:{
+      ok:Boolean(news?.ok),stale:Boolean(news?.stale),cache:String(news?.cache||''),
+      source:String(news?.source||''),updatedAt:boundedAdmissionTimestamp(news?.updatedAt),
+      ageMs:admissionSnapshotAge(news,now),refreshStatus:admissionSnapshotStatus(news),
+      refreshError:String(news?.refreshError||news?.error||'')
+    },
+    effectiveAdmissionDecision:{
+      blockTechnicalSignal,accepted:null,status:blockTechnicalSignal?'blocked':'eligible',reason:effectiveReason
+    }
+  };
   return {
     ...(news||{ok:true,stale:false,goldBias:{direction:'informational',confidence:0}}),
     safety:{
       ...newsSafety,blockTechnicalSignal,
+      calendarBlockTechnicalSignal:calendarBlocks,newsBlockTechnicalSignal:newsBlocks,
       reason:calendarBlocks?calendarRisk.reason:(newsBlocks?newsSafety.reason:''),
       blockUntil:Math.max(Number(calendarBlocks?calendarRisk.blockUntil:0),Number(newsBlocks?newsSafety.blockUntil:0))||null,
       calendarRisk
-    }
+    },
+    admissionContext
   };
 }
 
@@ -5100,14 +5330,28 @@ async function maybeEnsureD1(env) {
   await ensureNewsCalendarSchema(env);
 }
 
+async function ensureD1Column(db,table,column,definition) {
+  const info=(await db.prepare(`PRAGMA table_info(${table})`).all()).results||[];
+  if (info.some(row=>String(row.name)===column)) return;
+  try {
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  } catch (error) {
+    if (!/duplicate column/i.test(String(error?.message||error))) throw error;
+  }
+}
+
 async function ensurePerformanceSchema(env) {
   if (!env.GSX_DB) return;
   await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signals (signal_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT 'production' CHECK (source='production'), symbol TEXT NOT NULL DEFAULT 'XAUUSD', timeframe TEXT NOT NULL, direction TEXT NOT NULL CHECK (direction IN ('buy','sell')), created_at INTEGER NOT NULL, signal_bar_ts INTEGER NOT NULL DEFAULT 0, entry REAL NOT NULL, tp1 REAL NOT NULL, tp2 REAL NOT NULL, sl REAL NOT NULL, confidence REAL NOT NULL DEFAULT 0, score REAL, reasons_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', final_status TEXT, tp1_at INTEGER, tp1_price REAL, tp2_at INTEGER, tp2_price REAL, sl_at INTEGER, sl_price REAL, expired_at INTEGER, expired_price REAL, closed_at INTEGER, result_r REAL, recorded_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_created ON production_signals(created_at DESC,signal_id DESC);');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_tf_created ON production_signals(timeframe,created_at DESC);');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_signals_final_closed ON production_signals(final_status,closed_at,signal_id);');
-  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL CHECK (event_type IN ('created','tp1','tp2','sl','expired')), event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, trigger_price REAL, triggered_at INTEGER, trigger_source TEXT, source TEXT NOT NULL DEFAULT 'production_lifecycle' CHECK (source='production_lifecycle'), recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type), FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
+  await ensureD1Column(env.GSX_DB,'production_signal_events','trigger_price','REAL');
+  await ensureD1Column(env.GSX_DB,'production_signal_events','triggered_at','INTEGER');
+  await ensureD1Column(env.GSX_DB,'production_signal_events','trigger_source','TEXT');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_events_signal_time ON production_signal_events(signal_id,event_at,event_type);');
+  await env.GSX_DB.exec("CREATE TABLE IF NOT EXISTS production_signal_admission_context (signal_id TEXT PRIMARY KEY, context_json TEXT NOT NULL, created_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, FOREIGN KEY(signal_id) REFERENCES production_signals(signal_id));");
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_signal_quality (primary_signal_id TEXT PRIMARY KEY, metrics_json TEXT NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
   await env.GSX_DB.exec('CREATE INDEX IF NOT EXISTS idx_production_quality_updated ON production_signal_quality(updated_at DESC,primary_signal_id);');
   await env.GSX_DB.exec('CREATE TABLE IF NOT EXISTS production_mtf_analysis (primary_signal_id TEXT PRIMARY KEY, matrix_json TEXT NOT NULL, confirmations_json TEXT NOT NULL DEFAULT \'{"confirmations":[],"summary":{"count":0}}\', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(primary_signal_id) REFERENCES production_signals(signal_id));');
@@ -5244,6 +5488,7 @@ export {
   createMtfAtEntrySnapshot,linkMtfConfirmation,persistLinkedMtfConfirmation,
   riskSizingLimitsFromEnv,riskBudgetLimitsFromEnv,storeImmutableRiskSnapshot,
   readRealizedLossRows,attachRiskBudgetSafely,calculateOfficialActiveRiskSizing,
+  calculateOfficialActiveRiskSizingReadOnly,
   runSignalCycle,runIndependentOperationalCollectors,
   readHealthKvJson,deriveHealthOverall,buildOperationalHealth,
   persistTelegramDelivery

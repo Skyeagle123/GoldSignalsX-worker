@@ -1036,12 +1036,34 @@ const lifecycleSignal={
   conf:80,reasons:['authorized test signal']
 };
 const lifecycle=updateSignalLifecycleAcrossBars(lifecycleSignal,[
-  {t:fixedNow-3*60000,o:100,h:101.2,l:99.5,c:100.8},
-  {t:fixedNow-2*60000,o:100.8,h:100.9,l:100.2,c:100.4}
+  {t:fixedNow-3*60000,o:100,h:101.2,l:99.5,c:100.8,provider:'mt5'},
+  {t:fixedNow-2*60000,o:100.8,h:100.9,l:100.2,c:100.4,provider:'mt5'}
 ],100.5,fixedNow);
 assert.equal(lifecycle.signal.status,'tp1','an earlier minute TP touch must not be lost when the latest minute no longer touches it');
 assert.deepEqual(lifecycle.events.map(item=>item.event),['tp1']);
 assert.equal(lifecycle.signal.lastProcessedBarTs,fixedNow-2*60000);
+assert.equal(lifecycle.events[0].signal.triggerPrice,101.2,'TP1 must retain the eligible bar high rather than its close');
+assert.equal(lifecycle.events[0].signal.triggeredAt,fixedNow-2*60000);
+assert.equal(lifecycle.events[0].signal.triggerSource,'mt5:bar-high');
+
+const tp1ThenTp2=updateSignalLifecycleAcrossBars(lifecycleSignal,[
+  {t:fixedNow-3*60000,o:100,h:101.2,l:99.5,c:100.8,provider:'mt5'},
+  {t:fixedNow-2*60000,o:100.8,h:102.5,l:100.2,c:101.4,provider:'mt5'}
+],101.4,fixedNow);
+assert.deepEqual(tp1ThenTp2.events.map(item=>item.event),['tp1','tp2'],
+  'TP1 must remain non-terminal and continue to TP2');
+assert.equal(tp1ThenTp2.signal.status,'tp2');
+assert.equal(tp1ThenTp2.signal.lastPrice,101.4,'bar close remains lifecycle lastPrice');
+assert.equal(tp1ThenTp2.signal.triggerPrice,102.5,'TP2 must retain the eligible authoritative bar high');
+assert.equal(tp1ThenTp2.signal.triggerSource,'mt5:bar-high');
+assert.match(signalTelegramText(tp1ThenTp2.signal,'tp2'),/السعر: 102\.50/,
+  'TP2 display must use triggerPrice instead of a different bar close');
+
+const belowTp2=updateSignalLifecycleAcrossBars({...lifecycleSignal,status:'tp1',tp1Hit:true},[
+  {t:fixedNow-3*60000,o:100,h:101.99,l:100,c:101.4,provider:'mt5'}
+],101.4,fixedNow);
+assert.equal(belowTp2.signal.status,'tp1','BUY TP2 must not trigger below its target');
+assert.deepEqual(belowTp2.events,[]);
 
 const issuedMidMinute={
   ...lifecycleSignal,
@@ -1093,9 +1115,12 @@ const exactBoundary=updateSignalLifecycleAcrossBars(issuedAtMinuteOpen,[
 assert.equal(exactBoundary.signal.status,'tp1','a candle beginning exactly at signal issuance must be eligible');
 
 const ambiguous=updateSignalLifecycleAcrossBars(lifecycleSignal,[
-  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:101}
+  {t:fixedNow-3*60000,o:100,h:102.5,l:98.5,c:101,provider:'mt5'}
 ],101,fixedNow);
 assert.equal(ambiguous.signal.status,'stopped','SL must win conservatively when one minute touches target and stop');
+assert.equal(ambiguous.signal.triggerEvent,'sl');
+assert.equal(ambiguous.signal.triggerPrice,98.5);
+assert.equal(ambiguous.signal.triggerSource,'mt5:bar-low');
 
 assert.equal((await sendTelegramText({},'test')).error,'telegram_not_configured');
 
@@ -1161,13 +1186,22 @@ const tp1Signal={...officialSignal,status:'tp1',tp1Hit:true,updatedAt:telegramNo
 const tp1Text=signalTelegramText(tp1Signal,'tp1');
 const tp1Delivery=await queueTelegramDelivery(telegramHarness.env,tp1Signal,'tp1',tp1Text);
 telegramNow+=1_000;
-const tp2Signal={...tp1Signal,status:'tp2',updatedAt:telegramNow,closedAt:telegramNow,lastPrice:102};
+const tp2Signal={
+  ...tp1Signal,status:'tp2',updatedAt:telegramNow,closedAt:telegramNow,lastPrice:101.36,
+  triggerEvent:'tp2',triggerPrice:102.285,triggeredAt:telegramNow-500,triggerSource:'mt5:live-price'
+};
 const tp2Text=signalTelegramText(tp2Signal,'tp2');
 const tp2Delivery=await queueTelegramDelivery(telegramHarness.env,tp2Signal,'tp2',tp2Text);
+const callsAfterTp2=telegramCalls.length;
+const duplicateTp2Delivery=await queueTelegramDelivery(telegramHarness.env,tp2Signal,'tp2',tp2Text);
 assert.equal(tp1Delivery.status,'sent');
 assert.equal(tp2Delivery.status,'sent');
+assert.equal(duplicateTp2Delivery.eventId,tp2Delivery.eventId,'trigger metadata must not change eventId/dedupe semantics');
+assert.equal(telegramCalls.length,callsAfterTp2,'a retried TP2 event must remain deduplicated');
 assert.match(telegramCalls.at(-2).text,/تحقق TP1/);
 assert.match(telegramCalls.at(-1).text,/تحقق TP2/,'TP1 must be delivered before TP2');
+assert.match(telegramCalls.at(-1).text,/السعر: 102\.28/,'Telegram must display the stored trigger price');
+assert.doesNotMatch(telegramCalls.at(-1).text,/السعر: 101\.36/);
 assert.match(telegramCalls.at(-1).text,/وقت الحدث:/);
 assert.match(telegramCalls.at(-1).text,/وقت إنشاء الإشارة:/);
 
@@ -1598,6 +1632,13 @@ assert.equal(signalTelemetryRejectionReasons(
   {newsBlocked:true,newsReason:'official news window'}
 ).includes('news_risk'),false,'News Risk must not be inferred from unrelated engine rejections');
 
+const legacyPerformanceDb=new MemoryD1();
+legacyPerformanceDb.database.exec("CREATE TABLE production_signal_events (event_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL, event_type TEXT NOT NULL, event_at INTEGER NOT NULL, observed_price REAL NOT NULL, level REAL NOT NULL, source TEXT NOT NULL, recorded_at INTEGER NOT NULL, UNIQUE(signal_id,event_type));");
+await ensurePerformanceSchema({GSX_DB:legacyPerformanceDb});
+const migratedEventColumns=legacyPerformanceDb.database.prepare('PRAGMA table_info(production_signal_events)').all().map(row=>row.name);
+assert.ok(['trigger_price','triggered_at','trigger_source'].every(column=>migratedEventColumns.includes(column)),
+  'existing performance tables must gain trigger metadata columns safely');
+
 const performanceDb=new MemoryD1();
 await ensurePerformanceSchema({GSX_DB:performanceDb});
 const performanceBase=Date.UTC(2026,8,1,8,0,0);
@@ -1811,17 +1852,30 @@ const closureQualityMetrics=computeSignalQualityMetrics({
 assert.equal(closureQualityMetrics.mfe,qualityMetrics.mfe,'expiry with no new ticks must preserve MFE');
 assert.equal(closureQualityMetrics.mae,qualityMetrics.mae,'expiry with no new ticks must preserve MAE');
 
-const winner=productionSignal('5m:performance:win',performanceBase);
+const winnerAdmissionContext=mergeSignalRiskContext(
+  {ok:false,stale:true,cache:'stale-fallback',updatedAt:performanceBase-120_000,error:'gdelt_unavailable'},
+  {ok:true,stale:false,cache:'cron-refreshed',source:'official-multi-source',updatedAt:performanceBase,events:[]},
+  performanceBase,{cycleId:'cron:performance-test',cycleStartedAt:performanceBase-1_000}
+).admissionContext;
+const winner=productionSignal('5m:performance:win',performanceBase,{admissionContext:{
+  ...winnerAdmissionContext,
+  effectiveAdmissionDecision:{
+    ...winnerAdmissionContext.effectiveAdmissionDecision,
+    accepted:true,status:'accepted',reason:'technical-and-exposure-admission-accepted'
+  }
+}});
 await Promise.all([
   recordProductionPerformanceEvent({GSX_DB:performanceDb},winner,'created'),
   recordProductionPerformanceEvent({GSX_DB:performanceDb},winner,'created')
 ]);
 await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
-  ...winner,status:'tp1',tp1Hit:true,updatedAt:performanceBase+60_000,lastPrice:113
+  ...winner,status:'tp1',tp1Hit:true,updatedAt:performanceBase+60_000,lastPrice:111,
+  triggerEvent:'tp1',triggerPrice:113,triggeredAt:performanceBase+59_500,triggerSource:'mt5:bar-high'
 },'tp1');
 await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
   ...winner,status:'tp2',tp1Hit:true,updatedAt:performanceBase+120_000,
-  closedAt:performanceBase+120_000,lastPrice:122
+  closedAt:performanceBase+120_000,lastPrice:119,
+  triggerEvent:'tp2',triggerPrice:122,triggeredAt:performanceBase+119_500,triggerSource:'mt5:live-price'
 },'tp2');
 await recordProductionPerformanceEvent({GSX_DB:performanceDb},{
   ...winner,status:'tp1',tp1Hit:true,updatedAt:performanceBase+180_000,lastPrice:114
@@ -1927,7 +1981,18 @@ const winnerRecord=(await readProductionPerformance(
 )).records.find(record=>record.signalId===winner.id);
 assert.deepEqual(winnerRecord.events.map(event=>event.type),['created','tp1','tp2']);
 assert.equal(winnerRecord.finalStatus,'tp2','a later conflicting SL must not replace the first terminal event');
-assert.equal(winnerRecord.tp1At,performanceBase+60_000,'a delayed duplicate TP1 must not rewrite the first event time');
+assert.equal(winnerRecord.tp1At,performanceBase+59_500,'a delayed duplicate TP1 must not rewrite the first trigger time');
+assert.equal(winnerRecord.tp1Price,113,'performance must use TP1 trigger price instead of lastPrice');
+assert.equal(winnerRecord.tp2At,performanceBase+119_500);
+assert.equal(winnerRecord.tp2Price,122,'performance must use TP2 trigger price instead of lastPrice');
+const winnerTp2Event=winnerRecord.events.find(event=>event.type==='tp2');
+assert.equal(winnerTp2Event.triggerPrice,122);
+assert.equal(winnerTp2Event.triggeredAt,performanceBase+119_500);
+assert.equal(winnerTp2Event.triggerSource,'mt5:live-price');
+assert.equal(winnerRecord.admissionContext.cycle.cycleId,'cron:performance-test');
+assert.equal(winnerRecord.admissionContext.calendar.refreshStatus,'fresh');
+assert.equal(winnerRecord.admissionContext.news.refreshStatus,'refresh-failed');
+assert.equal(winnerRecord.admissionContext.effectiveAdmissionDecision.accepted,true);
 assert.equal(winnerRecord.score,8.75);
 assert.equal(winnerRecord.atEntry.signalId,winner.id);
 assert.equal(winnerRecord.atEntry.entry,winner.entry);
@@ -2593,6 +2658,50 @@ const calendarBlockedSignal=computeServerSignal(parityFrames['1m'],{
 });
 assert.equal(calendarBlockedSignal.side,'none','calendar risk may only veto an otherwise technical signal');
 
+const computeWithNewsContext=newsContext=>computeServerSignal(parityFrames['1m'],{
+  tf:'1m',mtf:[{tf:'5m',bars:parityFrames['5m']},{tf:'15m',bars:parityFrames['15m']}],
+  live:{price:parityFrames['1m'].at(-1).c,ts:parityAt,receivedAt:parityAt,source:'backtest'},
+  barsSource:'backtest',dataQuality:evaluateCandleQuality(parityFrames['1m'],'1m'),
+  filters:parityFilters,news:newsContext,evaluationAt:parityAt
+});
+const calendarFreshHigh={
+  ok:true,stale:false,cache:'cron-refreshed',source:'official-multi-source',
+  updatedAt:riskEvent.eventAt-1_000,events:[riskEvent]
+};
+const gdeltHealthy={ok:true,stale:false,cache:'refreshed',updatedAt:riskEvent.eventAt,
+  goldBias:{direction:'informational',confidence:0},safety:{blockTechnicalSignal:false}};
+const gdeltStale={...gdeltHealthy,ok:true,stale:true,cache:'stale-fallback',refreshError:'gdelt_refresh_failed'};
+const gdeltUnavailable={ok:false,stale:true,cache:'',updatedAt:null,error:'gdelt_unavailable',
+  goldBias:{direction:'informational',confidence:0},safety:{blockTechnicalSignal:false}};
+for (const [label,gdelt] of [
+  ['healthy',gdeltHealthy],['stale',gdeltStale],['unavailable',gdeltUnavailable]
+]) {
+  const context=mergeSignalRiskContext(gdelt,calendarFreshHigh,riskEvent.eventAt,{
+    cycleId:`calendar-matrix:${label}`,cycleStartedAt:riskEvent.eventAt-2_000
+  });
+  assert.equal(context.safety.calendarBlockTechnicalSignal,true,`fresh HIGH Calendar + GDELT ${label} must retain Calendar block`);
+  assert.equal(computeWithNewsContext(context).side,'none',`fresh HIGH Calendar + GDELT ${label} must BLOCK`);
+}
+const noCalendarEventContext=mergeSignalRiskContext(
+  gdeltStale,{...calendarFreshHigh,events:[]},riskEvent.eventAt
+);
+assert.equal(noCalendarEventContext.safety.calendarBlockTechnicalSignal,false);
+assert.equal(computeWithNewsContext(noCalendarEventContext).side,noNewsScore.side,
+  'fresh Calendar without a blocking event plus stale GDELT must not invent a Calendar block');
+for (const [label,calendar] of [
+  ['stale',{...calendarFreshHigh,stale:true,cache:'stale-fallback'}],
+  ['unavailable',{ok:false,stale:true,events:[riskEvent],error:'calendar_unavailable'}]
+]) {
+  const context=mergeSignalRiskContext(gdeltHealthy,calendar,riskEvent.eventAt);
+  assert.equal(context.safety.calendarBlockTechnicalSignal,false,`${label} Calendar must not claim an authoritative HIGH block`);
+  assert.equal(computeWithNewsContext(context).side,noNewsScore.side,`${label} Calendar must not block from untrusted data`);
+}
+assert.equal(blockedContext.admissionContext.matchedEvents[0].eventId,riskEvent.id);
+assert.equal(blockedContext.admissionContext.calendarRisk.trusted,true);
+assert.equal(blockedContext.admissionContext.calendarRisk.blockTechnicalSignal,true);
+assert.equal(blockedContext.admissionContext.effectiveAdmissionDecision.blockTechnicalSignal,true);
+assert.equal(blockedContext.admissionContext.cycle.evaluatedAt,riskEvent.eventAt);
+
 const calendarDb=new MemoryD1();
 await ensureNewsCalendarSchema({GSX_DB:calendarDb});
 const storedCalendar={ok:true,events:[riskEvent]};
@@ -2720,7 +2829,8 @@ const riskIntegrationFeed={
 };
 const riskIntegrationEnv={
   RISK_MAX_PERCENT:'2',RISK_MAX_LOTS:'5',RISK_METADATA_MAX_AGE_MS:'900000',
-  ALLOW_ORIGINS:'["*"]',
+  RISK_ACCOUNT_BASIS:'equity',RISK_ACCOUNT_VALUE_USD:'25000',RISK_PERCENT:'1',
+  ALLOW_ORIGINS:'["*"]',GSX_WRITE_TOKEN:writeToken,
   GOLD_FEED:{getByName:()=>riskIntegrationFeed},
   GSX_KV:{
     get:async key=>key==='signal:state:'+riskIntegrationSignal.tf?riskIntegrationSignal:null,
@@ -2738,18 +2848,28 @@ assert.equal(riskIntegrationResult.decisionUse,false);
 assert.equal(riskIntegrationWrites,0,'risk sizing must not write signal or exposure state');
 
 const riskSizingResponse=await worker.default.fetch(new Request('https://example.com/risk-sizing',{
-  method:'POST',headers:{'content-type':'application/json'},
-  body:JSON.stringify({
-    signalId:riskIntegrationSignal.id,accountBasis:'equity',
-    accountValueUsd:25000,riskPercent:1
-  })
+  method:'POST',headers:{
+    Origin:allowedOrigin,'content-type':'application/json','x-gsx-write-token':writeToken
+  },
+  body:JSON.stringify({signalId:riskIntegrationSignal.id})
 }),riskIntegrationEnv,{});
 assert.equal(riskSizingResponse.status,200);
 const riskSizingPayload=await riskSizingResponse.json();
 assert.equal(riskSizingPayload.status,'POSITION_SIZE_AVAILABLE');
 assert.equal(riskSizingPayload.signal.id,riskIntegrationSignal.id);
 assert.equal(riskSizingPayload.estimatesExclude.includes('commission'),true);
-assert.equal(riskIntegrationWrites,0,'the advisory API must remain side-effect free');
+assert.equal(riskIntegrationWrites,1,'the protected write path must only consume its auth rate-limit write here');
+
+const riskVerificationResponse=await worker.default.fetch(new Request(
+  `https://example.com/risk-sizing/verify?signalId=${encodeURIComponent(riskIntegrationSignal.id)}`,
+  {headers:{Origin:allowedOrigin,'x-gsx-write-token':writeToken}}
+),riskIntegrationEnv,{});
+assert.equal(riskVerificationResponse.status,200);
+const riskVerificationPayload=await riskVerificationResponse.json();
+assert.equal(riskVerificationPayload.status,'POSITION_SIZE_AVAILABLE');
+assert.equal(riskVerificationPayload.signal.id,riskIntegrationSignal.id);
+assert.equal(riskVerificationPayload.verification.readOnly,true);
+assert.equal(riskIntegrationWrites,1,'the read-only verification API must not add a KV write');
 
 const noActiveRisk=await calculateOfficialActiveRiskSizing({
   ...riskIntegrationEnv,
@@ -2773,6 +2893,6 @@ const staleRisk=await calculateOfficialActiveRiskSizing({
 },{signalId:riskIntegrationSignal.id,accountValueUsd:25000,riskPercent:1});
 assert.equal(staleRisk.status,'POSITION_SIZE_UNAVAILABLE');
 assert.equal(staleRisk.reason,'metadata_stale');
-assert.equal(riskIntegrationWrites,0);
+assert.equal(riskIntegrationWrites,1,'calculation and verification reads must not add state writes');
 
 console.log('news intelligence tests passed');

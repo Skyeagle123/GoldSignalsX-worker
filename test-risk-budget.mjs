@@ -10,6 +10,18 @@ import {
   utcBudgetPeriodBounds
 } from './risk-budget.js';
 
+if (typeof globalThis.crypto.subtle.timingSafeEqual !== 'function') {
+  Object.defineProperty(globalThis.crypto.subtle,'timingSafeEqual',{
+    value(left,right){
+      const a=new Uint8Array(left),b=new Uint8Array(right);
+      if (a.byteLength!==b.byteLength) return false;
+      let diff=0;
+      for (let index=0;index<a.byteLength;index++) diff|=a[index]^b[index];
+      return diff===0;
+    }
+  });
+}
+
 const now=Date.UTC(2026,8,16,12,0,0); // Wednesday
 const sizing={
   available:true,status:'POSITION_SIZE_AVAILABLE',accountBasis:'equity',
@@ -190,7 +202,8 @@ const worker=await import(`${generatedWorkerUrl.href}?v=${Date.now()}`);
 await fs.unlink(generatedWorkerUrl);
 const {
   ensurePerformanceSchema,recordProductionPerformanceEvent,
-  storeImmutableRiskSnapshot,readRealizedLossRows,calculateOfficialActiveRiskSizing
+  storeImmutableRiskSnapshot,readRealizedLossRows,calculateOfficialActiveRiskSizing,
+  calculateOfficialActiveRiskSizingReadOnly
 }=worker;
 
 const integrationDb=new MemoryD1();
@@ -216,23 +229,252 @@ const integrationMetadata={
     tradeCalcMode:'SYMBOL_CALC_MODE_CFD',tradeMode:4
   }
 };
-let kvWrites=0,exposureReads=0,metadataReads=0;
+let kvWrites=0,doWrites=0,exposureReads=0,metadataReads=0;
+const riskRateLimits=new Map();
+const allowedOrigin='https://skyeagle123.github.io';
+const writeToken='risk-security-token';
 const integrationEnv={
   GSX_DB:integrationDb,RISK_MAX_PERCENT:'2',RISK_MAX_LOTS:'5',
   RISK_METADATA_MAX_AGE_MS:'900000',RISK_MAX_DAILY_LOSS_USD:'2000',
   RISK_MAX_WEEKLY_LOSS_USD:'5000',RISK_MAX_TOTAL_EXPOSURE_USD:'500000',
-  RISK_BUDGET_TIMEZONE:'UTC',
+  RISK_ACCOUNT_BASIS:'equity',RISK_ACCOUNT_VALUE_USD:'100000',RISK_PERCENT:'1',
+  RISK_BUDGET_TIMEZONE:'UTC',ALLOW_ORIGINS:JSON.stringify([allowedOrigin]),
+  GSX_WRITE_TOKEN:writeToken,WRITE_RL_LIMIT:'20',
   GOLD_FEED:{getByName:()=>({
     goldExposureStatus:async()=>{exposureReads+=1;return integrationExposure;},
-    getRiskSizingMetadataStatus:async()=>{metadataReads+=1;return integrationMetadata;}
+    getRiskSizingMetadataStatus:async()=>{metadataReads+=1;return integrationMetadata;},
+    ingestMt5Tick:async()=>{doWrites+=1;throw new Error('unexpected DO write');},
+    manageGoldExposure:async()=>{doWrites+=1;throw new Error('unexpected DO write');},
+    cancelGoldExposureReservation:async()=>{doWrites+=1;throw new Error('unexpected DO write');},
+    queueTelegramEvent:async()=>{doWrites+=1;throw new Error('unexpected DO write');}
   })},
   GSX_KV:{
-    get:async key=>key==='signal:state:5m'?integrationSignal:null,
-    put:async()=>{kvWrites+=1;}
+    get:async key=>key==='signal:state:5m'?integrationSignal:riskRateLimits.get(key)??null,
+    put:async (key,value)=>{
+      if (key.startsWith('rl:write:risk-sizing:')) riskRateLimits.set(key,value);
+      else kvWrites+=1;
+    }
   }
 };
 const originalDateNow=Date.now;
 Date.now=()=>now;
+
+const riskRequestBody={signalId:integrationSignal.id};
+const snapshotCount=()=>integrationDb.database.prepare(
+  'SELECT COUNT(*) AS count FROM production_signal_risk_snapshots'
+).get().count;
+const routeRequest=(body=riskRequestBody,headers={},env=integrationEnv)=>worker.default.fetch(new Request(
+  'https://example.com/risk-sizing',{
+    method:'POST',headers:{Origin:allowedOrigin,'content-type':'application/json',...headers},
+    body:typeof body==='string'?body:JSON.stringify(body)
+  }
+),env,{});
+const verificationRequest=(query=`signalId=${encodeURIComponent(integrationSignal.id)}`,headers={},env=integrationEnv)=>
+  worker.default.fetch(new Request(`https://example.com/risk-sizing/verify?${query}`,{
+    headers:{Origin:allowedOrigin,...headers}
+  }),env,{});
+
+const unauthorizedFirstWrite=await routeRequest();
+assert.equal(unauthorizedFirstWrite.status,401,'unauthorized first-write must be rejected');
+assert.deepEqual(await unauthorizedFirstWrite.json(),{ok:false,error:'unauthorized'});
+assert.equal(snapshotCount(),0);
+
+const wrongTokenWrite=await routeRequest(riskRequestBody,{'x-gsx-write-token':'wrong-token'});
+assert.equal(wrongTokenWrite.status,401,'wrong token must be rejected');
+assert.equal(snapshotCount(),0);
+
+const untrustedOriginWrite=await worker.default.fetch(new Request(
+  'https://example.com/risk-sizing',{
+    method:'POST',headers:{
+      Origin:'https://attacker.example','content-type':'application/json',
+      'x-gsx-write-token':writeToken
+    },body:JSON.stringify(riskRequestBody)
+  }
+),integrationEnv,{});
+assert.equal(untrustedOriginWrite.status,403,'untrusted origin must be rejected');
+assert.deepEqual(await untrustedOriginWrite.json(),{ok:false,error:'origin_not_allowed'});
+assert.equal(snapshotCount(),0);
+
+const unconfiguredAuthWrite=await routeRequest(
+  riskRequestBody,{'x-gsx-write-token':writeToken},{...integrationEnv,GSX_WRITE_TOKEN:''}
+);
+assert.equal(unconfiguredAuthWrite.status,503,'missing write authentication must fail closed');
+assert.deepEqual(await unconfiguredAuthWrite.json(),{ok:false,error:'write_auth_not_configured'});
+assert.equal(snapshotCount(),0);
+
+const invalidJsonWrite=await routeRequest('{',{'x-gsx-write-token':writeToken});
+assert.equal(invalidJsonWrite.status,400);
+assert.equal((await invalidJsonWrite.json()).error,'invalid_json');
+assert.equal(snapshotCount(),0);
+
+const spoofedInputWrite=await routeRequest(
+  {...riskRequestBody,accountBasis:'balance',accountValueUsd:1,riskPercent:0.0001},
+  {'x-gsx-write-token':writeToken}
+);
+assert.equal(spoofedInputWrite.status,400,'client-controlled risk values must be rejected');
+assert.deepEqual(await spoofedInputWrite.json(),{ok:false,error:'bad_risk_sizing_input'});
+assert.equal(snapshotCount(),0);
+
+const missingAuthorityWrite=await routeRequest(
+  riskRequestBody,{'x-gsx-write-token':writeToken},
+  {...integrationEnv,RISK_ACCOUNT_VALUE_USD:''}
+);
+assert.equal(missingAuthorityWrite.status,503,'missing server-side risk authority must fail closed');
+assert.deepEqual(await missingAuthorityWrite.json(),{
+  ok:false,error:'risk_sizing_authority_not_configured'
+});
+assert.equal(snapshotCount(),0);
+
+exposureReads=0;
+metadataReads=0;
+const riskRateLimitEntriesBeforeVerification=riskRateLimits.size;
+const unauthorizedVerification=await verificationRequest();
+assert.equal(unauthorizedVerification.status,401,'read-only verification must require authentication');
+assert.deepEqual(await unauthorizedVerification.json(),{ok:false,error:'unauthorized'});
+assert.equal(exposureReads,0,'authentication must run before exposure reads');
+assert.equal(metadataReads,0,'authentication must run before metadata reads');
+assert.equal(snapshotCount(),0);
+
+const wrongTokenVerification=await verificationRequest(undefined,{'x-gsx-write-token':'wrong-token'});
+assert.equal(wrongTokenVerification.status,401);
+assert.deepEqual(await wrongTokenVerification.json(),{ok:false,error:'unauthorized'});
+assert.equal(exposureReads,0);
+assert.equal(metadataReads,0);
+assert.equal(snapshotCount(),0);
+
+const untrustedOriginVerification=await worker.default.fetch(new Request(
+  `https://example.com/risk-sizing/verify?signalId=${encodeURIComponent(integrationSignal.id)}`,
+  {headers:{Origin:'https://attacker.example','x-gsx-write-token':writeToken}}
+),integrationEnv,{});
+assert.equal(untrustedOriginVerification.status,403,'untrusted verification origin must be rejected');
+assert.deepEqual(await untrustedOriginVerification.json(),{ok:false,error:'origin_not_allowed'});
+assert.equal(exposureReads,0);
+assert.equal(metadataReads,0);
+assert.equal(snapshotCount(),0);
+
+const spoofedVerification=await verificationRequest(
+  `signalId=${encodeURIComponent(integrationSignal.id)}&accountValueUsd=1&riskPercent=0.0001`,
+  {'x-gsx-write-token':writeToken}
+);
+assert.equal(spoofedVerification.status,400,'client risk authority must be rejected');
+assert.deepEqual(await spoofedVerification.json(),{ok:false,error:'bad_risk_sizing_input'});
+assert.equal(exposureReads,0);
+assert.equal(metadataReads,0);
+assert.equal(snapshotCount(),0);
+
+const missingVerificationAuthority=await verificationRequest(
+  undefined,{'x-gsx-write-token':writeToken},{...integrationEnv,RISK_PERCENT:''}
+);
+assert.equal(missingVerificationAuthority.status,503,'read-only verification must fail closed without authority');
+assert.deepEqual(await missingVerificationAuthority.json(),{
+  ok:false,error:'risk_sizing_authority_not_configured'
+});
+assert.equal(exposureReads,0);
+assert.equal(metadataReads,0);
+assert.equal(snapshotCount(),0);
+
+const authorizedVerification=await verificationRequest(
+  undefined,{'x-gsx-write-token':writeToken}
+);
+assert.equal(authorizedVerification.status,200);
+const verificationPayload=await authorizedVerification.json();
+assert.equal(verificationPayload.available,true);
+assert.equal(verificationPayload.status,'POSITION_SIZE_AVAILABLE');
+assert.equal(verificationPayload.accountBasis,'equity');
+assert.equal(verificationPayload.accountValueUsd,100000);
+assert.equal(verificationPayload.riskPercent,1);
+assert.equal(verificationPayload.suggestedLots,1);
+assert.equal(verificationPayload.estimatedLossAtSL,1000);
+assert.equal(verificationPayload.estimatedProfitTP1,1250);
+assert.equal(verificationPayload.estimatedProfitTP2,2100);
+assert.deepEqual(verificationPayload.verification,{
+  readOnly:true,persistence:'disabled',d1Writes:0,kvWrites:0,durableObjectWrites:0
+});
+assert.equal(snapshotCount(),0,'verification must not create an immutable D1 snapshot');
+assert.equal(kvWrites,0,'verification must not write KV');
+assert.equal(doWrites,0,'verification must not call a mutating Durable Object method');
+assert.equal(riskRateLimits.size,riskRateLimitEntriesBeforeVerification,
+  'verification authentication must not use the KV-backed write rate limiter');
+
+const mismatchedSignalVerification=await verificationRequest(
+  'signalId=5m%3Aother-official-signal',{'x-gsx-write-token':writeToken}
+);
+assert.equal(mismatchedSignalVerification.status,200);
+assert.equal((await mismatchedSignalVerification.json()).reason,'signal_id_mismatch');
+assert.equal(snapshotCount(),0);
+
+const metadataFailureVerification=async reason=>{
+  const env={
+    ...integrationEnv,
+    GOLD_FEED:{getByName:()=>({
+      goldExposureStatus:async()=>integrationExposure,
+      getRiskSizingMetadataStatus:async()=>({
+        source:'mt5',available:false,fresh:false,status:'POSITION_SIZE_UNAVAILABLE',
+        reason,sessionId:'mt5-risk-budget'
+      })
+    })}
+  };
+  const response=await verificationRequest(undefined,{'x-gsx-write-token':writeToken},env);
+  assert.equal(response.status,200);
+  const payload=await response.json();
+  assert.equal(payload.available,false);
+  assert.equal(payload.reason,reason);
+  assert.equal(payload.suggestedLots,null);
+  assert.equal(snapshotCount(),0);
+};
+await metadataFailureVerification('metadata_missing');
+await metadataFailureVerification('metadata_stale');
+await metadataFailureVerification('metadata_session_mismatch');
+assert.equal(kvWrites,0);
+assert.equal(doWrites,0);
+
+const directReadOnly=await calculateOfficialActiveRiskSizingReadOnly(integrationEnv,{
+  signalId:integrationSignal.id,accountBasis:'equity',accountValueUsd:100000,riskPercent:1
+});
+assert.equal(directReadOnly.available,true);
+assert.equal(directReadOnly.verification.readOnly,true);
+assert.equal(snapshotCount(),0);
+
+const authorizedInitialization=await routeRequest(
+  riskRequestBody,{'x-gsx-write-token':writeToken}
+);
+assert.equal(authorizedInitialization.status,200);
+const authorizedPayload=await authorizedInitialization.json();
+assert.equal(authorizedPayload.available,true);
+assert.equal(authorizedPayload.riskBudget.status,'allowed');
+assert.equal(snapshotCount(),1,'authorized initialization must create one immutable snapshot');
+
+const conflictingInitialization=await routeRequest(
+  riskRequestBody,{'x-gsx-write-token':writeToken},
+  {...integrationEnv,RISK_ACCOUNT_VALUE_USD:'90000'}
+);
+assert.equal(conflictingInitialization.status,200);
+const conflictingPayload=await conflictingInitialization.json();
+assert.equal(conflictingPayload.riskBudget.reason,'risk_snapshot_immutable_mismatch');
+assert.equal(integrationDb.database.prepare(
+  'SELECT account_value_usd FROM production_signal_risk_snapshots WHERE signal_id=?'
+).get(integrationSignal.id).account_value_usd,100000);
+
+const unauthorizedReadAfterInitialization=await routeRequest();
+assert.equal(unauthorizedReadAfterInitialization.status,401);
+const unauthorizedPayload=await unauthorizedReadAfterInitialization.json();
+assert.deepEqual(unauthorizedPayload,{ok:false,error:'unauthorized'});
+assert.equal(JSON.stringify(unauthorizedPayload).includes('100000'),false,
+  'unauthorized clients must not receive stored account or risk snapshot values');
+const wrongTokenReadAfterInitialization=await routeRequest(
+  riskRequestBody,{'x-gsx-write-token':'wrong-token'}
+);
+assert.equal(wrongTokenReadAfterInitialization.status,401);
+assert.deepEqual(await wrongTokenReadAfterInitialization.json(),{ok:false,error:'unauthorized'});
+const unsupportedReadMethod=await worker.default.fetch(
+  new Request('https://example.com/risk-sizing',{headers:{Origin:allowedOrigin}}),
+  integrationEnv,{}
+);
+assert.equal(unsupportedReadMethod.status,405);
+assert.equal(JSON.stringify(await unsupportedReadMethod.json()).includes('100000'),false);
+
+exposureReads=0;
+metadataReads=0;
 const integrated=await calculateOfficialActiveRiskSizing(integrationEnv,{
   signalId:integrationSignal.id,accountBasis:'equity',accountValueUsd:100000,riskPercent:1
 });
