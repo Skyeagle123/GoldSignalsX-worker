@@ -169,6 +169,38 @@ const bearish = classifyNewsArticle({
 assert.equal(bearish.direction, 'bearish');
 assert.ok(bearish.confidence >= 65);
 
+const decorativeGold = classifyNewsArticle({
+  title: 'Gold Christmas Ball Ornaments for Elegant Home Decoration',
+  url: 'https://www.reuters.com/lifestyle/gold-christmas-ornaments',
+  seendate: seen
+}, now);
+assert.equal(decorativeGold, null, 'gold used as a colour or product must not pass financial-news relevance');
+
+const financialGold = classifyNewsArticle({
+  title: 'Gold prices fall as rate expectations rise',
+  url: 'https://www.reuters.com/markets/gold-rate-expectations',
+  seendate: seen
+}, now);
+assert.ok(financialGold, 'financial gold-price coverage must remain relevant');
+assert.equal(financialGold.goldRelated, true);
+
+const cleanBias = buildNewsBrief([{
+  title: 'Gold prices fall as dollar rises',
+  url: 'https://www.reuters.com/markets/gold-dollar-rise',
+  seendate: seen
+}], now);
+const biasWithDecorativeNoise = buildNewsBrief([{
+  title: 'Gold prices fall as dollar rises',
+  url: 'https://www.reuters.com/markets/gold-dollar-rise',
+  seendate: seen
+}, {
+  title: 'Gold Christmas ornaments shine as dollar rises for holiday decor',
+  url: 'https://www.reuters.com/lifestyle/gold-christmas-dollar-decor',
+  seendate: seen
+}], now);
+assert.deepEqual(biasWithDecorativeNoise.goldBias, cleanBias.goldBias, 'irrelevant gold products must not affect News Bias or confidence');
+assert.equal(biasWithDecorativeNoise.items.length, cleanBias.items.length, 'irrelevant gold products must not appear in /news items');
+
 const brief = buildNewsBrief([{
   title: 'Gold rises as Federal Reserve cuts rates and dollar falls',
   url: 'https://www.reuters.com/markets/example-bullish',

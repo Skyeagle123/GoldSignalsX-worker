@@ -4692,6 +4692,30 @@ const TRUSTED_NEWS_DOMAINS = [
   'cnbc.com', 'bbc.com'
 ];
 
+const FINANCIAL_GOLD_PHRASES = [
+  'bullion', 'xauusd', 'xau usd', 'spot gold', 'gold price', 'gold prices',
+  'gold futures', 'gold market', 'gold trading', 'gold investment',
+  'gold demand', 'gold reserves', 'gold etf', 'gold miner', 'gold miners',
+  'gold mining', 'gold outlook', 'gold forecast', 'precious metal',
+  'precious metals', 'safe haven'
+];
+
+const GOLD_MARKET_CUES = [
+  'price', 'prices', 'market', 'markets', 'spot', 'futures', 'ounce',
+  'trading', 'trade', 'investor', 'investors', 'investment', 'demand',
+  'reserve', 'reserves', 'etf', 'federal reserve', 'fomc', 'interest rate',
+  'rate cut', 'rate hike', 'inflation', 'dollar', 'treasury yield',
+  'central bank', 'safe haven'
+];
+
+const NON_FINANCIAL_GOLD_CONTEXT = [
+  'christmas', 'ornament', 'ornaments', 'decoration', 'decorations',
+  'decorative', 'home decor', 'jewelry', 'jewellery', 'necklace',
+  'earrings', 'bracelet', 'fashion', 'dress', 'color', 'colour', 'paint',
+  'gift', 'toy', 'craft', 'gold plated', 'gilded', 'furniture', 'kitchen',
+  'smartphone', 'phone', 'cosmetics', 'beauty', 'medal', 'trophy'
+];
+
 const BULLISH_NEWS_RULES = [
   { phrases:['rate cut','cuts rates','cut interest rates','dovish','monetary easing'], weight:3, reason:'خفض الفائدة أو لهجة تيسيرية تدعم الذهب' },
   { phrases:['dollar falls','dollar weakens','weaker dollar','dollar slides'], weight:2.5, reason:'ضعف الدولار يدعم الذهب' },
@@ -4723,6 +4747,20 @@ function newsSlug(value) {
 
 function hasAnyPhrase(text, phrases) {
   return phrases.some(phrase => text.includes(` ${phrase.toLowerCase()} `));
+}
+
+function isGoldMarketHeadline(text) {
+  const explicitMarketReference = hasAnyPhrase(text, FINANCIAL_GOLD_PHRASES);
+  const marketMove = /\bgold(?:\s+prices?)?\s+(?:rises?|falls?|rallies|surges|drops?|slips?|climbs?|gains?|hits?|steadies|holds?|trades?)\b/.test(text);
+  if (explicitMarketReference || marketMove) return true;
+  if (hasAnyPhrase(text, NON_FINANCIAL_GOLD_CONTEXT)) return false;
+  return hasAnyPhrase(text, ['gold']) && hasAnyPhrase(text, GOLD_MARKET_CUES);
+}
+
+function isClearlyNonFinancialGoldHeadline(text) {
+  return hasAnyPhrase(text, ['gold'])
+    && hasAnyPhrase(text, NON_FINANCIAL_GOLD_CONTEXT)
+    && !isGoldMarketHeadline(text);
 }
 
 function parseGdeltSeenDate(value) {
@@ -4783,10 +4821,10 @@ function classifyNewsArticle(article, now = Date.now()) {
   const ageMs = Math.max(0, now - seenAt);
   if (ageMs > NEWS_MAX_AGE_MS) return null;
 
-  const goldTerms = ['gold','bullion','xauusd','xau usd','precious metal','safe haven'];
   const macroTerms = ['federal reserve','fomc','interest rate','inflation','cpi','pce','payrolls','jobs report','us dollar','treasury yields','central bank','ecb'];
   const geopoliticalTerms = ['war','airstrike','missile','invasion','attack','sanctions','tariffs','trade war','ceasefire','geopolitical tension','nato','ukraine','russia','iran','israel','china','taiwan'];
-  const goldRelated = hasAnyPhrase(text, goldTerms);
+  const goldRelated = isGoldMarketHeadline(text);
+  if (isClearlyNonFinancialGoldHeadline(text)) return null;
   const macroRelated = hasAnyPhrase(text, macroTerms);
   const geopolitical = hasAnyPhrase(text, geopoliticalTerms);
   const relevance = (goldRelated ? 5 : 0) + (macroRelated ? 2 : 0) + (geopolitical ? 2 : 0) + (trusted ? 1 : 0);
