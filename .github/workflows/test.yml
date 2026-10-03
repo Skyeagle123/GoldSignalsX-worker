@@ -3,11 +3,20 @@ name: Test Worker
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "phase/b1-measurement-evidence"]
     paths:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
       - "test-news.mjs"
+      - "test-b1-*.mjs"
+      - "test-fixtures/**"
+      - "*-evidence.js"
+      - "signal-evidence-store.js"
+      - "signal-measurement.js"
+      - "measurement-*.js"
+      - "forward-validation*.js"
+      - "quality-measurement.js"
+      - "migrations/*.sql"
       - "schema.sql"
       - "wrangler.toml"
       - ".github/workflows/test.yml"
@@ -16,6 +25,15 @@ on:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
       - "test-news.mjs"
+      - "test-b1-*.mjs"
+      - "test-fixtures/**"
+      - "*-evidence.js"
+      - "signal-evidence-store.js"
+      - "signal-measurement.js"
+      - "measurement-*.js"
+      - "forward-validation*.js"
+      - "quality-measurement.js"
+      - "migrations/*.sql"
       - "schema.sql"
       - "wrangler.toml"
       - ".github/workflows/test.yml"
@@ -28,9 +46,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: node --check goldsignalsx-worker.js
       - run: node --check signal-engine.js
       - run: node test-news.mjs
+      - run: node --test test-b1-*.mjs
+      - run: node test-risk-sizing.mjs
+      - run: node test-risk-budget.mjs
+      - run: node test-signals-security.mjs
+      - name: Compare known pre-existing reliability failure
+        shell: bash
+        run: |
+          set +e
+          node test-reliability.mjs > reliability.log 2>&1
+          result=$?
+          set -e
+          cat reliability.log
+          test "$result" -eq 1
+          rg "test-reliability.mjs:86" reliability.log
+          rg "degraded" reliability.log
+          rg "healthy" reliability.log
