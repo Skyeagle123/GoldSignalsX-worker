@@ -5,7 +5,7 @@ import {measurementWriter} from '../signal-evidence-store.js';
 import {transactionalBinding} from './b1-sqlite.mjs';
 import {foldPostEntry} from '../post-entry-evidence.js';
 import {decodeStoredOutcome,hydrateFinalOutcome} from '../evidence-codec.js';
-export function localMeasurementDatabase(){const db=new DatabaseSync(':memory:');for(const name of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql'])db.exec(fs.readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));return db;}
+export function localMeasurementDatabase(){const db=new DatabaseSync(':memory:');for(const name of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql'])db.exec(fs.readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));return db;}
 export function recordBytes(row,{virtual=[]}={}){return Object.entries(row).filter(([key])=>!virtual.includes(key)).reduce((n,[_key,v])=>n+(v==null?0:typeof v==='string'?Buffer.byteLength(v):v instanceof Uint8Array?v.length:8),0);}
 export async function outcomeProfile(profile='complete',{sessionId='synthetic-session',realistic=false}={}){
  const at=1790608200000,end=at+3600000,db=localMeasurementDatabase(),writer=measurementWriter(transactionalBinding(db),{maxWrites:160});
@@ -41,7 +41,7 @@ export async function outcomeProfile(profile='complete',{sessionId='synthetic-se
  const rows=db.prepare('SELECT * FROM signal_outcome_evidence').all();
  const events=await Promise.all(rows.map(r=>decodeStoredOutcome(r)));for(const event of events)if(event.coverageRef&&!events.some(e=>e.eventId===event.coverageRef&&e.evidenceType==='COVERAGE_CHECKPOINT'))throw new Error('profile_coverage_reference_missing');
  hydrateFinalOutcome(events.find(e=>e.evidenceType==='FINAL_MEASUREMENT'),events);
- const bytes=db.prepare("SELECT SUM(payload) bytes FROM dbstat WHERE name IN ('measurement_subjects','measurement_outcome_records')").get().bytes;
+ const bytes=db.prepare("SELECT SUM(payload) bytes FROM dbstat WHERE name IN ('measurement_subjects','measurement_outcome_records','measurement_outcome_dependencies')").get().bytes;
  const finalBytes=db.prepare("SELECT SUM(payload) bytes FROM dbstat WHERE name='measurement_final_results'").get().bytes;
  return {db,at,end,subject,folded,rows,events,bytes,finalBytes};
 }

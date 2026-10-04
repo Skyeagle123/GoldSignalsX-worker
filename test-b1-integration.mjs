@@ -8,7 +8,7 @@ import {computeServerSignal} from './signal-engine.js';
 import {collectMeasurement} from './measurement-collector.js';
 import {decodeProcessingState,decodeStoredOutcome,hydrateFinalOutcome} from './evidence-codec.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
-const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0003_measurement_dependency_closure.sql',import.meta.url),'utf8'));
 const now=Date.UTC(2026,8,28,15,10),base='6721f84b961f6afe3d52513a2ed56e138a7990d5';
 function setup(){const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(migration);db.exec('CREATE TABLE production_signals(signal_id TEXT PRIMARY KEY,status TEXT,closed_at INTEGER)');return {db,binding:transactionalBinding(db)};}
 function journal({official=false,cycleId='integration',value=4100}={}){

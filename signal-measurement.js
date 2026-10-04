@@ -19,7 +19,7 @@ export function finishDecisionCycle(journal,result,{decisions,candidates,officia
   journals.set(result,journal);}}catch{}return result;
 }
 export function takeDecisionCycle(result){const journal=journals.get(result);journals.delete(result);return journal;}
-export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,maxBytes=65536}={}){
+export async function persistDecisionCycle(db,journal,provenance,{maxWrites=160,maxBytes=65536}={}){
  if(!journal)return {ok:true,skipped:'no_evaluated_cycle'};
  try{
   const configFingerprint=await digestPayload(canonicalSerialize(journal.filters));
@@ -85,7 +85,7 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,m
    official_signal_id:snapshot.officialSignalId,kind:snapshot.kind,cycle_id:journal.cycleId,cohort_id:cohortStorageRef,timeframe:snapshot.timeframe,
    evaluated_at:snapshot.evaluatedAt??journal.evaluatedAt,measurement_only:1,decision_use:0,recorded_at:capturedAt},payload:snapshot});
   const officialPins=snapshots.filter(s=>s.kind==='OFFICIAL').map(s=>({officialId:s.officialSignalId,blockIds:[...new Set([s.inputManifest.primary,...s.inputManifest.engineMtf,s.inputManifest.research1m].flatMap(m=>m?.references?.map(r=>r.blockId)||[]))]}));
-  const persistence=await writer.immutableBatch(records,{officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});
+  const persistence=await writer.immutableBatch(records,{captureCensusOnBudget:true,officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});
   return {ok:true,attempts:snapshots.length,blocks:blocks.size,capturedAt,persistence};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_capture_failed'),captureGap:true};}
 }

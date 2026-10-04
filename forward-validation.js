@@ -1,3 +1,4 @@
+import {validateOutcomeDependencies} from './outcome-dependencies.js';
 import { covers } from './quality-measurement.js';
 
 export const OUTCOME_REDUCER_VERSION='tp1-first-v1';
@@ -29,7 +30,7 @@ function earliest(rows) {
   return rows.filter(a=>!rows.some(b=>a!==b&&compareOccurrence(b,a)==='BEFORE'));
 }
 
-export function reduceOutcome(subject,events,{asOf,measurementEndAt=null,coverageIntervals=[],coverageGaps=[]}={}) {
+export function reduceOutcome(subject,events,{asOf,measurementEndAt=null,coverageIntervals=[],coverageGaps=[],requireCoverageReferences=false}={}) {
   if(!finite(asOf)||!finite(subject.createdAt))throw new Error('outcome_time_invalid');
   const terminalLifecycleOutcome=finite(subject.closedAt)&&subject.closedAt>asOf?'ACTIVE':TERMINAL[subject.status]||'ACTIVE';
   const closed=terminalLifecycleOutcome!=='ACTIVE'&&finite(subject.closedAt);
@@ -39,13 +40,22 @@ export function reduceOutcome(subject,events,{asOf,measurementEndAt=null,coverag
   const witnesses=events.filter(e=>e.evidenceType==='BARRIER_OBSERVATION'&&e.eligible===true
     &&finite(e.availableAt)&&e.availableAt<=asOf&&eventInterval(e)
     &&eventInterval(e).from>=subject.createdAt&&eventInterval(e).to<=end);
+  const dependencyIssues=requireCoverageReferences?witnesses.flatMap(e=>validateOutcomeDependencies(e,events)):[];
+  const witnessCovered=e=>{
+   if(!requireCoverageReferences)return covered(eventInterval(e).to);
+   if(validateOutcomeDependencies(e,events).length)return false;
+   const checkpoint=events.find(c=>c.eventId===e.coverageRef);
+   return checkpoint.evidenceType==='COVERAGE_CHECKPOINT'&&checkpoint.checkpointRole==='BARRIER_COVERAGE'
+    &&covers(checkpoint.covered||[],subject.createdAt,eventInterval(e).to)
+    &&!(checkpoint.gaps||[]).some(g=>g.from<eventInterval(e).to&&g.to>subject.createdAt);
+  };
   const sl=earliest(witnesses.filter(e=>e.eventType==='SL'));
   const tp2=earliest(witnesses.filter(e=>e.eventType==='TP2'));
   const tp1=earliest(witnesses.filter(e=>e.eventType==='TP1'||e.eventType==='TP2'));
   let directionalOutcome='UNRESOLVED',reason='NO_PROVEN_FIRST_BARRIER',first=null;
   const firstCandidates=earliest([...tp1,...sl]);
-  const success=tp1.find(t=>covered(eventInterval(t).to)&&sl.every(s=>compareOccurrence(t,s)==='BEFORE'));
-  const failure=sl.find(s=>covered(eventInterval(s).to)&&tp1.every(t=>compareOccurrence(s,t)==='BEFORE'));
+  const success=tp1.find(t=>witnessCovered(t)&&sl.every(s=>compareOccurrence(t,s)==='BEFORE'));
+  const failure=sl.find(s=>witnessCovered(s)&&tp1.every(t=>compareOccurrence(s,t)==='BEFORE'));
   if(success){directionalOutcome='SUCCESS';reason='TP1_BEFORE_SL';first=success;}
   else if(failure){directionalOutcome='FAILURE';reason='SL_BEFORE_TP1';first=failure;}
   else if(firstCandidates.length||closed){
@@ -54,14 +64,14 @@ export function reduceOutcome(subject,events,{asOf,measurementEndAt=null,coverag
   }else if(coverageGaps.some(g=>g.from<end&&g.to>subject.createdAt)){
     directionalOutcome='INSUFFICIENT_DATA';reason='MATERIAL_COVERAGE_GAP';
   }
-  const extended=tp2.find(t=>sl.every(s=>compareOccurrence(t,s)==='BEFORE')&&covered(eventInterval(t).to));
+  const extended=tp2.find(t=>sl.every(s=>compareOccurrence(t,s)==='BEFORE')&&witnessCovered(t));
   const extendedOutcome=extended?'TP2_REACHED':closed&&covered(end)&&!tp2.length?'NOT_REACHED':'UNRESOLVED';
   return {directionalOutcome,extendedOutcome,terminalLifecycleOutcome,reason,
     outcomeReducerVersion:OUTCOME_REDUCER_VERSION,evidenceAsOf:asOf,
     firstDirectionalWitness:first?{eventId:first.eventId,eventType:first.eventType,...eventInterval(first)}:null,
     timeToTp1:first&&directionalOutcome==='SUCCESS'?{minMs:eventInterval(first).from-subject.createdAt,maxMs:eventInterval(first).to-subject.createdAt}:null,
     timeToSl:first&&directionalOutcome==='FAILURE'?{minMs:eventInterval(first).from-subject.createdAt,maxMs:eventInterval(first).to-subject.createdAt}:null,
-    coverage:covered(end)?'COMPLETE':'INSUFFICIENT'};
+    ...(dependencyIssues.length?{dependencyIssues}:{}),coverage:covered(end)?'COMPLETE':'INSUFFICIENT'};
 }
 
 export function summarizeOutcomes(records) {

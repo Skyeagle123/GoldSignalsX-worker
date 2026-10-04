@@ -1,3 +1,4 @@
+import {outcomeDependencies} from './outcome-dependencies.js';
 import {sqliteRecordPayloadBytes,OUTCOME_REVIEW_BYTES} from './measurement-resource-budget.js';
 // Writer-only module. No trading capability or request-time schema initialization.
 import {canonicalSerialize,digestPayload,parseEvidence} from './signal-evidence.js';
@@ -19,15 +20,15 @@ function refs(db,links){const result=[];for(const link of links){if(!['CYCLE','O
 function pins(db,officialId,ids){const result=[];for(let i=0;i<ids.length;i+=50){const chunk=[...new Set(ids)].slice(i,i+50);if(chunk.length)result.push(db.prepare(`INSERT INTO measurement_official_pins(official_signal_id,block_id) VALUES ${chunk.map(()=>'(?,?)').join(',')} ON CONFLICT(official_signal_id,block_id) DO NOTHING`).bind(...chunk.flatMap(id=>[officialId,id])));}return result;}
 export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
  let used=0,ready=false;
- async function schemaReady(){if(ready)return;const row=await db.prepare('SELECT version FROM measurement_schema_meta WHERE singleton=1').first();if(row?.version!==3)throw new Error('measurement_schema_not_ready');ready=true;}
- async function prepareRecord({type,values,payload},officialSubjects){
+ async function schemaReady(){if(ready)return;const row=await db.prepare('SELECT version FROM measurement_schema_meta WHERE singleton=1').first();if(row?.version!==4)throw new Error('measurement_schema_not_ready');ready=true;}
+ async function prepareRecord({type,values,payload},officialSubjects,{censusOnly=false}={}){
   const config=TABLES[type];if(!config)throw new Error('measurement_record_invalid');
   if(!['market','definition','rich','final'].includes(type)&&(payload?.measurementOnly!==true||payload?.decisionUse!==false))throw new Error('measurement_decision_use_forbidden');
   const logical=canonicalSerialize(payload,maxPayloadBytes),digest=await digestPayload(logical),key=values[config.key];
   if(type==='market'&&key!==`market:${digest}`)throw new Error('measurement_integrity_conflict');
   let scalar=payload,richPayload=null;const extras=[];
   if(type==='decision'){
-   scalar=censusSnapshot(payload);if(values.kind==='OFFICIAL'&&values.candidate_key===values.official_signal_id)values={...values,candidate_key:null};const normalized=await normalizeDefinitions(payload);richPayload=normalized.payload;
+   scalar=censusSnapshot(censusOnly?{...payload,captureGap:"RICH_CAPTURE_WRITE_BUDGET_EXHAUSTED"}:payload);if(values.kind==='OFFICIAL'&&values.candidate_key===values.official_signal_id)values={...values,candidate_key:null};const normalized=await normalizeDefinitions(payload);richPayload=normalized.payload;
    for(const d of normalized.definitions)extras.push({type:'definition',values:{definition_id:d.id,recorded_at:values.recorded_at},payload:d.payload});
    // Shared values are copied into one immutable cycle context. Distinct clocks,
    // quotes and attempt operands remain in the per-attempt payload.
@@ -36,25 +37,31 @@ export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
   }else if(type==='cycle'){scalar={cycleStartedAt:payload.cycleStartedAt};values={...values,block_ids_json:'[]'};richPayload=payload;
   }else if(type==='outcome'){const envelope=await encodeOutcomeEvidence(payload,{maxBytes:maxPayloadBytes});const prefix=payload.subjectId+':',kinds=['TP1','TP2','SL','WINDOW_FINALIZED','FINAL_MEASUREMENT','COVERAGE_CHECKPOINT','EXPIRED','TP2_REACHED','CLOSED_OTHER'],kind=kinds.indexOf(payload.eventType);scalar={};values={...values,event_suffix:payload.eventId.startsWith(prefix)?payload.eventId.slice(prefix.length):null,full_event_id:payload.eventId.startsWith(prefix)?null:payload.eventId,event_kind:kind<0?255:kind,event_label:kind<0?payload.eventType:null,block_ids_json:'[]',payload_blob:envelope.data,uncompressed_length:envelope.length};}
   const out=[{type,config,values:{...values,...(type==='final'?finalResultColumns(payload):{payload_json:canonicalSerialize(scalar,maxPayloadBytes)}),payload_digest:digestBytes(digest)},original:payload}];
-  if(richPayload){const envelope=await encodeEvidence(richPayload,{maxBytes:maxPayloadBytes});
+  if(richPayload&&!censusOnly){const envelope=await encodeEvidence(richPayload,{maxBytes:maxPayloadBytes});
    const official=type==='decision'?values.kind==='OFFICIAL':type==='outcome'?officialSubjects.has(values.subject_id):type==='cycle'?officialSubjects.size>0:false;
    const retention=type==='market'?30:type==='cycle'?365:90;
    out.push({type:'rich',config:TABLES.rich,values:{evidence_id:`${type}:${key}`,owner_type:type,owner_id:key,payload_json:'{}',payload_digest:digestBytes(envelope.digest),payload_blob:envelope.data,codec:envelope.codec,uncompressed_length:envelope.length,recorded_at:values.recorded_at,retain_until:official?null:values.recorded_at+retention*DAY}});
   }
-  for(const extra of extras)out.push(...await prepareRecord(extra,officialSubjects));return out;
+  for(const extra of censusOnly?[]:extras)out.push(...await prepareRecord(extra,officialSubjects));return out;
  }
- async function commit(records,{links=[],officialPins=[],extraStatements=[]}={}){
+ async function commit(records,{links=[],officialPins=[],extraStatements=[],captureCensusOnBudget=false}={}){
   await schemaReady();const subjects=new Set(officialPins.map(x=>x.officialId));for(const r of records)if(r.type==='decision'&&r.values.kind==='OFFICIAL')subjects.add(r.values.official_signal_id);
   for(const r of records)if(r.type==='outcome'){const official=await db.prepare("SELECT official_signal_id FROM signal_decision_evidence WHERE official_signal_id=? AND kind='OFFICIAL'").bind(r.values.subject_id).first();if(official)subjects.add(r.values.subject_id);}
   const all=[];for(const record of records)all.push(...await prepareRecord(record,subjects));
   const unique=new Map();for(const r of all){const identity=`${r.type}:${r.values[r.config.key]}`;if(unique.has(identity)&&digestHex(unique.get(identity).values.payload_digest)!==digestHex(r.values.payload_digest))throw new Error('measurement_integrity_conflict');unique.set(identity,r);}
-  const prepared=[...unique.values()];if(used+prepared.length>maxWrites||prepared.length>160)throw new Error('measurement_write_budget_exhausted');used+=prepared.length;
+  let prepared=[...unique.values()],richCaptureGap=null;
+  if((used+prepared.length>maxWrites||prepared.length>160)&&captureCensusOnBudget){
+   richCaptureGap='RICH_CAPTURE_WRITE_BUDGET_EXHAUSTED';prepared=[];
+   for(const record of records.filter(r=>['cohort','cycle','decision'].includes(r.type)))prepared.push(...await prepareRecord(record,subjects,{censusOnly:true}));
+   links=[];officialPins=[];
+  }
+  if(used+prepared.length>maxWrites||prepared.length>160)throw new Error('measurement_write_budget_exhausted');used+=prepared.length;
   // References must resolve before the atomic write. No lazy repair and no
   // substitution of a later coverage checkpoint for an earlier observation.
   const pendingEvents=new Map(prepared.filter(r=>r.type==='outcome').map(r=>[r.values.event_id,r.original]));
   for(const r of prepared.filter(r=>r.type==='outcome')){
    const p=r.original;
-   for(const [id,expected]of [[p.coverageRef,'COVERAGE_CHECKPOINT'],[p.supersedesEventId,null]]){
+   for(const [id,relation,expected]of outcomeDependencies(p)){
     if(!id)continue;if(id===p.eventId)throw new Error('measurement_evidence_reference_invalid');
     const pending=pendingEvents.get(id),stored=pending?null:await db.prepare('SELECT subject_id,event_type,available_at FROM signal_outcome_evidence WHERE event_id=?').bind(id).first();
     const subject=pending?.subjectId??stored?.subject_id,type=pending?.eventType??stored?.event_type,available=pending?.availableAt??stored?.available_at;
@@ -62,6 +69,9 @@ export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
    }
    if(p.eventType==='CORRECTION'&&(!p.supersedesEventId||typeof p.reason!=='string'||!p.reason))throw new Error('measurement_correction_invalid');
   }
+  const visiting=new Set(),visited=new Set();
+  const checkCycle=id=>{if(visiting.has(id))throw new Error('measurement_evidence_reference_cycle');if(visited.has(id)||!pendingEvents.has(id))return;visiting.add(id);for(const [target]of outcomeDependencies(pendingEvents.get(id)))checkCycle(target);visiting.delete(id);visited.add(id);};
+  for(const id of pendingEvents.keys())checkCycle(id);
   const statements=[],verify=[];
   for(const [type,config]of Object.entries(TABLES)){const rows=prepared.filter(r=>r.type===type);if(!rows.length)continue;
    const stored=(await db.prepare(`SELECT ${config.key},payload_digest FROM ${config.readTable||config.table} WHERE ${config.key} IN (${rows.map(()=>'?').join(',')})`).bind(...rows.map(r=>r.values[config.key])).all()).results||[];
@@ -74,11 +84,12 @@ export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
    verify.push({config,rows});
   }
   const processingCaptureGaps=[];
-  const hasNewProcessing=prepared.some(r=>r.type==='decision'&&r.original.levelsStatus==='COMPUTED_BY_ENGINE');
+  const hasNewProcessing=prepared.some(r=>r.type==='decision'&&r.original.levelsStatus==='COMPUTED_BY_ENGINE'&&!richCaptureGap);
   const stateBudget=hasNewProcessing?await db.prepare('SELECT COUNT(*) AS subjects,COALESCE(SUM(COALESCE(length(payload_blob),length(payload_json))+512),0) AS bytes FROM signal_measurement_state').first():{subjects:0,bytes:0};
   let pendingSubjects=stateBudget.subjects,pendingBytes=stateBudget.bytes;
   for(const r of prepared.filter(x=>x.type==='decision')){const p=r.original,v=r.values;if(p.levelsStatus!=='COMPUTED_BY_ENGINE')continue;const subject=v.official_signal_id||v.evaluation_id,at=p.createdAt??v.evaluated_at;
    if(v.kind==='OFFICIAL'){const l=p.engine.levels;statements.push(db.prepare('INSERT INTO measurement_official_levels(official_signal_id,entry,tp1,tp2,sl) VALUES(?,?,?,?,?) ON CONFLICT(official_signal_id) DO NOTHING').bind(v.official_signal_id,l.entry,l.tp1,l.tp2,l.sl));}
+   if(richCaptureGap)continue;
    const initial=canonicalSerialize({subjectId:subject,processedThrough:at,covered:[],gaps:[],barriers:{},global:{mfe:null,mae:null},queued:true});
    const exists=await db.prepare('SELECT subject_id FROM signal_measurement_state WHERE subject_id=? UNION ALL SELECT subject_id FROM measurement_final_results WHERE subject_id=?').bind(subject,subject).first();
    if(exists)continue;
@@ -86,6 +97,14 @@ export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
    if(pendingSubjects>=4032||pendingBytes+bytes>24*1024**2){processingCaptureGaps.push({subjectId:subject,reason:'MEASUREMENT_PROCESSING_BUDGET_EXHAUSTED'});continue;}
    pendingSubjects++;pendingBytes+=bytes;
    statements.push(db.prepare('INSERT INTO signal_measurement_state(subject_id,cohort_id,state_version,payload_json,updated_at,evaluation_id,kind,next_observe_at,observation_end_at) SELECT ?,?,1,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM measurement_final_results WHERE subject_id=?) AND (SELECT COUNT(*) FROM signal_measurement_state)<4032 AND (SELECT COALESCE(SUM(COALESCE(length(payload_blob),length(payload_json))+512),0) FROM signal_measurement_state)+?<=25165824 ON CONFLICT(subject_id) DO NOTHING').bind(subject,v.cohort_id,initial,at,v.evaluation_id,v.kind,at,v.kind==='CANDIDATE'?at+3600000:null,subject,bytes));
+  }
+  for(const r of prepared.filter(x=>x.type==='outcome')){
+   const dependencies=new Map();for(const [id,relation]of outcomeDependencies(r.original))dependencies.set(id,(dependencies.get(id)||0)|(1<<relation));
+   if(!dependencies.size)dependencies.set(null,64);
+   for(const [id,relations]of dependencies)statements.push(db.prepare(`INSERT INTO measurement_outcome_dependencies(owner_ref,target_ref,relations)
+    SELECT CASE WHEN EXISTS(SELECT 1 FROM measurement_outcome_records q WHERE q.record_id=o.rowid AND q.subject_ref IN (SELECT subject_ref FROM measurement_subjects WHERE subject_id=o.subject_id)) THEN o.rowid ELSE -o.rowid END,
+    CASE WHEN ? IS NULL THEN 0 WHEN EXISTS(SELECT 1 FROM measurement_outcome_records q WHERE q.record_id=t.rowid AND q.subject_ref IN (SELECT subject_ref FROM measurement_subjects WHERE subject_id=t.subject_id)) THEN t.rowid ELSE -t.rowid END,?
+    FROM signal_outcome_evidence o LEFT JOIN signal_outcome_evidence t ON t.event_id=? WHERE o.event_id=? ON CONFLICT DO NOTHING`).bind(id,relations,id,r.original.eventId));
   }
   statements.push(...refs(db,links));for(const pin of officialPins)statements.push(...pins(db,pin.officialId,pin.blockIds));statements.push(...extraStatements);
   if(statements.length){if(typeof db.batch==='function')await db.batch(statements);else if(statements.length===1)await statements[0].run();else throw new Error('measurement_atomic_batch_unavailable');}
@@ -104,7 +123,7 @@ export function measurementWriter(db,{maxPayloadBytes=65536,maxWrites=80}={}){
    const found=await db.prepare('SELECT subject_id FROM signal_measurement_state WHERE subject_id=? UNION ALL SELECT subject_id FROM measurement_final_results WHERE subject_id=?').bind(subject,subject).first();
    if(!found&&!processingCaptureGaps.some(g=>g.subjectId===subject))processingCaptureGaps.push({subjectId:subject,reason:'MEASUREMENT_PROCESSING_BUDGET_EXHAUSTED'});
   }
-  return {records:prepared.length,insertStatements:statements.length,resourceReviews,processingCaptureGaps};
+  return {records:prepared.length,insertStatements:statements.length,resourceReviews,processingCaptureGaps,richCaptureGap};
  }
  return Object.freeze({
   async immutable(type,values,payload){const ids=type==='outcome'?JSON.parse(values.block_ids_json||'[]'):[];return commit([{type,values,payload}],{links:ids.length?[{ownerType:'OUTCOME',ownerId:values.event_id,blockIds:ids}]:[]});},

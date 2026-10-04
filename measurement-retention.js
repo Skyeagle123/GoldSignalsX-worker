@@ -7,13 +7,18 @@ export async function maintainMeasurementRetention(db,asOf,{candidateDays=90,lim
  const select=async(sql,...values)=>(await db.prepare(sql).bind(...values).all()).results||[];
  const remove=async(table,key,ids)=>{for(const part of chunks(ids))await db.prepare(`DELETE FROM ${table} WHERE ${key} IN (${part.map(()=>'?').join(',')})`).bind(...part).run();};
  try{
-  if((await db.prepare('SELECT version FROM measurement_schema_meta WHERE singleton=1').first())?.version!==3)throw new Error('measurement_schema_not_ready');
+  if((await db.prepare('SELECT version FROM measurement_schema_meta WHERE singleton=1').first())?.version!==4)throw new Error('measurement_schema_not_ready');
   if(typeof db.batch!=='function')throw new Error('measurement_retention_atomic_batch_unavailable');
-  const rich=await select(`SELECT evidence_id FROM measurement_rich_evidence e WHERE retain_until<=? AND NOT (owner_type='market' AND EXISTS(SELECT 1 FROM measurement_official_pins p WHERE p.block_id=e.owner_id)) ORDER BY retain_until,evidence_id LIMIT ?`,asOf,limit);
+  const rich=await select(`SELECT evidence_id FROM measurement_rich_evidence e WHERE retain_until<=? AND NOT (owner_type='outcome' AND EXISTS(SELECT 1 FROM signal_outcome_evidence o WHERE o.event_id=e.owner_id)) AND NOT (owner_type='market' AND EXISTS(SELECT 1 FROM measurement_official_pins p WHERE p.block_id=e.owner_id)) ORDER BY retain_until,evidence_id LIMIT ?`,asOf,limit);
   await remove('measurement_rich_evidence','evidence_id',rich.map(r=>r.evidence_id));
-  const outcomes=await select(`SELECT r.record_id FROM measurement_outcome_records r JOIN measurement_subjects s ON s.subject_ref=r.subject_ref WHERE r.retention_bucket<=? AND s.recorded_at+r.recorded_offset<=? AND EXISTS(SELECT 1 FROM signal_decision_evidence d WHERE d.evaluation_id=s.subject_id AND d.kind='CANDIDATE') ORDER BY r.retention_bucket,r.record_id LIMIT ?`,Math.floor((asOf-90*DAY)/DAY),asOf-90*DAY,limit);
-  await remove('measurement_outcome_records','record_id',outcomes.map(r=>r.record_id));
-  const legacy=await select(`SELECT event_id FROM measurement_legacy_outcome_evidence o WHERE recorded_at<=? AND EXISTS(SELECT 1 FROM signal_decision_evidence d WHERE d.evaluation_id=o.subject_id AND d.kind='CANDIDATE') ORDER BY recorded_at,event_id LIMIT ?`,asOf-90*DAY,limit);
+  const outcomes=[];
+  // Up to three topological passes reuse unused slots; total deletions never
+  // exceed the original per-category limit, even during recovery.
+  for(let pass=0;pass<3&&outcomes.length<limit;pass++){
+   const leaf=await select(`SELECT r.record_id FROM measurement_outcome_records r JOIN measurement_subjects s ON s.subject_ref=r.subject_ref WHERE NOT EXISTS(SELECT 1 FROM measurement_outcome_records old WHERE old.subject_ref=r.subject_ref AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies v WHERE v.owner_ref=old.record_id)) AND NOT EXISTS(SELECT 1 FROM measurement_legacy_outcome_evidence old WHERE old.subject_id=s.subject_id AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies v WHERE v.owner_ref=-old.rowid)) AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies x WHERE x.target_ref=r.record_id) AND r.retention_bucket<=? AND s.recorded_at+r.recorded_offset<=? AND EXISTS(SELECT 1 FROM signal_decision_evidence d WHERE d.evaluation_id=s.subject_id AND d.kind='CANDIDATE') ORDER BY r.retention_bucket,r.record_id LIMIT ?`,Math.floor((asOf-90*DAY)/DAY),asOf-90*DAY,limit-outcomes.length);
+   if(!leaf.length)break;await remove('measurement_outcome_records','record_id',leaf.map(r=>r.record_id));outcomes.push(...leaf);
+  }
+  const legacy=await select(`SELECT event_id FROM measurement_legacy_outcome_evidence o WHERE NOT EXISTS(SELECT 1 FROM measurement_legacy_outcome_evidence old WHERE old.subject_id=o.subject_id AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies v WHERE v.owner_ref=-old.rowid)) AND NOT EXISTS(SELECT 1 FROM measurement_outcome_records old JOIN measurement_subjects s ON s.subject_ref=old.subject_ref WHERE s.subject_id=o.subject_id AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies v WHERE v.owner_ref=old.record_id)) AND NOT EXISTS(SELECT 1 FROM measurement_outcome_dependencies x WHERE x.target_ref=-o.rowid) AND recorded_at<=? AND EXISTS(SELECT 1 FROM signal_decision_evidence d WHERE d.evaluation_id=o.subject_id AND d.kind='CANDIDATE') ORDER BY recorded_at,event_id LIMIT ?`,asOf-90*DAY,limit);
   await remove('measurement_legacy_outcome_evidence','event_id',legacy.map(r=>r.event_id));
   // Independent final-result expiry also collects legacy orphan results. Keep a
   // census until any later final-result retention deadline, never lose its path.

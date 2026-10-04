@@ -33,10 +33,10 @@ export function censusSnapshot(p){
  r:g.flatMap((gate,i)=>gate.reason==null?[]:[[i,word(gate.reason)]]),m:word(e.indicators?.marketProfile?.state),b:word(p.broadMtf?.summary?.level),
  n:word(p.admissionContext?.effectiveAdmissionDecision?.reason),p:p.exposure?.responsiblePrimaryId??null,f:word(p.officialPersistence?.performance)};
  if(p.skippedReason!=null)result.k=p.skippedReason;if(unknown.length)result.x=unknown;
- return [3,result.s,result.d,result.o,result.l,result.t,result.g,result.r,result.m,result.b,result.n,result.p,result.f,result.k??null,result.x??null];
+ const census=[3,result.s,result.d,result.o,result.l,result.t,result.g,result.r,result.m,result.b,result.n,result.p,result.f,result.k??null,result.x??null];if(p.captureGap)census.push(p.captureGap);return census;
 }
 export function restoreCensus(s,row={}){
- if(Array.isArray(s)&&s[0]===3){const [v,score,d,o,l,t,g,r,m,b,n,p,f,k,x]=s;s={v,s:score,d,o,l,t,g,r,m,b,n,p,f,k,x};}
+ if(Array.isArray(s)&&s[0]===3){const [v,score,d,o,l,t,g,r,m,b,n,p,f,k,x,captureGap]=s;s={v,s:score,d,o,l,t,g,r,m,b,n,p,f,k,x,captureGap};}
  if(s.v!==3)return s;
  if(!Array.isArray(s.s)||s.s.length!==7||typeof s.g!=='string')throw new Error('measurement_census_invalid');
  const reasons=new Map(s.r||[]),unknown=new Map((s.x||[]).map(x=>[x[0],x.slice(1)]));
@@ -45,7 +45,7 @@ export function restoreCensus(s,row={}){
  return {evaluationId:row.evaluation_id,candidateKey:row.candidate_key??row.official_signal_id??null,officialSignalId:row.official_signal_id??null,cycleId:row.cycle_id,
  timeframe:row.timeframe,direction:unword(s.d),kind,createdAt:s.t,evaluatedAt:row.evaluated_at,outcome,skippedReason:s.k??null,
  levelsStatus:s.l?'COMPUTED_BY_ENGINE':'NOT_COMPUTED_BY_ENGINE',stage:outcome==='SKIPPED'?'NOT_EVALUATED':s.l?'TECHNICAL_CANDIDATE':'ENGINE_EVALUATED',
- measurementOnly:true,decisionUse:false,gates,engine:{scoring:{bull:s.s[0],bear:s.s[1],margin:s.s[2],score:s.s[3],confirm:s.s[4],oppositions:s.s[5]},finalConfidence:s.s[6],indicators:{marketProfile:{state:unword(s.m)}}},
+ measurementOnly:true,decisionUse:false,captureGap:s.captureGap??null,gates,engine:{scoring:{bull:s.s[0],bear:s.s[1],margin:s.s[2],score:s.s[3],confirm:s.s[4],oppositions:s.s[5]},finalConfidence:s.s[6],indicators:{marketProfile:{state:unword(s.m)}}},
  broadMtf:{summary:{level:unword(s.b)}},admissionContext:{effectiveAdmissionDecision:{reason:unword(s.n)}},exposure:{responsiblePrimaryId:s.p},officialPersistence:{performance:unword(s.f)},
  evidenceRef:`decision:${row.evaluation_id}`,cohortRef:row.cohort_id,retention:{censusDays:365,derivedDays:kind==='OFFICIAL'?null:90}};
 }

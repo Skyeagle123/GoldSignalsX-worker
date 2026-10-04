@@ -19,7 +19,7 @@ test('all six profiles preserve distinct witnesses, five windows and resolvable 
   if(name==='correction'){const c=p.events.find(e=>e.eventType==='CORRECTION');assert(p.events.some(e=>e.eventId===c.supersedesEventId));}
   assert(!p.events.find(e=>e.evidenceType==='FINAL_MEASUREMENT').processedBoundaryTicks);
   const physical=p.db.prepare('SELECT * FROM measurement_outcome_records').all();const subject=p.db.prepare('SELECT * FROM measurement_subjects').get();
-  assert.equal(sqliteRecordPayloadBytes([null,subject.subject_id,subject.recorded_at,subject.persisted_at])+physical.reduce((n,r)=>n+sqliteRecordPayloadBytes(Object.entries(r).map(([k,v])=>k==='record_id'?null:v)),0),p.bytes);
+  assert.equal(sqliteRecordPayloadBytes([null,subject.subject_id,subject.recorded_at,subject.persisted_at])+physical.reduce((n,r)=>n+sqliteRecordPayloadBytes(Object.entries(r).map(([k,v])=>k==='record_id'?null:v)),0)+p.db.prepare("SELECT COALESCE(SUM(payload),0) n FROM dbstat WHERE name IN ('measurement_outcome_dependencies')").get().n,p.bytes);
   p.db.close();
  }
  assert(outcomeProfileBudget(samples).planningAveragePass);assert(!outcomeProfileBudget(samples).reviewAlarm);
@@ -68,7 +68,11 @@ test('cleanup sustainably catches up after 48h outage; no census/result/raw/refe
  let lastBacklog=0,clearedDay=null;
  for(let day=0;day<7;day++){
   const now=start+day*DAY,old=now-400*DAY;db.exec('BEGIN');
-  for(let i=0;i<42;i++){const id=`${day}:${i}`;cycle.run(id,'cohort',old,'{}','[]','d',old);census.run(id,id,old,old);sub.run(id,old);const ref=db.prepare('SELECT subject_ref FROM measurement_subjects WHERE subject_id=?').get(id).subject_ref;for(let k=0;k<20;k++)event.run(ref,String(k),new Uint8Array(32),new Uint8Array(10),Math.floor(old/DAY));rich.run('r:'+id,id,new Uint8Array(10),old,old+90*DAY);final.run(id,new Uint8Array(32),old,old+365*DAY);raw.run('b:'+id,old);}
+  for(let i=0;i<42;i++){const id=`${day}:${i}`;cycle.run(id,'cohort',old,'{}','[]','d',old);census.run(id,id,old,old);sub.run(id,old);const ref=db.prepare('SELECT subject_ref FROM measurement_subjects WHERE subject_id=?').get(id).subject_ref;for(let k=0;k<20;k++)event.run(ref,String(k),new Uint8Array(32),new Uint8Array(10),Math.floor(old/DAY));const events=db.prepare('SELECT record_id FROM measurement_outcome_records WHERE subject_ref=? ORDER BY record_id').all(ref);
+   db.prepare('INSERT INTO measurement_outcome_dependencies VALUES(?,0,64)').run(events[0].record_id);
+   for(let k=1;k<19;k++)db.prepare('INSERT INTO measurement_outcome_dependencies VALUES(?,?,1)').run(events[k].record_id,events[0].record_id);
+   for(let k=1;k<19;k++)db.prepare('INSERT INTO measurement_outcome_dependencies VALUES(?,?,8)').run(events[19].record_id,events[k].record_id);
+   rich.run('r:'+id,id,new Uint8Array(10),old,old+90*DAY);final.run(id,new Uint8Array(32),old,old+365*DAY);raw.run('b:'+id,old);}
   db.exec('COMMIT');
   if(day>=2)for(let cycle=0;cycle<6;cycle++){const r=await maintainMeasurementRetention(binding,now);assert(r.ok,JSON.stringify(r));}
   const backlog=db.prepare('SELECT COUNT(*) n FROM measurement_outcome_records').get().n;

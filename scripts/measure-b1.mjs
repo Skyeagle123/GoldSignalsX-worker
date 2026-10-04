@@ -1,4 +1,4 @@
-import {outcomeProfileBudget} from '../measurement-resource-budget.js';
+import {sqliteRecordPayloadBytes,outcomeProfileBudget} from '../measurement-resource-budget.js';
 // Synthetic local sizing only. Owner dashboard occupancy is supplied evidence;
 // this script never accesses Production or any network service.
 import {DatabaseSync} from 'node:sqlite';
@@ -15,7 +15,7 @@ import {foldPostEntry} from '../post-entry-evidence.js';
 import {buildMarketManifest} from '../market-evidence.js';
 const now=Date.UTC(2026,8,28,15,10),DAY=86400000,frames={};
 for(const [tf,n]of Object.entries({'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60})){const step=SIGNAL_TF_MS[tf],end=Math.floor(now/step)*step;frames[tf]={tf,bars:Array.from({length:n},(_,i)=>{const c=4100+(i-n+1)*.35;return{t:end-(n-i)*step,o:c-.3,h:c+.1,l:c-.4,c,v:1,provider:'mt5'};})};frames[tf].quality=evaluateCandleQuality(frames[tf].bars,tf);}
-function database(){const db=new DatabaseSync(':memory:');for(const name of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql'])db.exec(fs.readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));return db;}
+function database(){const db=new DatabaseSync(':memory:');for(const name of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql'])db.exec(fs.readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));return db;}
 const samples={},stored={};let largestBlock=0;
 const tablePayload=(db,name)=>db.prepare("SELECT COALESCE(SUM(payload),0) n FROM dbstat WHERE name=?").get(name).n;
 for(const [name,options]of Object.entries({official:{tf:'5m'},candidate:{tf:'15m'},earlyRejection:{tf:'5m',dataQuality:{ok:false,reason:'synthetic'}}})){
@@ -31,6 +31,21 @@ for(const [name,options]of Object.entries({official:{tf:'5m'},candidate:{tf:'15m
  db.close();
 }
 
+// Charge the actual seven-timeframe scheduler cycle, not seven isolated samples.
+{
+ const live={price:4100,ts:now,receivedAt:now,source:'mt5'},filters={nyFilterOn:false,pivotFilterOn:false};
+ const j=beginDecisionCycle(now,frames,live,null,filters);j.capturedAt=now;j.candidates=[];j.decisions=new Map();j.officialIds=new Set();j.confirmationIds=new Set();j.evaluations=new Map();
+ const before=performance.now();
+ for(const [tf,f]of Object.entries(frames)){const trace={},includedMtf=HIGHER_SIGNAL_TIMEFRAMES[tf]||[],result=computeServerSignal(f.bars,{tf,mtf:includedMtf.map(tf=>frames[tf]),live,barsSource:'d1',evaluationAt:now,filters},trace);
+  observeAttempt(j,{tf,trace,result,requestedMtf:includedMtf,includedMtf});j.evaluations.set(tf,result);
+  if(['buy','sell'].includes(result.side)){const id=`${tf}:${f.bars.at(-1).t}:${result.side}`;j.candidates.push({id,tf,createdAt:now,conf:result.conf});j.decisions.set(id,{decision:j.officialIds.size?'blocked_opposite':'accepted'});if(!j.officialIds.size)j.officialIds.add(id);}
+ }
+ const db=database(),write=await persistDecisionCycle(transactionalBinding(db),j,{codeCommit:'a'.repeat(40),measurementEffectiveAt:now});if(!write.ok||write.persistence.richCaptureGap)throw new Error(write.error||'full_cycle_rich_capture_failed');
+ const census=db.prepare('SELECT * FROM signal_decision_evidence').all(),rich=db.prepare("SELECT * FROM measurement_rich_evidence WHERE owner_type='decision'").all(),shared=db.prepare("SELECT * FROM measurement_rich_evidence WHERE owner_type='cycle'").get();
+ const rowBytes=row=>sqliteRecordPayloadBytes(Object.entries(row).filter(([k])=>k!=='persisted_at').map(([_k,v])=>v));
+ const subsetBytes=predicate=>Math.max(0,...rich.filter(r=>predicate(census.find(c=>r.owner_id===c.evaluation_id))).map(r=>r.payload_blob.length));
+ samples.fullCycle={candidateRichEncodedBytes:subsetBytes(c=>c.kind==='CANDIDATE'&&JSON.parse(c.payload_json)[4]===1),earlyRichEncodedBytes:subsetBytes(c=>JSON.parse(c.payload_json)[4]===0),attempts:census.length,blocks:write.blocks,censusBytes:Math.max(...census.map(rowBytes)),richEncodedBytes:Math.max(...rich.map(r=>r.payload_blob.length)),richRowBytes:Math.max(...rich.map(rowBytes)),richLogicalBytes:Math.max(...rich.map(r=>r.uncompressed_length)),cycleContextBytes:tablePayload(db,'decision_cycle_evidence')+rowBytes(shared)+tablePayload(db,'measurement_market_links'),constructionSerializationHashAndLocalPersistenceMs:performance.now()-before,insertStatements:write.persistence.insertStatements,immutableRows:write.persistence.records};db.close();
+}
 const profiles={};let maxActive=0,finalCompact=0;
 for(const name of ['complete','gaps','incremental','session-transition','fragmented','correction']){
  const p=await outcomeProfile(name,{sessionId:'01c4fef2-36fb-47df-82e1-10288f2e329a',realistic:true});
@@ -46,6 +61,7 @@ const worstOutcome=Math.max(...Object.values(profiles).map(p=>p.bytes));
 const representative=stored.candidate;
 const outcomeSample=await outcomeProfile('correction',{sessionId:'01c4fef2-36fb-47df-82e1-10288f2e329a',realistic:true});
 const outcomeRows=outcomeSample.db.prepare('SELECT * FROM measurement_outcome_records').all(),finalRow=outcomeSample.db.prepare('SELECT * FROM measurement_final_results').get();
+const dependencyRows=outcomeSample.db.prepare('SELECT * FROM measurement_outcome_dependencies').all();
 const physical=database(),pageBytes=db=>Number(db.prepare('PRAGMA page_count').get().page_count)*4096;
 const empty=pageBytes(physical);
 function insert(table,row){const keys=Object.keys(row).filter(k=>!['payload_json'].includes(k)||table!=='measurement_final_results');physical.prepare(`INSERT INTO ${table}(${keys.join(',')}) VALUES(${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k]));}
@@ -56,6 +72,8 @@ for(let i=0;i<1000;i++){
  if(i%7===0){insert('decision_cycle_evidence',{...representative.cycle,cycle_id:cycle});insert('measurement_rich_evidence',{...representative.shared,evidence_id:`cycle:${cycle}`,owner_id:cycle});const owner=physical.prepare('SELECT rowid FROM decision_cycle_evidence WHERE cycle_id=?').get(cycle).rowid;for(const b of physical.prepare('SELECT rowid FROM market_evidence_blocks').all())physical.prepare('INSERT INTO measurement_market_links VALUES(1,?,?)').run(owner,b.rowid);}
  physical.prepare('INSERT INTO measurement_subjects(subject_ref,subject_id,recorded_at,persisted_at) VALUES(?,?,?,?)').run(700000+i,id,1790608200000,1790608200000);
  for(const row of outcomeRows)insert('measurement_outcome_records',{...row,record_id:i*outcomeRows.length+1+outcomeRows.indexOf(row),subject_ref:700000+i});
+ const rowMap=new Map(outcomeRows.map((row,k)=>[row.record_id,i*outcomeRows.length+1+k]));
+ for(const row of dependencyRows)insert('measurement_outcome_dependencies',{...row,owner_ref:rowMap.get(row.owner_ref),target_ref:row.target_ref===0?0:rowMap.get(row.target_ref)});
  insert('measurement_final_results',{...finalRow,subject_id:id});
  insert('signal_decision_evidence',{...representative.census,evaluation_id:id,cycle_id:cycle,candidate_key:`5m:${1790608200000+i}:buy`});insert('measurement_rich_evidence',{...representative.rich,evidence_id:`decision:${id}`,owner_id:id});
 }
@@ -90,6 +108,6 @@ const official= samples.official.censusBytes+samples.official.richRowBytes+worst
 const cleanupLagDays=4; // Generated ratio-preserving catch-up validated in targeted tests.
 function project(days,attempts){const parts={census:attempts*Math.min(days,365+cleanupLagDays)*census,rich:attempts*Math.min(days,90+cleanupLagDays)*rich,outcomes:attempts*Math.min(days,90+cleanupLagDays)*worstOutcome,final:attempts*Math.min(days,365+cleanupLagDays)*finalCompact,cycles:288*Math.min(days,365+cleanupLagDays)*cycle,raw:rawDay*Math.min(days,30+cleanupLagDays),officialPins:pinDay*Math.max(0,days-Math.min(days,30+cleanupLagDays)),officialForensics:10*days*official,recovery:24*1024**2,registry:16*1024**2};const bytes=Object.values(parts).reduce((a,b)=>a+b,0)*allocationFactor*contingency;return {parts,B1GB:bytes/1e9,totalGB:(bytes+23.91e6)/1e9,headroomGB:(10e9-bytes-23.91e6)/1e9};}
 const projections=Object.fromEntries([30,90,365].map(d=>[d,project(d,1728)])),stress=project(365,2016);
-const budgetChecks={census:census<=384,earlyRich:samples.earlyRejection.richEncodedBytes<=2560,technicalRich:samples.candidate.richEncodedBytes<=4608,finalResult:finalCompact<=192,cycleContext:cycle<=1536,rawBlock:largestBlock<=6144,rawDaily:rawDay<=8*1024**2,officialRawDaily:pinDay<=1024**2,officialPackage:official<=32768,activeState:maxActive<=6144,testMatrixOutcomeAverage:outcomeProfileBudget(Object.values(profiles)).planningAveragePass,reviewCeiling:Object.values(profiles).every(p=>p.bytes<=8192)};
+const budgetChecks={census:census<=384,earlyRich:samples.earlyRejection.richEncodedBytes<=2560,technicalRich:Math.max(samples.candidate.richEncodedBytes,samples.fullCycle.candidateRichEncodedBytes)<=4608,fullCycleEarlyRich:samples.fullCycle.earlyRichEncodedBytes<=2560,finalResult:finalCompact<=192,cycleContext:cycle<=1536,rawBlock:largestBlock<=6144,rawDaily:rawDay<=8*1024**2,officialRawDaily:pinDay<=1024**2,officialPackage:official<=32768,activeState:maxActive<=6144,testMatrixOutcomeAverage:outcomeProfileBudget(Object.values(profiles)).planningAveragePass,reviewCeiling:Object.values(profiles).every(p=>p.bytes<=8192)};
 console.log(JSON.stringify({MEASURED:{samples,profiles,testMatrixAverage:matrixAverage,maximumTestedOutcomeBytes:worstOutcome,allocationFactorMeasured:allocation,allocationPages:stat,rawDayBytes:rawDay,postEntryRawDayBytes:postEntryRawDay,postEntryPinDayBytes:postEntryPinDay,rawRowsDay,generatedRates:{attemptsDay:2016,outcomeRowsDay:2016*20,richRowsDay:2016+288+rawRowsDay,censusRowsDay:2016,finalRowsDay:2016,cycleRowsDay:288,rawRowsDay},cleanupCapacityPerCategoryDay:256*288,cleanupLagValidation:{scale:48,subjectsDay:42,outcomeRowsSubject:20,cyclesDay:6,limit:256,outageHours:48,backlogZeroByDay:4,independentFinalExpiry:true,processingBudgetSubjects:4032,processingBudgetBytes:24*1024**2},officialPinDayBytes:pinDay,maximumRawBlockBytes:largestBlock,maximumActiveBytes:maxActive,compactFinalBytes:finalCompact},ESTIMATED:{assumptions:{standardAttemptsDay:1728,stressAttemptsDay:2016,cyclesDay:288,officialDay:10,allocationFactor,contingency,cleanupLagDays,cleanupLagStatus:'VALIDATED_RATIO_PRESERVING_GENERATED_WORKLOAD; 48H_OUTAGE; CLEARED_WITHIN_DAY_4',outcomeDistribution:'NO_PRODUCTION_DISTRIBUTION_ASSUMED; ALL-HEAVY SENSITIVITY',ownerProductionBytes:23.91e6},projections,stress},budgetChecks,resourceGate:Object.values(budgetChecks).every(Boolean)&&stress.B1GB<6&&stress.totalGB<8&&stress.headroomGB>=2?'PASS':'FAIL'},null,2));
 physical.close();outcomeSample.db.close();

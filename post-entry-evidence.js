@@ -10,9 +10,14 @@ export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf,availableA
  const tickIdentity=t=>`${t.ts}:${t.price}:${t.measurement?.sessionId??''}:${t.measurement?.sequence??''}`;
  const events=[];const touch=(type,price,witness)=>{
   const target=subject[type.toLowerCase()];const hit=subject.side==='sell'?(type==='SL'?price>=target:price<=target):(type==='SL'?price<=target:price>=target);
-  const key=`${type}:${witness.source}`;
-  if(!hit||barriers[key]||!finite(target))return;
-  const event={...witness,eventId:`${subject.id}:barrier:${type}:${witness.source}`,subjectId:subject.id,evidenceType:'BARRIER_OBSERVATION',
+  let key=`${type}:${witness.source}`,suffix='';
+  if(!hit||!finite(target))return;
+  if(barriers[key]){
+   if(witness.occurredFrom>=barriers[key].occurredFrom)return;
+   suffix=`:${witness.occurredFrom}:${witness.occurredTo}`;key+=suffix;
+   if(barriers[key])return;
+  }
+  const event={...witness,eventId:`${subject.id}:barrier:${type}:${witness.source}${suffix}`,subjectId:subject.id,evidenceType:'BARRIER_OBSERVATION',
    eventType:type,level:target,price,eligible:true,availableAt,observedAt:witness.observedAt??availableAt,evaluatorVersion:'b1-witness-v1',measurementOnly:true,decisionUse:false};
   barriers[key]=event;event.coverageRef=`${subject.id}:coverage:${asOf}`;events.push(event);
  };
@@ -22,8 +27,14 @@ export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf,availableA
   market.push({from:tick.ts,to:tick.ts,kind:'tick',tick});
  }
  for(const bar of bars){
-  if(bar.provider!=='mt5'||bar.t<subject.createdAt||bar.t+60000>end||bar.t+60000<=prior.processedThrough)continue;
+  if(bar.provider!=='mt5'||bar.t<subject.createdAt||bar.t+60000>end)continue;
   if(![bar.o,bar.h,bar.l,bar.c].every(finite))continue;
+  if(bar.t+60000<=prior.processedThrough&&!['TP1','TP2','SL'].some(type=>{
+   const level=subject[type.toLowerCase()],priorBarrier=Object.values(barriers).filter(e=>e.eventType===type&&e.source==='mt5:closed-1m-bar').sort((a,b)=>a.occurredFrom-b.occurredFrom)[0];
+   const price=subject.side==='sell'?(type==='SL'?bar.h:bar.l):(type==='SL'?bar.l:bar.h);
+   const hit=finite(level)&&(subject.side==='sell'?(type==='SL'?price>=level:price<=level):(type==='SL'?price<=level:price>=level));
+   return hit&&(!priorBarrier||bar.t<priorBarrier.occurredFrom);
+  }))continue;
   market.push({from:bar.t,to:bar.t+60000,kind:'bar',bar});
  }
  market.sort((a,b)=>a.to-b.to||a.from-b.from);let lastTick=null;
@@ -74,7 +85,6 @@ export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf,availableA
  }
  const risk=Math.abs(subject.entry-subject.sl);global.mfeR=global.mfe!==null&&risk?global.mfe/risk:null;global.maeR=global.mae!==null&&risk?global.mae/risk:null;
  let outcome=reduceOutcome(subject,Object.values(barriers),{asOf:availableAt,measurementEndAt:end,coverageIntervals:coverage,coverageGaps:gaps});
- if(['SUCCESS','FAILURE'].includes(prior.outcome?.directionalOutcome)&&outcome.directionalOutcome!==prior.outcome.directionalOutcome){outcome={...outcome,directionalOutcome:prior.outcome.directionalOutcome,firstDirectionalWitness:prior.outcome.firstDirectionalWitness,timeToTp1:prior.outcome.timeToTp1,timeToSl:prior.outcome.timeToSl,reason:'PREVIOUSLY_PROVEN_FIRST_BARRIER_PRESERVED'};}
  global.coverage=outcome.coverage==='COMPLETE'?'COMPLETE':global.mfe!==null?'OBSERVED_LOWER_BOUND':'INSUFFICIENT';
  const processedBoundaryTicks=[...new Set([...(through===prior.processedThrough?prior.processedBoundaryTicks||[]:[]),...ticks.filter(t=>t.ts===through).map(tickIdentity)])].slice(-32);
  // Freeze the coverage actually available at discovery. This is not a recovery

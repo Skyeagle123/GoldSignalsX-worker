@@ -17,12 +17,13 @@ class Binding{
  async batch(statements){this.database.exec('BEGIN');try{const rows=statements.map(x=>x.runSync());this.database.exec('COMMIT');return rows;}catch(e){this.database.exec('ROLLBACK');throw e;}}
 }
 const now=Date.UTC(2026,8,28,15,10);const realClock=Date.now;const realFetch=globalThis.fetch;
-function setup(module,{exposure=null,stale=false,news=null}={}){
+function setup(module,{exposure=null,stale=false,news=null,fullArrays=false}={}){
  const db=new Binding();db.database.exec("CREATE TABLE bars_v2(tf INTEGER,t INTEGER,o REAL,h REAL,l REAL,c REAL,v REAL,provider TEXT,PRIMARY KEY(tf,t));");
  for(const [tf,step] of Object.entries(SIGNAL_TF_MS)){
   const end=Math.floor(now/step)*step;
   const stmt=db.database.prepare('INSERT INTO bars_v2 VALUES(?,?,?,?,?,?,?,?)');
-  for(let i=0;i<100;i++){const c=4100+(i-99)*.35;stmt.run(step/60000,end-(100-i)*step,c-.3,c+.1,c-.4,c,1,'mt5');}
+  const n=fullArrays?({'1m':2000,'5m':600,'15m':300,'30m':200,'60m':120,'240m':80,'1d':60})[tf]:100;
+  for(let i=0;i<n;i++){const c=4100+(i-n+1)*.35;stmt.run(step/60000,end-(n-i)*step,c-.3,c+.1,c-.4,c,1,'mt5');}
  }
  const values=new Map();const writes=[];let state=exposure;const decisions=[];
  const kv={async get(key,type){const value=values.get(key);return type==='json'&&typeof value==='string'?JSON.parse(value):value??null;},async put(key,value){values.set(key,value);writes.push([key,value]);}};
@@ -31,7 +32,7 @@ function setup(module,{exposure=null,stale=false,news=null}={}){
 }
 test('cycle-level exact parity: candidate ordering, winner, confirmations, blocks, Official/KV/performance identities',async()=>{
  Date.now=()=>now;globalThis.fetch=()=>{throw new Error('NO_EXTERNAL_FETCH');};
- try{for(const options of [{},{stale:true},{news:{ok:false,stale:true,safety:{calendarBlockTechnicalSignal:true,reason:'fixture-high'}}},{exposure:{symbol:'XAUUSD',status:'active',side:'sell',primarySignalId:'old',primaryTf:'60m',openedAt:now-10000,maxPositions:1,cooldownUntil:0,confirmations:[],blocked:[]}}]){
+ try{for(const options of [{},{fullArrays:true},{stale:true},{news:{ok:false,stale:true,safety:{calendarBlockTechnicalSignal:true,reason:'fixture-high'}}},{exposure:{symbol:'XAUUSD',status:'active',side:'sell',primarySignalId:'old',primaryTf:'60m',openedAt:now-10000,maxPositions:1,cooldownUntil:0,confirmations:[],blocked:[]}}]){
   const a=setup(before,options),b=setup(after,options);
   const filters={nyFilterOn:false,pivotFilterOn:false};
   const original=await before.runSignalCycle(a.env,a.news,filters),actual=await after.runSignalCycle(b.env,b.news,filters);
@@ -39,7 +40,7 @@ test('cycle-level exact parity: candidate ordering, winner, confirmations, block
   assert.deepEqual(b.decisions,a.decisions); // policy result, not the passive input envelope
   const tables=a.db.database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'production_%' ORDER BY name").all();
   for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());
-  if(!options.stale&&!options.news&&!options.exposure){a.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8')));for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());}
+  if(!options.stale&&!options.news&&!options.exposure){a.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0003_measurement_dependency_closure.sql',import.meta.url),'utf8')));for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());}
   const journal=takeDecisionCycle(actual);assert(journal);if(!options.stale&&!options.news&&!options.exposure){assert(journal.candidates.length>0);assert.equal(journal.officialIds.size,1);}assert.equal(journal.attempts.length,7);
   const frozenWrites=structuredClone(b.writes);
   const failure=await persistDecisionCycle({prepare(){throw new Error('synthetic measurement failure');}},journal,{codeCommit:base,measurementEffectiveAt:now});
@@ -62,7 +63,7 @@ test('Official persistence failure/cancellation and performance-storage failure 
   assert.equal(newError?.message,oldError?.message);assert.deepEqual(newResult,oldResult);assert.deepEqual(b.writes,a.writes);assert.deepEqual(b.decisions,a.decisions);assert.deepEqual(cancellations[1],cancellations[0]);
   const journal=takeDecisionCycle(newError||newResult);assert(journal,`${mode}: ${newError?.stack||JSON.stringify(newResult)}`);
   if(mode==='kv-failure'){assert(journal.failedOfficialId);assert.equal(journal.officialIds.size,0);}
-  else {assert.equal(journal.officialIds.size,1);b.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8')));const result=await persistDecisionCycle(b.db,journal,{codeCommit:base,measurementEffectiveAt:now});assert.equal(result.ok,true);const row=b.db.database.prepare("SELECT * FROM signal_decision_evidence WHERE kind='OFFICIAL'").get();assert.equal(restoreCensus(JSON.parse(row.payload_json),row).officialPersistence.performance,'FAILED');}
+  else {assert.equal(journal.officialIds.size,1);b.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0003_measurement_dependency_closure.sql',import.meta.url),'utf8')));const result=await persistDecisionCycle(b.db,journal,{codeCommit:base,measurementEffectiveAt:now});assert.equal(result.ok,true);const row=b.db.database.prepare("SELECT * FROM signal_decision_evidence WHERE kind='OFFICIAL'").get();assert.equal(restoreCensus(JSON.parse(row.payload_json),row).officialPersistence.performance,'FAILED');}
   a.db.database.close();b.db.database.close();
  }}finally{Date.now=realClock;globalThis.fetch=realFetch;}
 });

@@ -7,7 +7,7 @@ import {transactionalBinding} from './test-fixtures/b1-sqlite.mjs';
 import {decodeStoredOutcome} from './evidence-codec.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {buildMarketManifest,replayMarketManifest} from './market-evidence.js';
-const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0003_measurement_dependency_closure.sql',import.meta.url),'utf8'));
 export function sqliteBinding(db){return {prepare(sql){return {bind(...values){return {async run(){const r=db.prepare(sql).run(...values);return {meta:{rows_written:Number(r.changes)}};},async first(){return db.prepare(sql).get(...values)??null;},async all(){return {results:db.prepare(sql).all(...values)};}};},async all(){return {results:db.prepare(sql).all()};},async first(){return db.prepare(sql).get()??null;}};}};}
 test('explicit migration: clean and representative existing schema; seven immutable guards',async()=>{
  for(const existing of [false,true]){

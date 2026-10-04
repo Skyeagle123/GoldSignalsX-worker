@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {sqliteBinding} from './test-fixtures/b1-sqlite.mjs';
 import {createForwardReadCapability,readForwardValidation} from './forward-validation-reader.js';
-const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0003_measurement_dependency_closure.sql',import.meta.url),'utf8'));
 const source=await fs.readFile(new URL('./goldsignalsx-worker.js',import.meta.url),'utf8');
 const generated=new URL('./.b1-reporting-worker.mjs',import.meta.url);
 await fs.writeFile(generated,source.replace("import { DurableObject } from 'cloudflare:workers';",'class DurableObject {}'));

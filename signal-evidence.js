@@ -1,4 +1,4 @@
-export const MEASUREMENT_SCHEMA_VERSION=3;
+export const MEASUREMENT_SCHEMA_VERSION=4;
 export const CAPTURE_VERSION='b1-capture-v3';
 export const ENGINE_SEMANTICS_VERSION='6721f84-engine-v1';
 export const SIGNAL_POLICY_VERSION='post-improvement-2026-09-21';
