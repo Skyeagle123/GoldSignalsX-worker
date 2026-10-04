@@ -24,6 +24,8 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,m
  try{
   const configFingerprint=await digestPayload(canonicalSerialize(journal.filters));
   const cohort=cohortManifest({...provenance,configFingerprint});
+  const cohortDigest=await digestPayload(canonicalSerialize(cohort));
+  const cohortStorageRef=btoa(String.fromCharCode(...cohortDigest.match(/../g).map(x=>parseInt(x,16)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
   const writer=measurementWriter(db,{maxWrites,maxPayloadBytes:maxBytes});
   const capturedAt=journal.capturedAt??(journal.capturedAt=Date.now());
   const manifests={},blocks=new Map();
@@ -76,11 +78,11 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,m
    candidateOrdering:journal.candidates?.map(x=>({id:x.id,conf:x.conf,tf:x.tf,signalBarTs:x.signalBarTs}))||[],
    comparatorVersion:'confidence-tf-rank-bar-id-v1',actualExposureTrace:journal.exposureResult?.measurementTrace??{status:'NOT_CAPTURED'},exposureDecisionOrder:journal.exposureResult?.decisions??null,measurementOnly:true,decisionUse:false};
   canonicalSerialize(cycle,maxBytes);
-  const records=[{type:'cohort',values:{cohort_id:cohort.cohortId,schema_version:1,effective_at:cohort.measurementEffectiveAt,recorded_at:capturedAt},payload:cohort}];
+  const records=[{type:'cohort',values:{cohort_id:cohortStorageRef,schema_version:1,effective_at:cohort.measurementEffectiveAt,recorded_at:capturedAt},payload:cohort}];
   for(const b of blocks.values())records.push({type:'market',values:{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:capturedAt},payload:parseEvidence(b.payload)});
-  records.push({type:'cycle',values:{cycle_id:journal.cycleId,cohort_id:cohort.cohortId,evaluated_at:journal.evaluatedAt,block_ids_json:JSON.stringify([...blocks.keys()]),recorded_at:capturedAt},payload:cycle});
+  records.push({type:'cycle',values:{cycle_id:journal.cycleId,cohort_id:cohortStorageRef,evaluated_at:journal.evaluatedAt,block_ids_json:JSON.stringify([...blocks.keys()]),recorded_at:capturedAt},payload:cycle});
   for(const snapshot of snapshots)records.push({type:'decision',values:{evaluation_id:snapshot.evaluationId,candidate_key:snapshot.candidateKey,
-   official_signal_id:snapshot.officialSignalId,kind:snapshot.kind,cycle_id:journal.cycleId,cohort_id:cohort.cohortId,timeframe:snapshot.timeframe,
+   official_signal_id:snapshot.officialSignalId,kind:snapshot.kind,cycle_id:journal.cycleId,cohort_id:cohortStorageRef,timeframe:snapshot.timeframe,
    evaluated_at:snapshot.evaluatedAt??journal.evaluatedAt,measurement_only:1,decision_use:0,recorded_at:capturedAt},payload:snapshot});
   const officialPins=snapshots.filter(s=>s.kind==='OFFICIAL').map(s=>({officialId:s.officialSignalId,blockIds:[...new Set([s.inputManifest.primary,...s.inputManifest.engineMtf,s.inputManifest.research1m].flatMap(m=>m?.references?.map(r=>r.blockId)||[]))]}));
   const persistence=await writer.immutableBatch(records,{officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});

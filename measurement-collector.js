@@ -1,6 +1,6 @@
 // Scheduled measurement writer only. Never imported by the reader. No schema initializer.
 import {measurementWriter} from './signal-evidence-store.js';
-import {decodeEvidence,restoreSharedDecision} from './evidence-codec.js';
+import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreSharedDecision} from './evidence-codec.js';
 import {parseEvidence} from './signal-evidence.js';
 import {foldPostEntry} from './post-entry-evidence.js';
 import {buildMarketManifest} from './market-evidence.js';
@@ -10,7 +10,7 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
   // arriving candidates cannot starve their bounded tick-buffer accumulation.
   // Within each class, the least recently processed subject gets the next turn.
   const select=`SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
-   s.payload_json AS state_json,s.updated_at AS state_updated_at,p.status,p.closed_at
+   s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
    FROM signal_measurement_state s JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id
    LEFT JOIN production_signals p ON p.signal_id=d.official_signal_id
    WHERE s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`;
@@ -20,24 +20,24 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
   const writer=measurementWriter(db,{maxWrites});let updated=0;const blocks=new Map();
   const subjects=[];
   for(const row of rows){
-   const rich=await db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
+   const rich=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
    if(!rich)continue;
-   const entry=await decodeEvidence(JSON.parse(rich.payload_json));
-   const shared=await db.prepare('SELECT r.payload_json AS cycle_json,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_rich_evidence r ON r.evidence_id=? JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id WHERE y.cycle_id=?').bind(`cycle:${entry.sharedContextRef}`,entry.sharedContextRef).first();
+   const entry=await decodeStoredEvidence(rich);
+   const shared=await db.prepare('SELECT r.*,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_rich_evidence r ON r.evidence_id=? JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id WHERE y.cycle_id=?').bind(`cycle:${entry.sharedContextRef}`,entry.sharedContextRef).first();
    const defs=new Map();if(entry.definitionRef){const d=await db.prepare('SELECT payload_json FROM measurement_definitions WHERE definition_id=?').bind(entry.definitionRef).first();if(d)defs.set(entry.definitionRef,parseEvidence(d.payload_json));}
-   restoreSharedDecision(entry,shared?await decodeEvidence(JSON.parse(shared.cycle_json)):null,shared?parseEvidence(shared.cohort_json):null,defs);
+   restoreSharedDecision(entry,shared?await decodeStoredEvidence(shared):null,shared?parseEvidence(shared.cohort_json):null,defs);
    const levels=entry.engine?.levels;if(!levels)continue;
    const createdAt=entry.createdAt??entry.evaluatedAt;
    const subject={id:row.official_signal_id||row.evaluation_id,createdAt,entry:levels.entry,tp1:levels.tp1,tp2:levels.tp2,sl:levels.sl,
     side:entry.direction,status:row.kind==='OFFICIAL'?row.status:'active',closedAt:row.closed_at??null,
     measurementHorizonAt:row.kind==='CANDIDATE'?createdAt+3600000:null};
-   let previous=row.state_json?parseEvidence(row.state_json):{processedThrough:subject.createdAt,covered:[],gaps:[],barriers:{},global:{mfe:null,mae:null}};
-   const checkpointRow=await db.prepare("SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=? AND event_type='COVERAGE_CHECKPOINT' ORDER BY available_at DESC,event_id DESC LIMIT 1").bind(subject.id).first();
-   let latest=checkpointRow?parseEvidence(checkpointRow.payload_json):null;
-   if(latest?.evidenceRef){const r=await db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').bind(latest.evidenceRef).first();if(r)latest=await decodeEvidence(JSON.parse(r.payload_json));}
+   let previous=row.state_json?await decodeProcessingState({payload_json:row.state_json,payload_blob:row.state_blob,codec:row.state_codec,uncompressed_length:row.state_length,payload_digest:row.state_digest}):{processedThrough:subject.createdAt,covered:[],gaps:[],barriers:{},global:{mfe:null,mae:null}};
+   const checkpointRow=await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type='COVERAGE_CHECKPOINT' ORDER BY available_at DESC,event_id DESC LIMIT 1").bind(subject.id).first();
+   let latest=checkpointRow?await decodeStoredOutcome(checkpointRow):null;
+   if(latest?.evidenceRef){const r=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(latest.evidenceRef).first();if(r)latest=await decodeStoredEvidence(r);}
    if(latest&&latest.availableAt>=(previous?.outcome?.evidenceAsOf??subject.createdAt))previous={...previous,processedThrough:latest.occurredTo,covered:latest.covered,gaps:latest.gaps,quality:latest.quality,global:latest.global,outcome:latest.outcome};
-   const existing=(await db.prepare("SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
-   for(const record of existing){const event=parseEvidence(record.payload_json);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
+   const existing=(await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
+   for(const record of existing){const event=await decodeStoredOutcome(record);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
    if(latest?.availableAt===asOf){await writer.state(subject.id,row.cohort_id,previous,asOf);updated++;continue;}
    const observationAsOf=Math.min(asOf,subject.measurementHorizonAt??asOf);
    const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf});

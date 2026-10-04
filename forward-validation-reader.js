@@ -1,37 +1,37 @@
 // Fixed SELECT catalog only. No imports from writer/collector/schema initializer.
 import {parseEvidence,FROZEN_BASELINE,MEASUREMENT_SCHEMA_VERSION,CAPTURE_VERSION} from './signal-evidence.js';
-import {decodeEvidence,restoreSharedDecision,reproducibility} from './evidence-codec.js';
+import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreCensus,hydrateFinalOutcome,restoreSharedDecision,reproducibility,CENSUS_WORDS} from './evidence-codec.js';
 import {reduceOutcome,OUTCOME_REDUCER_VERSION} from './forward-validation.js';
 // Evidence of successful Official persistence remains visible even when the legacy
 // performance write failed independently. This union is SELECT-only, no repair.
 const OFFICIAL_POPULATION=`(SELECT signal_id,source,created_at,timeframe,direction,entry,tp1,tp2,sl,status,closed_at,tp1_at,sl_at,NULL AS evidence_recorded_at FROM production_signals
  UNION ALL SELECT d.official_signal_id,'production',
- json_extract(d.payload_json,'$.createdAt'),d.timeframe,json_extract(d.payload_json,'$.direction'),
- json_extract(d.payload_json,'$.engine.levels.entry'),json_extract(d.payload_json,'$.engine.levels.tp1'),
- json_extract(d.payload_json,'$.engine.levels.tp2'),json_extract(d.payload_json,'$.engine.levels.sl'),
- NULL,NULL,NULL,NULL,d.recorded_at FROM signal_decision_evidence d
+ COALESCE(json_extract(d.payload_json,'$.createdAt'),json_extract(d.payload_json,'$[5]')),d.timeframe,CASE json_extract(d.payload_json,'$[2]') WHEN 1 THEN 'buy' WHEN 2 THEN 'sell' ELSE json_extract(d.payload_json,'$.direction') END,
+ COALESCE(l.entry,json_extract(d.payload_json,'$.engine.levels.entry')),COALESCE(l.tp1,json_extract(d.payload_json,'$.engine.levels.tp1')),
+ COALESCE(l.tp2,json_extract(d.payload_json,'$.engine.levels.tp2')),COALESCE(l.sl,json_extract(d.payload_json,'$.engine.levels.sl')),
+ NULL,NULL,NULL,NULL,d.recorded_at FROM signal_decision_evidence d LEFT JOIN measurement_official_levels l ON l.official_signal_id=d.official_signal_id
  WHERE d.kind='OFFICIAL' AND NOT EXISTS(SELECT 1 FROM production_signals p WHERE p.signal_id=d.official_signal_id))`;
 const SQL=Object.freeze({
- schema:"SELECT name,sql FROM sqlite_schema WHERE type='table' AND name IN ('measurement_cohorts','decision_cycle_evidence','signal_decision_evidence','signal_outcome_evidence','signal_measurement_state','market_evidence_blocks','market_evidence_references','measurement_schema_meta','measurement_rich_evidence','measurement_definitions','measurement_final_results','measurement_official_pins')",
+ schema:"SELECT name,sql FROM sqlite_schema WHERE type IN ('table','view') AND name IN ('measurement_cohorts','decision_cycle_evidence','signal_decision_evidence','signal_outcome_evidence','signal_measurement_state','market_evidence_blocks','market_evidence_references','measurement_schema_meta','measurement_rich_evidence','measurement_definitions','measurement_final_results','measurement_official_pins','measurement_official_levels','measurement_outcome_records','measurement_subjects','measurement_market_links')",
  versions:'SELECT version AS schema_version FROM measurement_schema_meta WHERE singleton=1',
  columns:`SELECT c.cohort_id,c.schema_version,c.persisted_at,m.block_id,m.payload_json,y.cycle_id,y.block_ids_json,d.evaluation_id,d.official_signal_id,d.kind,d.evaluated_at,o.subject_id,o.event_id,o.available_at,s.subject_id,s.updated_at,s.payload_json,s.evaluation_id,s.kind,s.next_observe_at,s.observation_end_at,d.persisted_at,o.persisted_at,r.owner_type,r.owner_id,r.block_id,h.evidence_id,h.owner_type,h.owner_id,h.retain_until,z.definition_id,j.subject_id,j.retain_until,p.official_signal_id,p.block_id FROM measurement_cohorts c,market_evidence_blocks m,decision_cycle_evidence y,signal_decision_evidence d,signal_outcome_evidence o,signal_measurement_state s,market_evidence_references r,measurement_rich_evidence h,measurement_definitions z,measurement_final_results j,measurement_official_pins p WHERE 0`,
  watermark:'SELECT MAX(available_at) AS at FROM signal_outcome_evidence WHERE available_at<=?',
- official:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
+ official:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,d.evaluation_id,d.candidate_key,d.cycle_id,d.kind,d.evaluated_at,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
  FROM ${OFFICIAL_POPULATION} p LEFT JOIN signal_decision_evidence d ON d.official_signal_id=p.signal_id AND d.kind='OFFICIAL' AND d.recorded_at<=?2
  LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id LEFT JOIN measurement_final_results f ON f.subject_id=p.signal_id
  WHERE p.source='production' AND p.created_at>=?1 AND p.created_at<=?2 AND (?3 IS NULL OR d.cohort_id=?4)
  AND (p.evidence_recorded_at IS NULL OR p.evidence_recorded_at<=?2)
  AND (?5 IS NULL OR p.created_at<?6 OR (p.created_at=?7 AND p.signal_id<?8))
  ORDER BY p.created_at DESC,p.signal_id DESC LIMIT ?9`,
- detail:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
+ detail:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,d.evaluation_id,d.candidate_key,d.cycle_id,d.kind,d.evaluated_at,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
  FROM ${OFFICIAL_POPULATION} p LEFT JOIN signal_decision_evidence d ON d.official_signal_id=p.signal_id AND d.kind='OFFICIAL' AND d.recorded_at<=?3
  LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id LEFT JOIN measurement_final_results f ON f.subject_id=p.signal_id
  WHERE p.source='production' AND p.signal_id=?1 AND p.created_at>=?2 AND p.created_at<=?3 AND (p.evidence_recorded_at IS NULL OR p.evidence_recorded_at<=?3)`,
- candidates:`SELECT evaluation_id,evaluated_at,timeframe,cohort_id,d.payload_json,f.payload_json AS result_json FROM signal_decision_evidence d LEFT JOIN measurement_final_results f ON f.subject_id=d.evaluation_id
+ candidates:`SELECT d.*,f.payload_json AS result_json FROM signal_decision_evidence d LEFT JOIN measurement_final_results f ON f.subject_id=d.evaluation_id
  WHERE kind='CANDIDATE' AND evaluated_at>=?1 AND evaluated_at<=?2 AND d.recorded_at<=?2 AND (?3 IS NULL OR cohort_id=?4)
  AND (?5 IS NULL OR evaluated_at<?6 OR (evaluated_at=?7 AND evaluation_id<?8))
  ORDER BY evaluated_at DESC,evaluation_id DESC LIMIT ?9`,
- events:`SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=?1 AND available_at<=?2
+ events:`SELECT * FROM signal_outcome_evidence WHERE subject_id=?1 AND available_at<=?2
  AND (event_type!='COVERAGE_CHECKPOINT' OR event_id=(SELECT event_id FROM signal_outcome_evidence WHERE subject_id=?1 AND event_type='COVERAGE_CHECKPOINT' AND available_at<=?2 ORDER BY available_at DESC,event_id DESC LIMIT 1)) ORDER BY available_at,event_id`,
  population:`SELECT * FROM (WITH raw AS (
  SELECT p.*,d.payload_json AS entry_json,d.evaluation_id,
@@ -46,13 +46,13 @@ const SQL=Object.freeze({
  COALESCE(json_extract(projection,'$.outcome.extendedOutcome'),'UNRESOLVED') AS extended,
  CASE WHEN closed_at>?1 THEN 'ACTIVE' WHEN status='tp2' THEN 'TP2' WHEN status IN ('sl','stopped') THEN 'SL' WHEN status='expired' THEN 'EXPIRED' WHEN status='closed_other' THEN 'CLOSED_OTHER' ELSE 'ACTIVE' END AS terminal,
  CASE WHEN evaluation_id IS NULL THEN 1 ELSE 0 END AS missing_entry,
- CASE WHEN json_extract(entry_json,'$.engine.scoring.score') IS NULL THEN 'UNKNOWN' WHEN json_extract(entry_json,'$.engine.scoring.score')<8 THEN 'UNDER_8' WHEN json_extract(entry_json,'$.engine.scoring.score')<10 THEN '8_TO_UNDER_10' ELSE '10_PLUS' END AS score_band,
- CASE WHEN json_extract(entry_json,'$.engine.finalConfidence') IS NULL THEN 'UNKNOWN' WHEN json_extract(entry_json,'$.engine.finalConfidence')<70 THEN 'UNDER_70' WHEN json_extract(entry_json,'$.engine.finalConfidence')<80 THEN '70_TO_UNDER_80' ELSE '80_PLUS' END AS confidence_band,
- CASE WHEN json_extract(entry_json,'$.engine.scoring.confirm') IS NULL THEN 'UNKNOWN' WHEN json_extract(entry_json,'$.engine.scoring.oppositions')>0 THEN 'OPPOSITION_PRESENT' WHEN json_extract(entry_json,'$.engine.scoring.confirm')>0 THEN 'SUPPORT_WITHOUT_OPPOSITION' ELSE 'NO_DIRECTIONAL_SUPPORT' END AS engine_mtf,
- COALESCE(json_extract(entry_json,'$.broadMtf.summary.level'),'UNKNOWN') AS broad_mtf,
- COALESCE(json_extract(entry_json,'$.engine.indicators.marketProfile.state'),'UNKNOWN') AS regime,
+ CASE WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.score'),json_extract(entry_json,'$[1][3]')) IS NULL THEN 'UNKNOWN' WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.score'),json_extract(entry_json,'$[1][3]'))<8 THEN 'UNDER_8' WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.score'),json_extract(entry_json,'$[1][3]'))<10 THEN '8_TO_UNDER_10' ELSE '10_PLUS' END AS score_band,
+ CASE WHEN COALESCE(json_extract(entry_json,'$.engine.finalConfidence'),json_extract(entry_json,'$[1][6]')) IS NULL THEN 'UNKNOWN' WHEN COALESCE(json_extract(entry_json,'$.engine.finalConfidence'),json_extract(entry_json,'$[1][6]'))<70 THEN 'UNDER_70' WHEN COALESCE(json_extract(entry_json,'$.engine.finalConfidence'),json_extract(entry_json,'$[1][6]'))<80 THEN '70_TO_UNDER_80' ELSE '80_PLUS' END AS confidence_band,
+ CASE WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.confirm'),json_extract(entry_json,'$[1][4]')) IS NULL THEN 'UNKNOWN' WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.oppositions'),json_extract(entry_json,'$[1][5]'))>0 THEN 'OPPOSITION_PRESENT' WHEN COALESCE(json_extract(entry_json,'$.engine.scoring.confirm'),json_extract(entry_json,'$[1][4]'))>0 THEN 'SUPPORT_WITHOUT_OPPOSITION' ELSE 'NO_DIRECTIONAL_SUPPORT' END AS engine_mtf,
+ COALESCE(COALESCE(json_extract(entry_json,'$.broadMtf.summary.level'),CASE json_extract(entry_json,'$[9]') WHEN 1 THEN 'buy' WHEN 2 THEN 'sell' WHEN 3 THEN 'none' WHEN 4 THEN 'OFFICIAL_PERSISTED' WHEN 5 THEN 'ENGINE_REJECTED' WHEN 6 THEN 'SKIPPED' WHEN 7 THEN 'OFFICIAL_PERSISTENCE_FAILED' WHEN 8 THEN 'CONFIRMATION_PERSISTED' WHEN 9 THEN 'accepted' WHEN 10 THEN 'blocked_opposite' WHEN 11 THEN 'confirmation' WHEN 12 THEN 'trend-up' WHEN 13 THEN 'trend-down' WHEN 14 THEN 'range' WHEN 15 THEN 'NOT_OBSERVED' WHEN 16 THEN 'NOT_EVALUATED' WHEN 17 THEN 'SUCCEEDED' WHEN 18 THEN 'FAILED' ELSE CASE WHEN json_type(entry_json,'$[9]')='text' THEN json_extract(entry_json,'$[9]') ELSE NULL END END),'UNKNOWN') AS broad_mtf,
+ COALESCE(COALESCE(json_extract(entry_json,'$.engine.indicators.marketProfile.state'),CASE json_extract(entry_json,'$[8]') WHEN 1 THEN 'buy' WHEN 2 THEN 'sell' WHEN 3 THEN 'none' WHEN 4 THEN 'OFFICIAL_PERSISTED' WHEN 5 THEN 'ENGINE_REJECTED' WHEN 6 THEN 'SKIPPED' WHEN 7 THEN 'OFFICIAL_PERSISTENCE_FAILED' WHEN 8 THEN 'CONFIRMATION_PERSISTED' WHEN 9 THEN 'accepted' WHEN 10 THEN 'blocked_opposite' WHEN 11 THEN 'confirmation' WHEN 12 THEN 'trend-up' WHEN 13 THEN 'trend-down' WHEN 14 THEN 'range' WHEN 15 THEN 'NOT_OBSERVED' WHEN 16 THEN 'NOT_EVALUATED' WHEN 17 THEN 'SUCCEEDED' WHEN 18 THEN 'FAILED' ELSE CASE WHEN json_type(entry_json,'$[8]')='text' THEN json_extract(entry_json,'$[8]') ELSE NULL END END),'UNKNOWN') AS regime,
  CASE WHEN entry_json IS NULL THEN 'UNKNOWN' WHEN CAST(strftime('%H',created_at/1000,'unixepoch') AS INTEGER)<7 THEN 'UTC_00_07' WHEN CAST(strftime('%H',created_at/1000,'unixepoch') AS INTEGER)<12 THEN 'UTC_07_12' WHEN CAST(strftime('%H',created_at/1000,'unixepoch') AS INTEGER)<17 THEN 'UTC_12_17' ELSE 'UTC_17_24' END AS session,
- CASE WHEN entry_json IS NULL THEN 'UNKNOWN' ELSE COALESCE(json_extract(entry_json,'$.admissionContext.effectiveAdmissionDecision.reason'),'UNKNOWN') END AS news_calendar,
+ CASE WHEN entry_json IS NULL THEN 'UNKNOWN' ELSE COALESCE(COALESCE(json_extract(entry_json,'$.admissionContext.effectiveAdmissionDecision.reason'),CASE json_extract(entry_json,'$[10]') WHEN 1 THEN 'buy' WHEN 2 THEN 'sell' WHEN 3 THEN 'none' WHEN 4 THEN 'OFFICIAL_PERSISTED' WHEN 5 THEN 'ENGINE_REJECTED' WHEN 6 THEN 'SKIPPED' WHEN 7 THEN 'OFFICIAL_PERSISTENCE_FAILED' WHEN 8 THEN 'CONFIRMATION_PERSISTED' WHEN 9 THEN 'accepted' WHEN 10 THEN 'blocked_opposite' WHEN 11 THEN 'confirmation' WHEN 12 THEN 'trend-up' WHEN 13 THEN 'trend-down' WHEN 14 THEN 'range' WHEN 15 THEN 'NOT_OBSERVED' WHEN 16 THEN 'NOT_EVALUATED' WHEN 17 THEN 'SUCCEEDED' WHEN 18 THEN 'FAILED' ELSE CASE WHEN json_type(entry_json,'$[10]')='text' THEN json_extract(entry_json,'$[10]') ELSE NULL END END),'UNKNOWN') END AS news_calendar,
  json_extract(projection,'$.global.mfeR') AS mfe_r,json_extract(projection,'$.global.maeR') AS mae_r,
  json_extract(projection,'$.outcome.timeToTp1.minMs') AS tp1_min_ms,json_extract(projection,'$.outcome.timeToTp1.maxMs') AS tp1_max_ms,
  json_extract(projection,'$.outcome.timeToSl.minMs') AS sl_min_ms,json_extract(projection,'$.outcome.timeToSl.maxMs') AS sl_max_ms
@@ -61,10 +61,11 @@ const SQL=Object.freeze({
  COUNT(mfe_r) AS mfe_observed,AVG(mfe_r) AS mean_observed_mfe_r,COUNT(mae_r) AS mae_observed,AVG(mae_r) AS mean_observed_mae_r,
  COUNT(tp1_min_ms) AS tp1_observed,AVG(tp1_min_ms) AS mean_tp1_min_ms,AVG(tp1_max_ms) AS mean_tp1_max_ms,COUNT(sl_min_ms) AS sl_observed,AVG(sl_min_ms) AS mean_sl_min_ms,AVG(sl_max_ms) AS mean_sl_max_ms
  FROM classified GROUP BY timeframe,directional,extended,terminal,missing_entry,score_band,confidence_band,engine_mtf,broad_mtf,regime,session,news_calendar)`,
- rich:'SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=? AND recorded_at<=?',
+ rich:'SELECT * FROM measurement_rich_evidence WHERE evidence_id=? AND recorded_at<=?',
  definition:'SELECT payload_json FROM measurement_definitions WHERE definition_id=?',
- cycle:'SELECT r.payload_json AS rich_json,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id LEFT JOIN measurement_rich_evidence r ON r.evidence_id=? WHERE y.cycle_id=?',
+ cycle:'SELECT r.*,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id LEFT JOIN measurement_rich_evidence r ON r.evidence_id=? WHERE y.cycle_id=?',
  rawCount:'SELECT COUNT(*) AS n FROM market_evidence_blocks WHERE block_id IN (SELECT value FROM json_each(?))',
+ state:'SELECT * FROM signal_measurement_state WHERE subject_id=? AND updated_at<=?',
  collector:'SELECT payload_json,updated_at FROM signal_measurement_state WHERE subject_id=\'b1:collector\'',
  cohorts:'SELECT payload_json FROM measurement_cohorts ORDER BY effective_at,cohort_id'
 });
@@ -102,10 +103,10 @@ export function parseForwardQuery(url,now){
 }
 
 async function ready(read){
- const rows=await read.schema();if(rows.length!==12)throw new Error('measurement_schema_not_ready');
+ const rows=await read.schema();if(rows.length!==16)throw new Error('measurement_schema_not_ready');
  const versions=await read.versions();if(versions.length!==1||versions.some(x=>x.schema_version!==MEASUREMENT_SCHEMA_VERSION))throw new Error('measurement_schema_not_ready');
  // Verify required fields through SELECT compilation, even for an empty schema.
- if(rows.some(x=>!x.sql||(!['market_evidence_references','measurement_schema_meta','measurement_official_pins'].includes(x.name)&&!x.sql.includes('payload_json'))))throw new Error('measurement_schema_not_ready');
+ if(rows.some(x=>!x.sql))throw new Error('measurement_schema_not_ready');
  try{await read.columns();}catch(error){if(/no such (column|table)/i.test(String(error?.message)))throw new Error('measurement_schema_not_ready');throw error;}
 }
 
@@ -143,17 +144,17 @@ export async function readForwardValidation(read,url,path,now){
  const hasMore=rows.length>query.limit;rows=rows.slice(0,query.limit);
  const records=[];
  for(const row of rows){
-  if(candidates){const census=parseEvidence(row.payload_json);const r=(await read.rich(`decision:${row.evaluation_id}`,query.asOf))[0];const ids=census.inputDependencies||[];const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
+  if(candidates){const census=restoreCensus(parseEvidence(row.payload_json),row);const r=(await read.rich(`decision:${row.evaluation_id}`,query.asOf))[0];const detailed=r?await hydrateDecision(read,r,query.asOf):null;const ids=decisionDependencies(detailed);const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
    const level=reproducibility({kind:'CANDIDATE',richAvailable:!!r,rawAvailable:raw,skipped:census.outcome==='SKIPPED'});
-   records.push({...census,measurementResult:row.result_json?parseEvidence(row.result_json):null,reproducibility:level,...(query.details&&r?{derivedEvidence:await hydrateDecision(read,r,query.asOf)}:{})});continue;}
-  const census=row.entry_json?parseEvidence(row.entry_json):null;
+   records.push({...census,measurementResult:row.result_json?parseEvidence(row.result_json):null,reproducibility:level,...(query.details&&r?{derivedEvidence:detailed}:{})});continue;}
+  const census=row.entry_json?restoreCensus(parseEvidence(row.entry_json),{...row,timeframe:row.timeframe,official_signal_id:row.signal_id}):null;
   const rich=census?(await read.rich(`decision:${census.evaluationId}`,query.asOf))[0]:null;
-  const entryEvidence=census&&rich&&(query.details||path.startsWith('/forward-validation/signals/'))?await hydrateDecision(read,rich,query.asOf):census;
-  const ids=census?.inputDependencies||[];const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
+  const detailed=rich?await hydrateDecision(read,rich,query.asOf):null;const entryEvidence=(query.details||path.startsWith('/forward-validation/signals/'))?detailed||census:census;
+  const ids=decisionDependencies(detailed);const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
   const evidenceLevel=reproducibility({kind:'OFFICIAL',richAvailable:!!rich,rawAvailable:raw});
-  let state=row.state_json&&row.state_at<=query.asOf?parseEvidence(row.state_json):null;
-  const events=(await read.events(row.signal_id,query.asOf)).map(x=>parseEvidence(x.payload_json));
-  if(query.details||path.startsWith('/forward-validation/signals/'))for(let i=0;i<events.length;i++)if(events[i].evidenceRef){const r=(await read.rich(events[i].evidenceRef,query.asOf))[0];if(r)events[i]=await decodeEvidence(JSON.parse(r.payload_json));}
+  const processing=(await read.state(row.signal_id,query.asOf))[0];let state=processing?await decodeProcessingState(processing):row.state_json&&row.state_at<=query.asOf?parseEvidence(row.state_json):null;
+  let events=await Promise.all((await read.events(row.signal_id,query.asOf)).map(x=>decodeStoredOutcome(x)));events=events.map(e=>hydrateFinalOutcome(e,events));
+  if(query.details||path.startsWith('/forward-validation/signals/'))for(let i=0;i<events.length;i++)if(events[i].evidenceRef){const r=(await read.rich(events[i].evidenceRef,query.asOf))[0];if(r)events[i]=await decodeStoredEvidence(r);}
   if(!state){const checkpoints=events.filter(e=>['COVERAGE_CHECKPOINT','FINAL_MEASUREMENT'].includes(e.evidenceType)).sort((a,b)=>b.availableAt-a.availableAt);state=checkpoints[0]??null;}
   const projected=state?.outcome;
   const reduced=reduceOutcome({id:row.signal_id,createdAt:row.created_at,status:row.status,closedAt:row.closed_at},events,
@@ -172,8 +173,10 @@ export async function readForwardValidation(read,url,path,now){
 }
 
 async function hydrateDecision(read,row,asOf){
- const p=await decodeEvidence(JSON.parse(row.payload_json));
+ const p=await decodeStoredEvidence(row);
  const shared=(await read.cycle(`cycle:${p.sharedContextRef}`,p.sharedContextRef))[0];
  const definitions=new Map();if(p.definitionRef){const d=(await read.definition(p.definitionRef))[0];if(d)definitions.set(p.definitionRef,parseEvidence(d.payload_json));}
- return restoreSharedDecision(p,shared?.rich_json?await decodeEvidence(JSON.parse(shared.rich_json)):null,shared?parseEvidence(shared.cohort_json):null,definitions);
+ return restoreSharedDecision(p,shared?.payload_blob?await decodeStoredEvidence(shared):null,shared?parseEvidence(shared.cohort_json):null,definitions);
 }
+
+function decisionDependencies(p){return [...new Set([...(p?.inputManifest?.primary?.references||[]),...(p?.inputManifest?.engineMtf||[]).flatMap(x=>x.references||[]),...(p?.inputManifest?.research1m?.references||[])].map(x=>x.blockId))];}
