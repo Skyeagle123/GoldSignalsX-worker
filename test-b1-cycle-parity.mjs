@@ -38,7 +38,7 @@ test('cycle-level exact parity: candidate ordering, winner, confirmations, block
   assert.deepEqual(b.decisions,a.decisions); // policy result, not the passive input envelope
   const tables=a.db.database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'production_%' ORDER BY name").all();
   for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());
-  if(!options.stale&&!options.news&&!options.exposure){a.db.database.exec(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'));for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());}
+  if(!options.stale&&!options.news&&!options.exposure){a.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8')));for(const {name} of tables)assert.deepEqual(b.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all(),a.db.database.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all());}
   const journal=takeDecisionCycle(actual);assert(journal);if(!options.stale&&!options.news&&!options.exposure){assert(journal.candidates.length>0);assert.equal(journal.officialIds.size,1);}assert.equal(journal.attempts.length,7);
   const frozenWrites=structuredClone(b.writes);
   const failure=await persistDecisionCycle({prepare(){throw new Error('synthetic measurement failure');}},journal,{codeCommit:base,measurementEffectiveAt:now});
@@ -61,7 +61,7 @@ test('Official persistence failure/cancellation and performance-storage failure 
   assert.equal(newError?.message,oldError?.message);assert.deepEqual(newResult,oldResult);assert.deepEqual(b.writes,a.writes);assert.deepEqual(b.decisions,a.decisions);assert.deepEqual(cancellations[1],cancellations[0]);
   const journal=takeDecisionCycle(newError||newResult);assert(journal,`${mode}: ${newError?.stack||JSON.stringify(newResult)}`);
   if(mode==='kv-failure'){assert(journal.failedOfficialId);assert.equal(journal.officialIds.size,0);}
-  else {assert.equal(journal.officialIds.size,1);b.db.database.exec(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'));const result=await persistDecisionCycle(b.db,journal,{codeCommit:base,measurementEffectiveAt:now});assert.equal(result.ok,true);const row=b.db.database.prepare("SELECT payload_json FROM signal_decision_evidence WHERE kind='OFFICIAL'").get();assert.equal(JSON.parse(row.payload_json).officialPersistence.performance,'FAILED');}
+  else {assert.equal(journal.officialIds.size,1);b.db.database.exec((await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8')));const result=await persistDecisionCycle(b.db,journal,{codeCommit:base,measurementEffectiveAt:now});assert.equal(result.ok,true);const row=b.db.database.prepare("SELECT payload_json FROM signal_decision_evidence WHERE kind='OFFICIAL'").get();assert.equal(JSON.parse(row.payload_json).officialPersistence.performance,'FAILED');}
   a.db.database.close();b.db.database.close();
  }}finally{Date.now=realClock;globalThis.fetch=realFetch;}
 });

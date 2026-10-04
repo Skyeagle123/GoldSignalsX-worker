@@ -1,5 +1,6 @@
 // Scheduled measurement writer only. Never imported by the reader. No schema initializer.
 import {measurementWriter} from './signal-evidence-store.js';
+import {decodeEvidence,restoreSharedDecision} from './evidence-codec.js';
 import {parseEvidence} from './signal-evidence.js';
 import {foldPostEntry} from './post-entry-evidence.js';
 import {buildMarketManifest} from './market-evidence.js';
@@ -18,14 +19,22 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
   const rows=[...official,...candidates];
   const writer=measurementWriter(db,{maxWrites});let updated=0;const blocks=new Map();
   const subjects=[];
-  for(const row of rows){const entry=parseEvidence(row.entry_json),levels=entry.engine?.levels;if(!levels)continue;
+  for(const row of rows){
+   const rich=await db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
+   if(!rich)continue;
+   const entry=await decodeEvidence(JSON.parse(rich.payload_json));
+   const shared=await db.prepare('SELECT r.payload_json AS cycle_json,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_rich_evidence r ON r.evidence_id=? JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id WHERE y.cycle_id=?').bind(`cycle:${entry.sharedContextRef}`,entry.sharedContextRef).first();
+   const defs=new Map();if(entry.definitionRef){const d=await db.prepare('SELECT payload_json FROM measurement_definitions WHERE definition_id=?').bind(entry.definitionRef).first();if(d)defs.set(entry.definitionRef,parseEvidence(d.payload_json));}
+   restoreSharedDecision(entry,shared?await decodeEvidence(JSON.parse(shared.cycle_json)):null,shared?parseEvidence(shared.cohort_json):null,defs);
+   const levels=entry.engine?.levels;if(!levels)continue;
    const createdAt=entry.createdAt??entry.evaluatedAt;
    const subject={id:row.official_signal_id||row.evaluation_id,createdAt,entry:levels.entry,tp1:levels.tp1,tp2:levels.tp2,sl:levels.sl,
     side:entry.direction,status:row.kind==='OFFICIAL'?row.status:'active',closedAt:row.closed_at??null,
     measurementHorizonAt:row.kind==='CANDIDATE'?createdAt+3600000:null};
    let previous=row.state_json?parseEvidence(row.state_json):{processedThrough:subject.createdAt,covered:[],gaps:[],barriers:{},global:{mfe:null,mae:null}};
    const checkpointRow=await db.prepare("SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=? AND event_type='COVERAGE_CHECKPOINT' ORDER BY available_at DESC,event_id DESC LIMIT 1").bind(subject.id).first();
-   const latest=checkpointRow?parseEvidence(checkpointRow.payload_json):null;
+   let latest=checkpointRow?parseEvidence(checkpointRow.payload_json):null;
+   if(latest?.evidenceRef){const r=await db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').bind(latest.evidenceRef).first();if(r)latest=await decodeEvidence(JSON.parse(r.payload_json));}
    if(latest&&latest.availableAt>=(previous?.outcome?.evidenceAsOf??subject.createdAt))previous={...previous,processedThrough:latest.occurredTo,covered:latest.covered,gaps:latest.gaps,quality:latest.quality,global:latest.global,outcome:latest.outcome};
    const existing=(await db.prepare("SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
    for(const record of existing){const event=parseEvidence(record.payload_json);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
@@ -38,24 +47,30 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
    folded.state.measurementStatus=subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt?'HORIZON_ATTEMPT_COMPLETE; COVERAGE_MAY_BE_INSUFFICIENT':'COLLECTING';
    const selected=bars.filter(b=>b.t>=createdAt&&b.t+60000<=Math.min(observationAsOf,subject.closedAt??observationAsOf)&&b.t+60000>(previous?.processedThrough??createdAt));
    const built=await buildMarketManifest('1m',selected,asOf);for(const b of built.blocks)blocks.set(b.blockId,b);
-   subjects.push({row,subject,folded,manifest:built.manifest});
+   subjects.push({row,subject,folded,manifest:built.manifest,observationAsOf});
   }
   for(const b of blocks.values())await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));
-  for(const {row,subject,folded,manifest} of subjects){
+  for(const {row,subject,folded,manifest,observationAsOf} of subjects){
    for(const event of folded.events)await writer.immutable('outcome',{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,
     occurred_at:event.occurredAt??null,available_at:asOf,recorded_at:asOf,block_ids_json:JSON.stringify(manifest.references.map(x=>x.blockId))},event);
-   const checkpoint={subjectId:subject.id,eventId:`${subject.id}:coverage:${asOf}`,evidenceType:'COVERAGE_CHECKPOINT',eventType:'COVERAGE_CHECKPOINT',
-    availableAt:asOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,
-    outcome:folded.state.outcome,covered:folded.state.covered,gaps:folded.state.gaps,quality:folded.state.quality,global:folded.state.global,
-    marketManifest:manifest,orderingQuality:'UNKNOWN',measurementOnly:true,decisionUse:false};
-   await writer.immutable('outcome',{event_id:checkpoint.eventId,subject_id:subject.id,event_type:checkpoint.eventType,
-    available_at:asOf,recorded_at:asOf,block_ids_json:JSON.stringify(manifest.references.map(x=>x.blockId))},checkpoint);
+   if(row.kind==='OFFICIAL'&&manifest.references.length)await writer.pinOfficial(subject.id,manifest.references.map(r=>r.blockId));
+   // Persist each finalized window once. Active cumulative data lives only in
+   // bounded mutable processing state; final package is immutable and complete.
+   for(const [name,window] of Object.entries(folded.state.quality?.windows||{})){
+    if(window.state!=='FINALIZED')continue;
+    const event={subjectId:subject.id,eventId:`${subject.id}:window:${name}`,evidenceType:'WINDOW_FINALIZED',eventType:'WINDOW_FINALIZED',availableAt:asOf,
+     observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:window.measuredTo??folded.state.processedThrough,window,measurementOnly:true,decisionUse:false};
+    const exists=await db.prepare('SELECT event_id FROM signal_outcome_evidence WHERE event_id=?').bind(event.eventId).first();
+    if(!exists)await writer.immutable('outcome',{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},event);
+   }
    if(subject.closedAt&&subject.closedAt<=asOf){const lifecycle={subjectId:subject.id,eventId:`${subject.id}:lifecycle:${subject.status}`,evidenceType:'LIFECYCLE_EVENT',
     eventType:subject.status.toUpperCase(),occurredAt:subject.closedAt,availableAt:asOf,observedAt:asOf,orderingQuality:'UNKNOWN',measurementOnly:true,decisionUse:false};
     await writer.immutable('outcome',{event_id:lifecycle.eventId,subject_id:subject.id,event_type:lifecycle.eventType,
      occurred_at:lifecycle.occurredAt,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},lifecycle);
    }
-   await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
+   const complete=(subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt)||(subject.closedAt&&subject.closedAt<=asOf);
+   if(complete)await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:observationAsOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});
+   else await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
   }
   return {ok:true,updated,subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,

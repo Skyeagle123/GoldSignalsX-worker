@@ -5,19 +5,19 @@ import {test} from 'node:test';
 import {canonicalSerialize,parseEvidence,cohortManifest} from './signal-evidence.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {buildMarketManifest,replayMarketManifest} from './market-evidence.js';
-const migration=await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8');
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
 export function sqliteBinding(db){return {prepare(sql){return {bind(...values){return {async run(){const r=db.prepare(sql).run(...values);return {meta:{rows_written:Number(r.changes)}};},async first(){return db.prepare(sql).get(...values)??null;},async all(){return {results:db.prepare(sql).all(...values)};}};},async all(){return {results:db.prepare(sql).all()};},async first(){return db.prepare(sql).get()??null;}};}};}
-test('explicit migration: clean and representative existing schema; five immutable guards',async()=>{
+test('explicit migration: clean and representative existing schema; seven immutable guards',async()=>{
  for(const existing of [false,true]){
   const db=new DatabaseSync(':memory:');if(existing)db.exec(await fs.readFile(new URL('./schema.sql',import.meta.url),'utf8'));
-  db.exec(migration);assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name LIKE '%evidence%'").get().n,5);
+  db.exec(migration);assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name LIKE '%evidence%'").get().n,6);
   const writer=measurementWriter(sqliteBinding(db));const manifest=cohortManifest({codeCommit:'a'.repeat(40),measurementEffectiveAt:1000,configFingerprint:'public-filter-hash'});
   await writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:1000},manifest);
   await writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:2000},manifest);
   assert.equal(db.prepare('SELECT count(*) n FROM measurement_cohorts').get().n,1);
   await assert.rejects(writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:2000},{...manifest,captureVersion:'changed'}),/integrity_conflict/);
   assert.throws(()=>db.prepare('UPDATE measurement_cohorts SET payload_json=?').run('{}'),/immutable/);
-  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='trigger' AND name LIKE 'measurement_%_immutable'").get().n,5);db.close();
+  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='trigger' AND name LIKE 'measurement_%_immutable'").get().n,8);db.close();
  }
 });
 test('serialization: stable digest inputs; cycles, secrets and bounds fail safely',()=>{

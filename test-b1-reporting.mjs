@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {sqliteBinding} from './test-fixtures/b1-sqlite.mjs';
 import {createForwardReadCapability,readForwardValidation} from './forward-validation-reader.js';
-const migration=await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8');
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
 const source=await fs.readFile(new URL('./goldsignalsx-worker.js',import.meta.url),'utf8');
 const generated=new URL('./.b1-reporting-worker.mjs',import.meta.url);
 await fs.writeFile(generated,source.replace("import { DurableObject } from 'cloudflare:workers';",'class DurableObject {}'));
@@ -64,7 +64,7 @@ test('pagination stable at fixed as-of; invalid cursors and POST cannot access a
 });
 
 test('incompatible schema version, even empty, returns read-only not-ready error',async()=>{
- const db=setup();db.exec('UPDATE measurement_schema_meta SET version=2');
+ const db=setup();db.exec('UPDATE measurement_schema_meta SET version=999');
  for(const path of paths){const response=await worker.fetch(request(path),env(sqliteBinding(db,{selectOnly:true})),context);assert.equal(response.status,503);assert.equal((await response.json()).error,'measurement_schema_not_ready');}db.close();
 });
 test('successful Official evidence is visible when legacy performance row is absent',async()=>{

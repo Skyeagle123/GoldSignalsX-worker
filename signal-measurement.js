@@ -1,6 +1,6 @@
 // Measurement-only sidecar. No trading, Exposure, Telegram or Risk capabilities.
 import {canonicalSerialize,parseEvidence,digestPayload,cohortManifest,decisionSnapshot,exposureEvidenceState} from './signal-evidence.js';
-import {buildMarketManifest} from './market-evidence.js';
+import {buildMarketManifest,sliceMarketManifest} from './market-evidence.js';
 import {measurementWriter} from './signal-evidence-store.js';
 const journals=new WeakMap(),quotes=new WeakMap(),persistenceEvidence=new WeakMap();
 export function rememberOfficialPersistence(signal,event,result){
@@ -32,9 +32,12 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,m
    const built=await buildMarketManifest(tf,journal.frames[tf].bars,journal.evaluatedAt);
    manifests[tf]=built.manifest;for(const block of built.blocks)blocks.set(block.blockId,block);
   }
-  const optional=journal.frames['1m']?.bars?.slice(-60);
-  if(optional?.length){const built=await buildMarketManifest('1m-research',optional,journal.evaluatedAt);manifests.research1m=built.manifest;
-   for(const block of built.blocks)blocks.set(block.blockId,block);}
+  const optional=journal.frames['1m']?.bars;
+  if(optional?.length){let built;
+   if(manifests['1m'])built={manifest:manifests['1m'],blocks:[]};else built=await buildMarketManifest('1m',optional,journal.evaluatedAt);
+   manifests.research1m=sliceMarketManifest(built.manifest,Math.max(0,optional.length-60),Math.min(60,optional.length));
+   const required=new Set(manifests.research1m.references.map(r=>r.blockId));for(const block of built.blocks)if(required.has(block.blockId))blocks.set(block.blockId,block);
+  }
   // Size validation occurs before any persistence. No effect on trading.
   const snapshots=journal.attempts.map((attempt,ordinal)=>{
    const candidate=journal.candidates?.find(c=>c.tf===attempt.tf);
@@ -79,7 +82,8 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=80,m
   for(const snapshot of snapshots)records.push({type:'decision',values:{evaluation_id:snapshot.evaluationId,candidate_key:snapshot.candidateKey,
    official_signal_id:snapshot.officialSignalId,kind:snapshot.kind,cycle_id:journal.cycleId,cohort_id:cohort.cohortId,timeframe:snapshot.timeframe,
    evaluated_at:snapshot.evaluatedAt??journal.evaluatedAt,measurement_only:1,decision_use:0,recorded_at:capturedAt},payload:snapshot});
-  const persistence=await writer.immutableBatch(records,{links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});
+  const officialPins=snapshots.filter(s=>s.kind==='OFFICIAL').map(s=>({officialId:s.officialSignalId,blockIds:[...new Set([s.inputManifest.primary,...s.inputManifest.engineMtf,s.inputManifest.research1m].flatMap(m=>m?.references?.map(r=>r.blockId)||[]))]}));
+  const persistence=await writer.immutableBatch(records,{officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});
   return {ok:true,attempts:snapshots.length,blocks:blocks.size,capturedAt,persistence};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_capture_failed'),captureGap:true};}
 }

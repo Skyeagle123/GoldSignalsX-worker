@@ -7,7 +7,7 @@ import {beginDecisionCycle,observeAttempt,finishDecisionCycle,takeDecisionCycle,
 import {computeServerSignal} from './signal-engine.js';
 import {collectMeasurement} from './measurement-collector.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
-const migration=await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8');
+const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
 const now=Date.UTC(2026,8,28,15,10),base='6721f84b961f6afe3d52513a2ed56e138a7990d5';
 function setup(){const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');db.exec(migration);db.exec('CREATE TABLE production_signals(signal_id TEXT PRIMARY KEY,status TEXT,closed_at INTEGER)');return {db,binding:transactionalBinding(db)};}
 function journal({official=false,cycleId='integration',value=4100}={}){
@@ -37,8 +37,8 @@ test('candidate collector cannot create Official; explicit no-data coverage, bou
  const result=await collectMeasurement(binding,{asOf:now+300000,ticks:[],bars:[]});assert.equal(result.ok,true);assert.equal(result.updated,1);
  assert.equal(db.prepare('SELECT count(*) n FROM production_signals').get().n,0);
  const state=JSON.parse(db.prepare('SELECT payload_json FROM signal_measurement_state').get().payload_json);assert.equal(state.global.mfe,null);assert.equal(state.global.coverage,'INSUFFICIENT');assert(state.gaps.length>0);
- const retained=await maintainMeasurementRetention(binding,now+91*86400000);assert.equal(retained.ok,true);assert.equal(retained.candidateAttemptsRemoved,1);
- assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,0);db.close();
+ const retained=await maintainMeasurementRetention(binding,now+91*86400000);assert.equal(retained.ok,true);assert.equal(retained.candidateAttemptsRemoved,0);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,1);db.close();
 });
 test('Official evidence and referenced market blocks survive candidate retention',async()=>{
  const {db,binding}=setup(),input=journal({official:true});await persistDecisionCycle(binding,input.j,{codeCommit:base,measurementEffectiveAt:now});
@@ -60,8 +60,9 @@ test('Official accumulator is not starved by new research attempts; candidate ho
  assert.equal(db.prepare('SELECT updated_at FROM signal_measurement_state WHERE subject_id=?').get(official.id).updated_at,now+300000);
  assert.equal(db.prepare('SELECT updated_at FROM signal_measurement_state WHERE subject_id=?').get('older:0').updated_at,now);
  assert.equal(db.prepare('SELECT count(*) n FROM production_signals').get().n,1);
- const end=await collectMeasurement(binding,{asOf:now+7200000,ticks:[],bars:[],maxSubjects:8});assert.equal(end.ok,true);
- const state=JSON.parse(db.prepare('SELECT payload_json FROM signal_measurement_state WHERE subject_id=?').get('older:0').payload_json);
+ const end=await collectMeasurement(binding,{asOf:now+7200000,ticks:[],bars:[],maxSubjects:8});assert.equal(end.ok,true,JSON.stringify(end));
+ assert.equal(db.prepare('SELECT payload_json FROM signal_measurement_state WHERE subject_id=?').get('older:0'),undefined);
+ const final=await import('./evidence-codec.js');const state=await final.decodeEvidence(JSON.parse(db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').get('outcome:older:0:final').payload_json));
  assert.equal(state.measurementHorizonAt,now+3600000);assert.equal(state.outcome.evidenceAsOf,now+3600000);assert(state.measurementStatus.startsWith('HORIZON_ATTEMPT_COMPLETE'));
  db.close();
 });

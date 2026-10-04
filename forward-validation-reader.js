@@ -1,5 +1,6 @@
 // Fixed SELECT catalog only. No imports from writer/collector/schema initializer.
 import {parseEvidence,FROZEN_BASELINE,MEASUREMENT_SCHEMA_VERSION,CAPTURE_VERSION} from './signal-evidence.js';
+import {decodeEvidence,restoreSharedDecision,reproducibility} from './evidence-codec.js';
 import {reduceOutcome,OUTCOME_REDUCER_VERSION} from './forward-validation.js';
 // Evidence of successful Official persistence remains visible even when the legacy
 // performance write failed independently. This union is SELECT-only, no repair.
@@ -11,33 +12,33 @@ const OFFICIAL_POPULATION=`(SELECT signal_id,source,created_at,timeframe,directi
  NULL,NULL,NULL,NULL,d.recorded_at FROM signal_decision_evidence d
  WHERE d.kind='OFFICIAL' AND NOT EXISTS(SELECT 1 FROM production_signals p WHERE p.signal_id=d.official_signal_id))`;
 const SQL=Object.freeze({
- schema:"SELECT name,sql FROM sqlite_schema WHERE type='table' AND name IN ('measurement_cohorts','decision_cycle_evidence','signal_decision_evidence','signal_outcome_evidence','signal_measurement_state','market_evidence_blocks','market_evidence_references','measurement_schema_meta')",
+ schema:"SELECT name,sql FROM sqlite_schema WHERE type='table' AND name IN ('measurement_cohorts','decision_cycle_evidence','signal_decision_evidence','signal_outcome_evidence','signal_measurement_state','market_evidence_blocks','market_evidence_references','measurement_schema_meta','measurement_rich_evidence','measurement_definitions','measurement_final_results','measurement_official_pins')",
  versions:'SELECT version AS schema_version FROM measurement_schema_meta WHERE singleton=1',
- columns:`SELECT c.cohort_id,c.schema_version,c.persisted_at,m.block_id,m.payload_json,y.cycle_id,y.block_ids_json,d.evaluation_id,d.official_signal_id,d.kind,d.evaluated_at,o.subject_id,o.event_id,o.available_at,s.subject_id,s.updated_at,s.payload_json,s.evaluation_id,s.kind,s.next_observe_at,s.observation_end_at,d.persisted_at,o.persisted_at,r.owner_type,r.owner_id,r.block_id FROM measurement_cohorts c,market_evidence_blocks m,decision_cycle_evidence y,signal_decision_evidence d,signal_outcome_evidence o,signal_measurement_state s,market_evidence_references r WHERE 0`,
+ columns:`SELECT c.cohort_id,c.schema_version,c.persisted_at,m.block_id,m.payload_json,y.cycle_id,y.block_ids_json,d.evaluation_id,d.official_signal_id,d.kind,d.evaluated_at,o.subject_id,o.event_id,o.available_at,s.subject_id,s.updated_at,s.payload_json,s.evaluation_id,s.kind,s.next_observe_at,s.observation_end_at,d.persisted_at,o.persisted_at,r.owner_type,r.owner_id,r.block_id,h.evidence_id,h.owner_type,h.owner_id,h.retain_until,z.definition_id,j.subject_id,j.retain_until,p.official_signal_id,p.block_id FROM measurement_cohorts c,market_evidence_blocks m,decision_cycle_evidence y,signal_decision_evidence d,signal_outcome_evidence o,signal_measurement_state s,market_evidence_references r,measurement_rich_evidence h,measurement_definitions z,measurement_final_results j,measurement_official_pins p WHERE 0`,
  watermark:'SELECT MAX(available_at) AS at FROM signal_outcome_evidence WHERE available_at<=?',
- official:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,s.payload_json AS state_json,s.updated_at AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
+ official:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
  FROM ${OFFICIAL_POPULATION} p LEFT JOIN signal_decision_evidence d ON d.official_signal_id=p.signal_id AND d.kind='OFFICIAL' AND d.recorded_at<=?2
- LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id
+ LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id LEFT JOIN measurement_final_results f ON f.subject_id=p.signal_id
  WHERE p.source='production' AND p.created_at>=?1 AND p.created_at<=?2 AND (?3 IS NULL OR d.cohort_id=?4)
  AND (p.evidence_recorded_at IS NULL OR p.evidence_recorded_at<=?2)
  AND (?5 IS NULL OR p.created_at<?6 OR (p.created_at=?7 AND p.signal_id<?8))
  ORDER BY p.created_at DESC,p.signal_id DESC LIMIT ?9`,
- detail:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,s.payload_json AS state_json,s.updated_at AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
+ detail:`SELECT p.*,d.payload_json AS entry_json,d.cohort_id,COALESCE(s.payload_json,f.payload_json) AS state_json,COALESCE(s.updated_at,f.recorded_at) AS state_at,d.recorded_at AS entry_recorded_at,d.persisted_at AS entry_persisted_at
  FROM ${OFFICIAL_POPULATION} p LEFT JOIN signal_decision_evidence d ON d.official_signal_id=p.signal_id AND d.kind='OFFICIAL' AND d.recorded_at<=?3
- LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id
+ LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id LEFT JOIN measurement_final_results f ON f.subject_id=p.signal_id
  WHERE p.source='production' AND p.signal_id=?1 AND p.created_at>=?2 AND p.created_at<=?3 AND (p.evidence_recorded_at IS NULL OR p.evidence_recorded_at<=?3)`,
- candidates:`SELECT evaluation_id,evaluated_at,timeframe,cohort_id,payload_json FROM signal_decision_evidence
- WHERE kind='CANDIDATE' AND evaluated_at>=?1 AND evaluated_at<=?2 AND recorded_at<=?2 AND (?3 IS NULL OR cohort_id=?4)
+ candidates:`SELECT evaluation_id,evaluated_at,timeframe,cohort_id,d.payload_json,f.payload_json AS result_json FROM signal_decision_evidence d LEFT JOIN measurement_final_results f ON f.subject_id=d.evaluation_id
+ WHERE kind='CANDIDATE' AND evaluated_at>=?1 AND evaluated_at<=?2 AND d.recorded_at<=?2 AND (?3 IS NULL OR cohort_id=?4)
  AND (?5 IS NULL OR evaluated_at<?6 OR (evaluated_at=?7 AND evaluation_id<?8))
  ORDER BY evaluated_at DESC,evaluation_id DESC LIMIT ?9`,
  events:`SELECT payload_json FROM signal_outcome_evidence WHERE subject_id=?1 AND available_at<=?2
  AND (event_type!='COVERAGE_CHECKPOINT' OR event_id=(SELECT event_id FROM signal_outcome_evidence WHERE subject_id=?1 AND event_type='COVERAGE_CHECKPOINT' AND available_at<=?2 ORDER BY available_at DESC,event_id DESC LIMIT 1)) ORDER BY available_at,event_id`,
  population:`SELECT * FROM (WITH raw AS (
  SELECT p.*,d.payload_json AS entry_json,d.evaluation_id,
- CASE WHEN s.updated_at<=?1 THEN s.payload_json ELSE
+ CASE WHEN s.updated_at<=?1 THEN s.payload_json WHEN f.recorded_at<=?1 THEN f.payload_json ELSE
  (SELECT e.payload_json FROM signal_outcome_evidence e WHERE e.subject_id=p.signal_id AND e.event_type='COVERAGE_CHECKPOINT' AND e.available_at<=?1 ORDER BY e.available_at DESC,e.event_id DESC LIMIT 1) END AS projection
  FROM ${OFFICIAL_POPULATION} p LEFT JOIN signal_decision_evidence d ON d.official_signal_id=p.signal_id AND d.kind='OFFICIAL' AND d.recorded_at<=?1
- LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id
+ LEFT JOIN signal_measurement_state s ON s.subject_id=p.signal_id LEFT JOIN measurement_final_results f ON f.subject_id=p.signal_id
  WHERE p.source='production' AND p.created_at>=?2 AND p.created_at<=?1 AND (p.evidence_recorded_at IS NULL OR p.evidence_recorded_at<=?1) AND (?3 IS NULL OR d.cohort_id=?3)
  ), classified AS (
  SELECT timeframe,
@@ -60,6 +61,10 @@ const SQL=Object.freeze({
  COUNT(mfe_r) AS mfe_observed,AVG(mfe_r) AS mean_observed_mfe_r,COUNT(mae_r) AS mae_observed,AVG(mae_r) AS mean_observed_mae_r,
  COUNT(tp1_min_ms) AS tp1_observed,AVG(tp1_min_ms) AS mean_tp1_min_ms,AVG(tp1_max_ms) AS mean_tp1_max_ms,COUNT(sl_min_ms) AS sl_observed,AVG(sl_min_ms) AS mean_sl_min_ms,AVG(sl_max_ms) AS mean_sl_max_ms
  FROM classified GROUP BY timeframe,directional,extended,terminal,missing_entry,score_band,confidence_band,engine_mtf,broad_mtf,regime,session,news_calendar)`,
+ rich:'SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=? AND recorded_at<=?',
+ definition:'SELECT payload_json FROM measurement_definitions WHERE definition_id=?',
+ cycle:'SELECT r.payload_json AS rich_json,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id LEFT JOIN measurement_rich_evidence r ON r.evidence_id=? WHERE y.cycle_id=?',
+ rawCount:'SELECT COUNT(*) AS n FROM market_evidence_blocks WHERE block_id IN (SELECT value FROM json_each(?))',
  collector:'SELECT payload_json,updated_at FROM signal_measurement_state WHERE subject_id=\'b1:collector\'',
  cohorts:'SELECT payload_json FROM measurement_cohorts ORDER BY effective_at,cohort_id'
 });
@@ -84,7 +89,8 @@ function parseCursor(value){
 }
 
 export function parseForwardQuery(url,now){
- const allowed=['from','asOf','limit','cursor','cohort'];
+ const allowed=['from','asOf','limit','cursor','details'];
+ if(url.searchParams.has('details')&&!['0','1'].includes(url.searchParams.get('details')))throw new Error('measurement_query_invalid');
  for(const key of url.searchParams.keys())if(!allowed.includes(key)||url.searchParams.getAll(key).length!==1)throw new Error('measurement_query_invalid');
  const integer=(name,fallback)=>{if(!url.searchParams.has(name))return fallback;const s=url.searchParams.get(name);if(!/^\d{1,16}$/.test(s))throw new Error('measurement_query_invalid');const n=Number(s);if(!Number.isSafeInteger(n))throw new Error('measurement_query_invalid');return n;};
  const from=integer('from',FROZEN_BASELINE.effectiveAt),limit=integer('limit',50),cohort=url.searchParams.get('cohort');
@@ -92,14 +98,14 @@ export function parseForwardQuery(url,now){
  const asOf=integer('asOf',cursor?.asOf??now);
  if(from<FROZEN_BASELINE.effectiveAt||from>asOf||asOf>now||limit<1||limit>100||(cohort&&!/^[A-Za-z0-9:_-]{1,180}$/.test(cohort)))throw new Error('measurement_query_invalid');
  const filter=JSON.stringify({from,cohort});if(cursor&&(cursor.asOf!==asOf||cursor.filter!==filter))throw new Error('measurement_cursor_invalid');
- return {from,asOf,limit,cohort,cursor,filter};
+ return {from,asOf,limit,cohort,cursor,filter,details:url.searchParams.get('details')==='1'};
 }
 
 async function ready(read){
- const rows=await read.schema();if(rows.length!==8)throw new Error('measurement_schema_not_ready');
+ const rows=await read.schema();if(rows.length!==12)throw new Error('measurement_schema_not_ready');
  const versions=await read.versions();if(versions.length!==1||versions.some(x=>x.schema_version!==MEASUREMENT_SCHEMA_VERSION))throw new Error('measurement_schema_not_ready');
  // Verify required fields through SELECT compilation, even for an empty schema.
- if(rows.some(x=>!x.sql||(!['market_evidence_references','measurement_schema_meta'].includes(x.name)&&!x.sql.includes('payload_json'))))throw new Error('measurement_schema_not_ready');
+ if(rows.some(x=>!x.sql||(!['market_evidence_references','measurement_schema_meta','measurement_official_pins'].includes(x.name)&&!x.sql.includes('payload_json'))))throw new Error('measurement_schema_not_ready');
  try{await read.columns();}catch(error){if(/no such (column|table)/i.test(String(error?.message)))throw new Error('measurement_schema_not_ready');throw error;}
 }
 
@@ -137,18 +143,25 @@ export async function readForwardValidation(read,url,path,now){
  const hasMore=rows.length>query.limit;rows=rows.slice(0,query.limit);
  const records=[];
  for(const row of rows){
-  if(candidates){records.push(JSON.parse(row.payload_json));continue;}
-  const entryEvidence=row.entry_json?JSON.parse(row.entry_json):null;
+  if(candidates){const census=parseEvidence(row.payload_json);const r=(await read.rich(`decision:${row.evaluation_id}`,query.asOf))[0];const ids=census.inputDependencies||[];const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
+   const level=reproducibility({kind:'CANDIDATE',richAvailable:!!r,rawAvailable:raw,skipped:census.outcome==='SKIPPED'});
+   records.push({...census,measurementResult:row.result_json?parseEvidence(row.result_json):null,reproducibility:level,...(query.details&&r?{derivedEvidence:await hydrateDecision(read,r,query.asOf)}:{})});continue;}
+  const census=row.entry_json?parseEvidence(row.entry_json):null;
+  const rich=census?(await read.rich(`decision:${census.evaluationId}`,query.asOf))[0]:null;
+  const entryEvidence=census&&rich&&(query.details||path.startsWith('/forward-validation/signals/'))?await hydrateDecision(read,rich,query.asOf):census;
+  const ids=census?.inputDependencies||[];const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
+  const evidenceLevel=reproducibility({kind:'OFFICIAL',richAvailable:!!rich,rawAvailable:raw});
   let state=row.state_json&&row.state_at<=query.asOf?parseEvidence(row.state_json):null;
   const events=(await read.events(row.signal_id,query.asOf)).map(x=>parseEvidence(x.payload_json));
-  if(!state){const checkpoints=events.filter(e=>e.evidenceType==='COVERAGE_CHECKPOINT').sort((a,b)=>b.availableAt-a.availableAt);state=checkpoints[0]??null;}
+  if(query.details||path.startsWith('/forward-validation/signals/'))for(let i=0;i<events.length;i++)if(events[i].evidenceRef){const r=(await read.rich(events[i].evidenceRef,query.asOf))[0];if(r)events[i]=await decodeEvidence(JSON.parse(r.payload_json));}
+  if(!state){const checkpoints=events.filter(e=>['COVERAGE_CHECKPOINT','FINAL_MEASUREMENT'].includes(e.evidenceType)).sort((a,b)=>b.availableAt-a.availableAt);state=checkpoints[0]??null;}
   const projected=state?.outcome;
   const reduced=reduceOutcome({id:row.signal_id,createdAt:row.created_at,status:row.status,closedAt:row.closed_at},events,
    {asOf:query.asOf,coverageIntervals:state?.covered||[],coverageGaps:state?.gaps||[]});
   const outcome=projected?{...projected,terminalLifecycleOutcome:reduced.terminalLifecycleOutcome}:reduced;
   records.push({signalId:row.signal_id,createdAt:row.created_at,timeframe:row.timeframe,direction:row.direction,
    entry:row.entry,tp1:row.tp1,tp2:row.tp2,sl:row.sl,recordedLifecycle:{status:row.status,tp1At:row.tp1_at,slAt:row.sl_at,closedAt:row.closed_at},
-   terminalLifecycleEvidence:row.status==null?'NOT_PROVEN':'RECORDED_LIFECYCLE_FACT',entryEvidence,entryPersistence:{recordedAt:row.entry_recorded_at??null,persistedAt:row.entry_persisted_at??null,timeBasis:'APPLICATION_CAPTURE_AND_DATABASE_CLOCK'},evidenceState:entryEvidence?'CAPTURED':'ENTRY_EVIDENCE_NOT_CAPTURED',outcome,quality:state?.quality??null,excursions:state?.global??null,evidenceAsOf:state?.availableAt??row.state_at??null});
+   terminalLifecycleEvidence:row.status==null?'NOT_PROVEN':'RECORDED_LIFECYCLE_FACT',entryEvidence,entryPersistence:{recordedAt:row.entry_recorded_at??null,persistedAt:row.entry_persisted_at??null,timeBasis:'APPLICATION_CAPTURE_AND_DATABASE_CLOCK'},evidenceState:entryEvidence?'CAPTURED':'ENTRY_EVIDENCE_NOT_CAPTURED',reproducibility:evidenceLevel,outcome,quality:state?.quality??null,excursions:state?.global??null,evidenceAsOf:state?.availableAt??row.state_at??null});
  }
  const last=rows.at(-1),cursor=hasMore&&last?encodeCursor({at:candidates?last.evaluated_at:last.created_at,id:candidates?last.evaluation_id:last.signal_id,asOf:query.asOf,filter:query.filter}):null;
  const summary=candidates?null:populationSummary(await read.population(query.asOf,query.from,query.cohort));
@@ -156,4 +169,11 @@ export async function readForwardValidation(read,url,path,now){
  return {ok:true,...metadata,records,summary,pagination:{limit:query.limit,hasMore,nextCursor:cursor},
   evidenceCompleteness:'PER_RECORD; ABSENCE_OF_CAPTURE_IS_NOT_ABSENCE_OF_SIGNAL_OR_CANDIDATE',
   legacyHandling:'ORIGINAL_FACTS_PRESERVED; NO_ENTRY_RECONSTRUCTION; V1_WINDOWS_NOT_NOMINAL_WINDOW_PROOF'};
+}
+
+async function hydrateDecision(read,row,asOf){
+ const p=await decodeEvidence(JSON.parse(row.payload_json));
+ const shared=(await read.cycle(`cycle:${p.sharedContextRef}`,p.sharedContextRef))[0];
+ const definitions=new Map();if(p.definitionRef){const d=(await read.definition(p.definitionRef))[0];if(d)definitions.set(p.definitionRef,parseEvidence(d.payload_json));}
+ return restoreSharedDecision(p,shared?.rich_json?await decodeEvidence(JSON.parse(shared.rich_json)):null,shared?parseEvidence(shared.cohort_json):null,definitions);
 }

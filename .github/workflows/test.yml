@@ -67,6 +67,6 @@ jobs:
           set -e
           cat reliability.log
           test "$result" -eq 1
-          rg "test-reliability.mjs:86" reliability.log
-          rg "degraded" reliability.log
-          rg "healthy" reliability.log
+          grep -F 'test-reliability.mjs:86:8' reliability.log
+          grep -F "actual: 'degraded'" reliability.log
+          grep -F "expected: 'healthy'" reliability.log

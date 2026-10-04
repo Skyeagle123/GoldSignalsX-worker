@@ -1,5 +1,5 @@
-export const MEASUREMENT_SCHEMA_VERSION=1;
-export const CAPTURE_VERSION='b1-capture-v1';
+export const MEASUREMENT_SCHEMA_VERSION=2;
+export const CAPTURE_VERSION='b1-capture-v2';
 export const ENGINE_SEMANTICS_VERSION='6721f84-engine-v1';
 export const SIGNAL_POLICY_VERSION='post-improvement-2026-09-21';
 export const EXPOSURE_POLICY_VERSION='single-primary-until-terminal-v1';
