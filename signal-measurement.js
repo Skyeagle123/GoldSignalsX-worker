@@ -19,14 +19,17 @@ export function finishDecisionCycle(journal,result,{decisions,candidates,officia
   journals.set(result,journal);}}catch{}return result;
 }
 export function takeDecisionCycle(result){const journal=journals.get(result);journals.delete(result);return journal;}
-export async function persistDecisionCycle(db,journal,provenance,{maxWrites=160,maxBytes=65536}={}){
- if(!journal)return {ok:true,skipped:'no_evaluated_cycle'};
- try{
+// Preparation is the exact existing capture path, without a database capability.
+// The legacy writer wrapper below remains available throughout M1.
+export function decisionJournalObservations(journal){
+ return {...journal,officialPersistenceResults:Object.fromEntries((journal.candidates||[]).map(c=>[c.id,persistenceEvidence.get(c)??{performance:'NOT_OBSERVED'}]))};
+}
+export async function prepareDecisionCycle(journal,provenance,{maxBytes=65536}={}){
+ if(!journal)throw new Error('measurement_cycle_unavailable');
   const configFingerprint=await digestPayload(canonicalSerialize(journal.filters));
   const cohort=cohortManifest({...provenance,configFingerprint});
   const cohortDigest=await digestPayload(canonicalSerialize(cohort));
   const cohortStorageRef=btoa(String.fromCharCode(...cohortDigest.match(/../g).map(x=>parseInt(x,16)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
-  const writer=measurementWriter(db,{maxWrites,maxPayloadBytes:maxBytes});
   const capturedAt=journal.capturedAt??(journal.capturedAt=Date.now());
   const manifests={},blocks=new Map();
   const consumed=new Set(journal.attempts.filter(x=>x.trace).flatMap(x=>[x.tf,...x.includedMtf]));
@@ -51,7 +54,7 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=160,
     competingCandidateIds:journal.candidates?.map(x=>x.id)||[],exposureBefore:exposureEvidenceState(journal.exposureResult?.measurementBefore),officialPersistenceFailed:journal.failedOfficialId===candidate?.id,
     exposureAfter:exposureEvidenceState(journal.exposureResult?.state)});
    snapshot.capturedAt=capturedAt;snapshot.versions=cohort;
-   snapshot.officialPersistence=candidate?persistenceEvidence.get(candidate)??{performance:'NOT_OBSERVED'}:{performance:'NOT_EVALUATED'};
+   snapshot.officialPersistence=candidate?journal.officialPersistenceResults?.[candidate.id]??persistenceEvidence.get(candidate)??{performance:'NOT_OBSERVED'}:{performance:'NOT_EVALUATED'};
    snapshot.inputManifest={primary:manifests[attempt.tf]??null,engineMtf:attempt.includedMtf?.map(tf=>manifests[tf])||[],research1m:manifests.research1m??{status:'UNAVAILABLE'}};
    snapshot.callerGates=[...(attempt.callerGates||[])];
    const nextOrdinal=attempt.trace?.gates?.length??0;
@@ -85,7 +88,15 @@ export async function persistDecisionCycle(db,journal,provenance,{maxWrites=160,
    official_signal_id:snapshot.officialSignalId,kind:snapshot.kind,cycle_id:journal.cycleId,cohort_id:cohortStorageRef,timeframe:snapshot.timeframe,
    evaluated_at:snapshot.evaluatedAt??journal.evaluatedAt,measurement_only:1,decision_use:0,recorded_at:capturedAt},payload:snapshot});
   const officialPins=snapshots.filter(s=>s.kind==='OFFICIAL').map(s=>({officialId:s.officialSignalId,blockIds:[...new Set([s.inputManifest.primary,...s.inputManifest.engineMtf,s.inputManifest.research1m].flatMap(m=>m?.references?.map(r=>r.blockId)||[]))]}));
-  const persistence=await writer.immutableBatch(records,{captureCensusOnBudget:true,officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}]});
-  return {ok:true,attempts:snapshots.length,blocks:blocks.size,capturedAt,persistence};
+  return {records,snapshots,cycle,officialPins,links:[{ownerType:'CYCLE',ownerId:journal.cycleId,blockIds:[...blocks.keys()]}],
+   attempts:snapshots.length,blocks:blocks.size,capturedAt};
+}
+export async function persistDecisionCycle(db,journal,provenance,{maxWrites=160,maxBytes=65536}={}){
+ if(!journal)return {ok:true,skipped:'no_evaluated_cycle'};
+ try{
+  const prepared=await prepareDecisionCycle(journal,provenance,{maxBytes});
+  const writer=measurementWriter(db,{maxWrites,maxPayloadBytes:maxBytes});
+  const persistence=await writer.immutableBatch(prepared.records,{captureCensusOnBudget:true,officialPins:prepared.officialPins,links:prepared.links});
+  return {ok:true,attempts:prepared.attempts,blocks:prepared.blocks,capturedAt:prepared.capturedAt,persistence};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_capture_failed'),captureGap:true};}
 }

@@ -1,3 +1,4 @@
+import {measurementProducerEnabled,observeM1DecisionCycle,observeM1Fact} from './measurement-producer.js';
 import {exposureEvidenceState} from './signal-evidence.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
 import {measurementWriter} from './signal-evidence-store.js';
@@ -2957,6 +2958,21 @@ async function recordProductionPerformanceEvent(env,signal,event) {
   return {ok:Boolean(stored),eventId:`production:${signalId}:${eventType}`,signal:stored||null};
 }
 
+// Observe only persisted lifecycle results; never infer exact barrier ordering.
+function observeM1LifecycleResult(env,signal,event,result){
+  if(!measurementProducerEnabled(env))return;
+  try{
+    const type=canonicalPerformanceEvent(event);
+    if(!type||type==='created')return; // completed cycle carries Official admission
+    observeM1Fact(env,{kind:'LIFECYCLE_FACT',semanticId:`production:${signal.id}:${type}`,
+      occurredAt:performanceEventAt(signal,type),observedAt:result?.signal?.updated_at??null,
+      payload:{signalId:signal.id,event:type,createdAt:signal.createdAt,timeframe:signal.tf,direction:signal.side,
+        occurredAt:performanceEventAt(signal,type),observedPrice:performanceEventPrice(signal,type),level:performanceEventLevel(signal,type),
+        trigger:performanceTriggerDetails(signal,type),status:signal.status,closedAt:signal.closedAt??null,
+        performancePersistence:result,orderingQuality:'NOT_ASSERTED',measurementOnly:true,decisionUse:false}});
+  }catch{}
+}
+
 async function recordProductionPerformanceSafely(env,signal,event) {
   try {
     return rememberOfficialPersistence(signal,event,await recordProductionPerformanceEvent(env,signal,event));
@@ -3485,14 +3501,16 @@ async function saveSignalState(env,signal,event) {
   await env.GSX_KV.put(`signal:state:${signal.tf}`,JSON.stringify(signal),{expirationTtl:90*24*60*60});
   await env.GSX_KV.put(`signal:log:${signal.id}:${event}`,JSON.stringify({...signal,event}),{expirationTtl:90*24*60*60});
   const performanceWrite=recordProductionPerformanceSafely(env,signal,event);
+  let performanceResult;
   if (String(env.SIGNAL_ALERTS_ENABLED||'1').trim()!=='0') {
-    await Promise.all([
+    [performanceResult]=await Promise.all([
       performanceWrite,
       queueTelegramDelivery(env,signal,event,signalTelegramText(signal,event))
     ]);
   } else {
-    await performanceWrite;
+    performanceResult=await performanceWrite;
   }
+  observeM1LifecycleResult(env,signal,event,performanceResult);
 }
 
 async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySignalId,eventAt) {
@@ -3513,6 +3531,11 @@ async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySign
       {expirationTtl:90*24*60*60}
     )
   ]);
+  if(measurementProducerEnabled(env)){
+    try{observeM1Fact(env,{kind:'CONFIRMATION_LINK',semanticId:`${primarySignalId}:confirmation:${confirmation.id}`,
+      occurredAt:eventAt,observedAt:null,payload:{primarySignalId,confirmationSignalId:confirmation.id,
+        link:linked.mtfConfirmations.at(-1),linkPersistence:'SUCCEEDED',measurementOnly:true,decisionUse:false}});}catch{}
+  }
   return linked;
 }
 
@@ -3736,6 +3759,12 @@ function captureBroadMatrices(candidates,evaluations) {
   catch { return null; }
 }
 
+function finishM1DecisionCycle(env,journal,result,observations){
+  const output=finishDecisionCycle(journal,result,observations);
+  observeM1DecisionCycle(env,journal);
+  return output;
+}
+
 async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   if (String(env.SIGNALS_ENABLED||'1').trim()==='0') return {ok:true,skipped:'signals_disabled'};
   if (!env.GSX_DB||!env.GSX_KV) return {ok:false,error:'signal_cycle_storage_unavailable'};
@@ -3775,7 +3804,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
           ...existing,status:'expired',updatedAt:now,closedAt:now,
           expiryReason:'invalid_market_session_created_at'
         };
-        await Promise.all([
+        const persistenceResults=await Promise.all([
           env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(expired),{expirationTtl:90*24*60*60}),
           env.GSX_KV.put(
             `signal:log:${existing.id}:expired`,JSON.stringify({...expired,event:'expired'}),
@@ -3783,6 +3812,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
           ),
           recordProductionPerformanceSafely(env,expired,'expired')
         ]);
+        observeM1LifecycleResult(env,expired,'expired',persistenceResults[2]);
         currentSignals[tf]=expired;
         continue;
       }
@@ -3899,7 +3929,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       if (exposureStub) {
         await exposureStub.cancelGoldExposureReservation({signalId:signal.id,now:Date.now()}).catch(()=>null);
       }
-      finishDecisionCycle(measurement,error,{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,failedOfficialId:signal.id});
+      finishM1DecisionCycle(env,measurement,error,{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,failedOfficialId:signal.id});
       throw error;
     }
   }
@@ -3945,7 +3975,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     newsReason:String(news?.safety?.reason||'خطر خبري شديد التأثير؛ تم إيقاف الدخول مؤقتاً حتى يهدأ تذبذب السوق')
   });
   const telemetry=await recordSignalTelemetrySafely(env,telemetryRows,now);
-  return finishDecisionCycle(measurement,{telemetry},{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,broadMatrices:captureBroadMatrices(candidates,evaluations)});
+  return finishM1DecisionCycle(env,measurement,{telemetry},{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,broadMatrices:captureBroadMatrices(candidates,evaluations)});
 }
 
 // ===== Helpers =====

@@ -79,7 +79,13 @@ assert.equal(result.selectedPriceFeed,'mt5');
 assert.equal(result.fallback,false);
 assert.equal(result.components.telegram.lastSuccessfulDeliveryAt,openNow-3_000);
 assert.equal(result.latestOperationalTelemetryAt,openNow-4_000);
-const healthResponse=await worker.default.fetch(new Request('https://example.com/health'),envFor(),{});
+// HTTP health uses the runtime clock; align it with the fixed fixture caches.
+const originalHealthClock=Date.now;
+let healthResponse;
+try {
+  Date.now=()=>openNow;
+  healthResponse=await worker.default.fetch(new Request('https://example.com/health'),envFor(),{});
+} finally { Date.now=originalHealthClock; }
 assert.equal(healthResponse.status,200);
 const healthPayload=await healthResponse.json();
 assert.equal(healthPayload.healthSchema,1);
