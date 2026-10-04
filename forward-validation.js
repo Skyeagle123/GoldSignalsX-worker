@@ -29,11 +29,11 @@ function earliest(rows) {
   return rows.filter(a=>!rows.some(b=>a!==b&&compareOccurrence(b,a)==='BEFORE'));
 }
 
-export function reduceOutcome(subject,events,{asOf,coverageIntervals=[],coverageGaps=[]}={}) {
+export function reduceOutcome(subject,events,{asOf,measurementEndAt=null,coverageIntervals=[],coverageGaps=[]}={}) {
   if(!finite(asOf)||!finite(subject.createdAt))throw new Error('outcome_time_invalid');
   const terminalLifecycleOutcome=finite(subject.closedAt)&&subject.closedAt>asOf?'ACTIVE':TERMINAL[subject.status]||'ACTIVE';
   const closed=terminalLifecycleOutcome!=='ACTIVE'&&finite(subject.closedAt);
-  const end=closed?Math.min(subject.closedAt,asOf):asOf;
+  const end=Math.min(closed?Math.min(subject.closedAt,asOf):asOf,finite(measurementEndAt)?measurementEndAt:asOf);
   const covered=to=>covers(coverageIntervals,subject.createdAt,to)
     &&!coverageGaps.some(g=>g.from<to&&g.to>subject.createdAt);
   const witnesses=events.filter(e=>e.evidenceType==='BARRIER_OBSERVATION'&&e.eligible===true

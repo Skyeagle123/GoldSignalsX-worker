@@ -13,7 +13,7 @@ test('incremental tick extrema survive eviction, retries and horizons',()=>{
 test('sequence continuity/source changes do not fabricate complete coverage',()=>{
  const r=foldPostEntry(subject,null,{asOf:70000,ticks:[tick(60000,100,1),tick(65000,111,3)],bars:[]});
  assert.equal(r.state.outcome.directionalOutcome,'INSUFFICIENT_DATA');assert.equal(r.state.global.coverage,'OBSERVED_LOWER_BOUND');
- assert.equal(r.events[0].occurredFrom,65000);assert.equal(r.events[0].sequence,3);
+ const witness=r.events.find(e=>e.evidenceType==='BARRIER_OBSERVATION');assert.equal(witness.occurredFrom,65000);assert.equal(witness.sequence,3);
 });
 test('barrier intervals preserve ambiguity and no partial full-bar contamination',()=>{
  const bar={t:60000,o:100,h:121,l:89,c:100,provider:'mt5'};
@@ -35,7 +35,7 @@ test('consecutive sequence cannot certify an outage or provider-clock gap',()=>{
 test('new same-receipt-time sequence updates extrema; duplicate retry does not',()=>{
  const first=foldPostEntry(subject,null,{asOf:65000,ticks:[tick(60000,100,1),tick(65000,105,2)],bars:[]});
  const next=foldPostEntry(subject,first.state,{asOf:65000,ticks:[tick(65000,105,2),tick(65000,111,3)],bars:[]});
- assert.equal(next.state.global.mfe,11);assert.equal(next.state.quality.windows['1m'].mfe,11);assert.equal(next.events.length,1);
+ assert.equal(next.state.global.mfe,11);assert.equal(next.state.quality.windows['1m'].mfe,11);assert.equal(next.events.filter(e=>e.evidenceType==='BARRIER_OBSERVATION').length,1);
  const retry=foldPostEntry(subject,next.state,{asOf:65000,ticks:[tick(65000,105,2),tick(65000,111,3)],bars:[]});assert.equal(retry.events.length,0);assert.equal(retry.state.quality.windows['1m'].observedCount,next.state.quality.windows['1m'].observedCount);
 });
 test('pre-entry/receipt-straddling barrier cannot be silently discarded to prove later success',()=>{

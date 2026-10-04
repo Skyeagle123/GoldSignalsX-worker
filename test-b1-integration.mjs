@@ -6,6 +6,7 @@ import {transactionalBinding} from './test-fixtures/b1-sqlite.mjs';
 import {beginDecisionCycle,observeAttempt,finishDecisionCycle,takeDecisionCycle,persistDecisionCycle} from './signal-measurement.js';
 import {computeServerSignal} from './signal-engine.js';
 import {collectMeasurement} from './measurement-collector.js';
+import {decodeProcessingState,decodeStoredOutcome,hydrateFinalOutcome} from './evidence-codec.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
 const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
 const now=Date.UTC(2026,8,28,15,10),base='6721f84b961f6afe3d52513a2ed56e138a7990d5';
@@ -28,7 +29,7 @@ test('real capture wiring persists exact immutable attempt/raw inputs; identical
  assert.equal((await persistDecisionCycle(binding,input.j,provenance)).ok,true);
  assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,1);
  assert.equal(db.prepare('SELECT count(*) n FROM production_signals').get().n,0);
- assert(db.prepare('SELECT count(*) n FROM market_evidence_references').get().n>0);
+ assert(db.prepare('SELECT count(*) n FROM measurement_market_links').get().n>0);
  assert.equal((await persistDecisionCycle(binding,journal({value:4200}).j,provenance)).error,'measurement_integrity_conflict');
  db.close();
 });
@@ -36,7 +37,7 @@ test('candidate collector cannot create Official; explicit no-data coverage, bou
  const {db,binding}=setup(),input=journal();await persistDecisionCycle(binding,input.j,{codeCommit:base,measurementEffectiveAt:now});
  const result=await collectMeasurement(binding,{asOf:now+300000,ticks:[],bars:[]});assert.equal(result.ok,true);assert.equal(result.updated,1);
  assert.equal(db.prepare('SELECT count(*) n FROM production_signals').get().n,0);
- const state=JSON.parse(db.prepare('SELECT payload_json FROM signal_measurement_state').get().payload_json);assert.equal(state.global.mfe,null);assert.equal(state.global.coverage,'INSUFFICIENT');assert(state.gaps.length>0);
+ const state=await decodeProcessingState(db.prepare('SELECT * FROM signal_measurement_state').get());assert.equal(state.global.mfe,null);assert.equal(state.global.coverage,'INSUFFICIENT');assert(state.gaps.length>0);
  const retained=await maintainMeasurementRetention(binding,now+91*86400000);assert.equal(retained.ok,true);assert.equal(retained.candidateAttemptsRemoved,0);
  assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,1);db.close();
 });
@@ -62,8 +63,9 @@ test('Official accumulator is not starved by new research attempts; candidate ho
  assert.equal(db.prepare('SELECT count(*) n FROM production_signals').get().n,1);
  const end=await collectMeasurement(binding,{asOf:now+7200000,ticks:[],bars:[],maxSubjects:8});assert.equal(end.ok,true,JSON.stringify(end));
  assert.equal(db.prepare('SELECT payload_json FROM signal_measurement_state WHERE subject_id=?').get('older:0'),undefined);
- const final=await import('./evidence-codec.js');const state=await final.decodeEvidence(JSON.parse(db.prepare('SELECT payload_json FROM measurement_rich_evidence WHERE evidence_id=?').get('outcome:older:0:final').payload_json));
- assert.equal(state.measurementHorizonAt,now+3600000);assert.equal(state.outcome.evidenceAsOf,now+3600000);assert(state.measurementStatus.startsWith('HORIZON_ATTEMPT_COMPLETE'));
+ const events=await Promise.all(db.prepare('SELECT * FROM signal_outcome_evidence WHERE subject_id=?').all('older:0').map(decodeStoredOutcome));
+ const state=hydrateFinalOutcome(events.find(e=>e.evidenceType==='FINAL_MEASUREMENT'),events);
+ assert.equal(state.measurementHorizonAt,now+3600000);assert.equal(state.outcome.evidenceAsOf,now+7200000);assert(state.gaps.length>0);assert.equal(state.outcome.directionalOutcome,'INSUFFICIENT_DATA');
  db.close();
 });
 test('later News/MTF/indicator context cannot rewrite frozen attempt or entry',async()=>{

@@ -74,7 +74,7 @@ CREATE INDEX measurement_outcome_record_retention ON measurement_outcome_records
 CREATE VIEW signal_outcome_evidence AS
  SELECT r.record_id AS rowid,COALESCE(r.full_event_id,s.subject_id||':'||r.event_suffix) AS event_id,s.subject_id,
  COALESCE(r.event_label,CASE r.event_kind WHEN 0 THEN 'TP1' WHEN 1 THEN 'TP2' WHEN 2 THEN 'SL' WHEN 3 THEN 'WINDOW_FINALIZED' WHEN 4 THEN 'FINAL_MEASUREMENT' WHEN 5 THEN 'COVERAGE_CHECKPOINT' WHEN 6 THEN 'EXPIRED' WHEN 7 THEN 'TP2_REACHED' ELSE 'CLOSED_OTHER' END) AS event_type,
- r.occurred_at,s.recorded_at+r.available_offset AS available_at,'{}' AS payload_json,r.payload_digest,'[]' AS block_ids_json,s.recorded_at+r.recorded_offset AS recorded_at,s.persisted_at+r.persisted_offset AS persisted_at,r.payload_blob,'gzip-outcome-binary-v4' AS codec,r.uncompressed_length
+ r.occurred_at,s.recorded_at+r.available_offset AS available_at,'{}' AS payload_json,r.payload_digest,'[]' AS block_ids_json,s.recorded_at+r.recorded_offset AS recorded_at,s.persisted_at+r.persisted_offset AS persisted_at,r.payload_blob,'gzip-outcome-binary-v5' AS codec,r.uncompressed_length
  FROM measurement_outcome_records r JOIN measurement_subjects s ON s.subject_ref=r.subject_ref
  UNION ALL SELECT rowid,event_id,subject_id,event_type,occurred_at,available_at,payload_json,payload_digest,block_ids_json,recorded_at,persisted_at,payload_blob,codec,uncompressed_length FROM measurement_legacy_outcome_evidence;
 
@@ -83,3 +83,11 @@ ALTER TABLE signal_measurement_state ADD COLUMN payload_blob BLOB;
 ALTER TABLE signal_measurement_state ADD COLUMN codec TEXT;
 ALTER TABLE signal_measurement_state ADD COLUMN uncompressed_length INTEGER;
 ALTER TABLE signal_measurement_state ADD COLUMN payload_digest BLOB;
+
+-- Storage-address reachability follows physical row deletion, including retention.
+CREATE TRIGGER measurement_compact_outcome_reference_cleanup AFTER DELETE ON measurement_outcome_records BEGIN
+ DELETE FROM measurement_market_links WHERE owner_kind=2 AND owner_ref=OLD.record_id;
+END;
+CREATE TRIGGER measurement_compact_cycle_reference_cleanup AFTER DELETE ON decision_cycle_evidence BEGIN
+ DELETE FROM measurement_market_links WHERE owner_kind=1 AND owner_ref=OLD.rowid;
+END;

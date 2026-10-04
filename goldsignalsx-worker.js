@@ -1634,10 +1634,10 @@ async function runB1Collectors(env,journal) {
     const sample=env.GOLD_FEED?await env.GOLD_FEED.getByName('xau-usd').ticks({to:asOf,from:asOf-3600000,limit:2400}):null;
     outcomes.collection=await collectMeasurement(env.GSX_DB,{asOf,ticks:sample?.ticks||[],bars:journal.frames['1m'].bars});
     // Bounded candidate-only retention; never removes Official evidence.
-    outcomes.retention=await maintainMeasurementRetention(env.GSX_DB,asOf,{limit:20});
+    outcomes.retention=await maintainMeasurementRetention(env.GSX_DB,asOf,{limit:256});
     await measurementWriter(env.GSX_DB,{maxWrites:1}).state('b1:collector',null,{asOf,outcomes,measurementOnly:true,decisionUse:false},asOf);
   } catch { outcomes.failure={captureGap:true,reason:'measurement_collector_unavailable'}; }
-  if (outcomes.failure||outcomes.capture?.ok===false||outcomes.collection?.ok===false) console.error(JSON.stringify({message:'b1 measurement capture gap',cycleId:journal.cycleId}));
+  if (outcomes.failure||outcomes.capture?.ok===false||outcomes.collection?.ok===false||outcomes.capture?.persistence?.processingCaptureGaps?.length||outcomes.collection?.resourceReviews?.length) console.error(JSON.stringify({message:'b1 measurement capture gap or resource review',cycleId:journal.cycleId}));
   return outcomes;
 }
 

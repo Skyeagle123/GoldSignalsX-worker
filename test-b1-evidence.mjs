@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {test} from 'node:test';
 import {canonicalSerialize,parseEvidence,cohortManifest} from './signal-evidence.js';
+import {transactionalBinding} from './test-fixtures/b1-sqlite.mjs';
+import {decodeStoredOutcome} from './evidence-codec.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {buildMarketManifest,replayMarketManifest} from './market-evidence.js';
 const migration=(await fs.readFile(new URL('./migrations/0001_measurement_evidence.sql',import.meta.url),'utf8'))+(await fs.readFile(new URL('./migrations/0002_measurement_storage_tiers.sql',import.meta.url),'utf8'));
@@ -11,13 +13,13 @@ test('explicit migration: clean and representative existing schema; seven immuta
  for(const existing of [false,true]){
   const db=new DatabaseSync(':memory:');if(existing)db.exec(await fs.readFile(new URL('./schema.sql',import.meta.url),'utf8'));
   db.exec(migration);assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='table' AND name LIKE '%evidence%'").get().n,6);
-  const writer=measurementWriter(sqliteBinding(db));const manifest=cohortManifest({codeCommit:'a'.repeat(40),measurementEffectiveAt:1000,configFingerprint:'public-filter-hash'});
+  const writer=measurementWriter(transactionalBinding(db));const manifest=cohortManifest({codeCommit:'a'.repeat(40),measurementEffectiveAt:1000,configFingerprint:'public-filter-hash'});
   await writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:1000},manifest);
   await writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:2000},manifest);
   assert.equal(db.prepare('SELECT count(*) n FROM measurement_cohorts').get().n,1);
   await assert.rejects(writer.immutable('cohort',{cohort_id:manifest.cohortId,schema_version:1,effective_at:1000,recorded_at:2000},{...manifest,captureVersion:'changed'}),/integrity_conflict/);
   assert.throws(()=>db.prepare('UPDATE measurement_cohorts SET payload_json=?').run('{}'),/immutable/);
-  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='trigger' AND name LIKE 'measurement_%_immutable'").get().n,8);db.close();
+  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_schema WHERE type='trigger' AND name LIKE 'measurement_%_immutable'").get().n,10);db.close();
  }
 });
 test('serialization: stable digest inputs; cycles, secrets and bounds fail safely',()=>{
@@ -38,13 +40,13 @@ test('raw market manifests: exact ordering, deduplication and source revision is
  assert.throws(()=>replayMarketManifest(first.manifest,[]),/market_missing/);
 });
 test('mutable state cannot alter immutable payload; corrections are new events',async()=>{
- const db=new DatabaseSync(':memory:');db.exec(migration);const writer=measurementWriter(sqliteBinding(db));
- const record={eventId:'original',measurementOnly:true,decisionUse:false,level:10};
+ const db=new DatabaseSync(':memory:');db.exec(migration);const writer=measurementWriter(transactionalBinding(db));
+ const record={subjectId:'candidate',eventId:'original',eventType:'BARRIER_OBSERVATION',evidenceType:'BARRIER_OBSERVATION',availableAt:200,measurementOnly:true,decisionUse:false,level:10};
  const values={event_id:'original',subject_id:'candidate',event_type:'BARRIER_OBSERVATION',occurred_at:100,available_at:200,block_ids_json:'[]',recorded_at:200};
  await writer.immutable('outcome',values,record);await writer.state('candidate',null,{cursor:1},200);await writer.state('candidate',null,{cursor:2},300);
- await writer.immutable('outcome',{...values,event_id:'correction'},{...record,eventId:'correction',supersedes:'original'});
+ await writer.immutable('outcome',{...values,event_id:'correction',event_type:'CORRECTION'},{...record,eventId:'correction',eventType:'CORRECTION',supersedesEventId:'original',reason:'SOURCE_BAR_REVISION'});
  assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence').get().n,2);
- assert.equal(parseEvidence(db.prepare('SELECT payload_json FROM signal_outcome_evidence WHERE event_id=?').get('original').payload_json).level,10);
+ assert.equal((await decodeStoredOutcome(db.prepare('SELECT * FROM signal_outcome_evidence WHERE event_id=?').get('original'))).level,10);
  assert.throws(()=>db.exec("UPDATE signal_outcome_evidence SET payload_json='{}'"));
  db.close();
 });
@@ -54,7 +56,7 @@ test('measurement writes fail closed to measurement, with fixed bound',async()=>
  assert.equal(db.prepare('SELECT count(*) n FROM signal_measurement_state').get().n,0);db.close();
 });
 test('writer rejects decision-use contamination before persisting immutable measurement',async()=>{
- const db=new DatabaseSync(':memory:');db.exec(migration);const writer=measurementWriter(sqliteBinding(db));
+ const db=new DatabaseSync(':memory:');db.exec(migration);const writer=measurementWriter(transactionalBinding(db));
  await assert.rejects(writer.immutable('outcome',{event_id:'bad',subject_id:'candidate',event_type:'TP1',available_at:1,recorded_at:1,block_ids_json:'[]'},{measurementOnly:true,decisionUse:true}),/decision_use_forbidden/);
  assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence').get().n,0);db.close();
 });

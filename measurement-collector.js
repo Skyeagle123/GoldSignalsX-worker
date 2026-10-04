@@ -17,7 +17,7 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
   const official=(await db.prepare(select).bind('OFFICIAL',asOf,maxSubjects).all()).results||[];
   const candidates=official.length<maxSubjects?(await db.prepare(select).bind('CANDIDATE',asOf,maxSubjects-official.length).all()).results||[]:[];
   const rows=[...official,...candidates];
-  const writer=measurementWriter(db,{maxWrites});let updated=0;const blocks=new Map();
+  const writer=measurementWriter(db,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
   const subjects=[];
   for(const row of rows){
    const rich=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
@@ -35,12 +35,13 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
    const checkpointRow=await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type='COVERAGE_CHECKPOINT' ORDER BY available_at DESC,event_id DESC LIMIT 1").bind(subject.id).first();
    let latest=checkpointRow?await decodeStoredOutcome(checkpointRow):null;
    if(latest?.evidenceRef){const r=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(latest.evidenceRef).first();if(r)latest=await decodeStoredEvidence(r);}
+   if(latest?.checkpointRole==='BARRIER_COVERAGE')latest=null;
    if(latest&&latest.availableAt>=(previous?.outcome?.evidenceAsOf??subject.createdAt))previous={...previous,processedThrough:latest.occurredTo,covered:latest.covered,gaps:latest.gaps,quality:latest.quality,global:latest.global,outcome:latest.outcome};
    const existing=(await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
    for(const record of existing){const event=await decodeStoredOutcome(record);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
    if(latest?.availableAt===asOf){await writer.state(subject.id,row.cohort_id,previous,asOf);updated++;continue;}
    const observationAsOf=Math.min(asOf,subject.measurementHorizonAt??asOf);
-   const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf});
+   const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf,availableAt:asOf});
    folded.state.measurementHorizonAt=subject.measurementHorizonAt;
    folded.state.productionLifecycleEvidence=row.kind==='OFFICIAL'?(row.status?'AVAILABLE':'UNAVAILABLE'):'NOT_APPLICABLE';
    if(row.kind==='OFFICIAL'&&!row.status){folded.state.nextObservationAt=asOf+86400000;folded.state.captureGap=true;}
@@ -51,8 +52,9 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
   }
   for(const b of blocks.values())await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));
   for(const {row,subject,folded,manifest,observationAsOf} of subjects){
-   for(const event of folded.events)await writer.immutable('outcome',{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,
-    occurred_at:event.occurredAt??null,available_at:asOf,recorded_at:asOf,block_ids_json:JSON.stringify(manifest.references.map(x=>x.blockId))},event);
+   if(folded.events.length)await writer.immutableBatch(folded.events.map(event=>({type:'outcome',values:{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,
+    occurred_at:event.occurredAt??null,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},payload:event})),
+    {links:folded.events.map(event=>({ownerType:'OUTCOME',ownerId:event.eventId,blockIds:manifest.references.map(x=>x.blockId)}))});
    if(row.kind==='OFFICIAL'&&manifest.references.length)await writer.pinOfficial(subject.id,manifest.references.map(r=>r.blockId));
    // Persist each finalized window once. Active cumulative data lives only in
    // bounded mutable processing state; final package is immutable and complete.
@@ -69,10 +71,10 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
      occurred_at:lifecycle.occurredAt,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},lifecycle);
    }
    const complete=(subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt)||(subject.closedAt&&subject.closedAt<=asOf);
-   if(complete)await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:observationAsOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});
+   if(complete){const finalization=await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:asOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});resourceReviews.push(...finalization.resourceReviews);}
    else await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
   }
-  return {ok:true,updated,subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
+  return {ok:true,updated,resourceReviews,subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,
    unselectedCoverage:'NOT_ASSERTED; SUBJECT_BUDGET_MAY_LEAVE_GAPS',coverageBasis:'CANONICAL_INPUT_STREAM; BROKER_TICK_COMPLETENESS_UNKNOWN'};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_collection_failed'),captureGap:true};}

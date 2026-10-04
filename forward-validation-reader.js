@@ -1,6 +1,6 @@
 // Fixed SELECT catalog only. No imports from writer/collector/schema initializer.
 import {parseEvidence,FROZEN_BASELINE,MEASUREMENT_SCHEMA_VERSION,CAPTURE_VERSION} from './signal-evidence.js';
-import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreCensus,hydrateFinalOutcome,restoreSharedDecision,reproducibility,CENSUS_WORDS} from './evidence-codec.js';
+import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreCensus,hydrateFinalOutcome,restoreSharedDecision,reproducibility,CENSUS_WORDS,restoreFinalResult} from './evidence-codec.js';
 import {reduceOutcome,OUTCOME_REDUCER_VERSION} from './forward-validation.js';
 // Evidence of successful Official persistence remains visible even when the legacy
 // performance write failed independently. This union is SELECT-only, no repair.
@@ -31,8 +31,7 @@ const SQL=Object.freeze({
  WHERE kind='CANDIDATE' AND evaluated_at>=?1 AND evaluated_at<=?2 AND d.recorded_at<=?2 AND (?3 IS NULL OR cohort_id=?4)
  AND (?5 IS NULL OR evaluated_at<?6 OR (evaluated_at=?7 AND evaluation_id<?8))
  ORDER BY evaluated_at DESC,evaluation_id DESC LIMIT ?9`,
- events:`SELECT * FROM signal_outcome_evidence WHERE subject_id=?1 AND available_at<=?2
- AND (event_type!='COVERAGE_CHECKPOINT' OR event_id=(SELECT event_id FROM signal_outcome_evidence WHERE subject_id=?1 AND event_type='COVERAGE_CHECKPOINT' AND available_at<=?2 ORDER BY available_at DESC,event_id DESC LIMIT 1)) ORDER BY available_at,event_id`,
+ events:`SELECT * FROM signal_outcome_evidence WHERE subject_id=?1 AND available_at<=?2 ORDER BY available_at,event_id`,
  population:`SELECT * FROM (WITH raw AS (
  SELECT p.*,d.payload_json AS entry_json,d.evaluation_id,
  CASE WHEN s.updated_at<=?1 THEN s.payload_json WHEN f.recorded_at<=?1 THEN f.payload_json ELSE
@@ -62,6 +61,8 @@ const SQL=Object.freeze({
  COUNT(tp1_min_ms) AS tp1_observed,AVG(tp1_min_ms) AS mean_tp1_min_ms,AVG(tp1_max_ms) AS mean_tp1_max_ms,COUNT(sl_min_ms) AS sl_observed,AVG(sl_min_ms) AS mean_sl_min_ms,AVG(sl_max_ms) AS mean_sl_max_ms
  FROM classified GROUP BY timeframe,directional,extended,terminal,missing_entry,score_band,confidence_band,engine_mtf,broad_mtf,regime,session,news_calendar)`,
  rich:'SELECT * FROM measurement_rich_evidence WHERE evidence_id=? AND recorded_at<=?',
+ richMeta:'SELECT evidence_id,owner_type,owner_id,recorded_at,retain_until FROM measurement_rich_evidence WHERE evidence_id=? AND recorded_at<=?',
+ final:'SELECT * FROM measurement_final_results WHERE subject_id=? AND recorded_at<=?',
  definition:'SELECT payload_json FROM measurement_definitions WHERE definition_id=?',
  cycle:'SELECT r.*,c.payload_json AS cohort_json FROM decision_cycle_evidence y JOIN measurement_cohorts c ON c.cohort_id=y.cohort_id LEFT JOIN measurement_rich_evidence r ON r.evidence_id=? WHERE y.cycle_id=?',
  rawCount:'SELECT COUNT(*) AS n FROM market_evidence_blocks WHERE block_id IN (SELECT value FROM json_each(?))',
@@ -144,18 +145,21 @@ export async function readForwardValidation(read,url,path,now){
  const hasMore=rows.length>query.limit;rows=rows.slice(0,query.limit);
  const records=[];
  for(const row of rows){
-  if(candidates){const census=restoreCensus(parseEvidence(row.payload_json),row);const r=(await read.rich(`decision:${row.evaluation_id}`,query.asOf))[0];const detailed=r?await hydrateDecision(read,r,query.asOf):null;const ids=decisionDependencies(detailed);const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
+  if(candidates){const census=restoreCensus(parseEvidence(row.payload_json),row);const r=(await read[query.details?'rich':'richMeta'](`decision:${row.evaluation_id}`,query.asOf))[0];const detailed=query.details&&r?await hydrateDecision(read,r,query.asOf):null;const ids=decisionDependencies(detailed);const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
    const level=reproducibility({kind:'CANDIDATE',richAvailable:!!r,rawAvailable:raw,skipped:census.outcome==='SKIPPED'});
-   records.push({...census,measurementResult:row.result_json?parseEvidence(row.result_json):null,reproducibility:level,...(query.details&&r?{derivedEvidence:detailed}:{})});continue;}
+   const final=(await read.final(row.evaluation_id,query.asOf))[0];
+   records.push({...census,measurementResult:final?restoreFinalResult(final):null,reproducibility:{...level,rawVerification:query.details?'EXACT_DEPENDENCIES_CHECKED':'NOT_CHECKED_IN_COMPACT_REPORT'},...(query.details&&r?{derivedEvidence:detailed}:{})});continue;}
   const census=row.entry_json?restoreCensus(parseEvidence(row.entry_json),{...row,timeframe:row.timeframe,official_signal_id:row.signal_id}):null;
-  const rich=census?(await read.rich(`decision:${census.evaluationId}`,query.asOf))[0]:null;
-  const detailed=rich?await hydrateDecision(read,rich,query.asOf):null;const entryEvidence=(query.details||path.startsWith('/forward-validation/signals/'))?detailed||census:census;
+  const wantsDetails=query.details||path.startsWith('/forward-validation/signals/');
+  const rich=census?(await read[wantsDetails?'rich':'richMeta'](`decision:${census.evaluationId}`,query.asOf))[0]:null;
+  const detailed=wantsDetails&&rich?await hydrateDecision(read,rich,query.asOf):null;const entryEvidence=(query.details||path.startsWith('/forward-validation/signals/'))?detailed||census:census;
   const ids=decisionDependencies(detailed);const raw=ids.length>0&&(await read.rawCount(JSON.stringify(ids)))[0]?.n===ids.length;
   const evidenceLevel=reproducibility({kind:'OFFICIAL',richAvailable:!!rich,rawAvailable:raw});
-  const processing=(await read.state(row.signal_id,query.asOf))[0];let state=processing?await decodeProcessingState(processing):row.state_json&&row.state_at<=query.asOf?parseEvidence(row.state_json):null;
+  const processing=(await read.state(row.signal_id,query.asOf))[0];let state=processing?await decodeProcessingState(processing):row.state_json&&row.state_at<=query.asOf?parseEvidence(row.state_json):null;const final=(await read.final(row.signal_id,query.asOf))[0];if(!processing&&final)state=restoreFinalResult(final);
   let events=await Promise.all((await read.events(row.signal_id,query.asOf)).map(x=>decodeStoredOutcome(x)));events=events.map(e=>hydrateFinalOutcome(e,events));
   if(query.details||path.startsWith('/forward-validation/signals/'))for(let i=0;i<events.length;i++)if(events[i].evidenceRef){const r=(await read.rich(events[i].evidenceRef,query.asOf))[0];if(r)events[i]=await decodeStoredEvidence(r);}
-  if(!state){const checkpoints=events.filter(e=>['COVERAGE_CHECKPOINT','FINAL_MEASUREMENT'].includes(e.evidenceType)).sort((a,b)=>b.availableAt-a.availableAt);state=checkpoints[0]??null;}
+  if(!state){const checkpoints=events.filter(e=>e.evidenceType==='FINAL_MEASUREMENT'||(e.evidenceType==='COVERAGE_CHECKPOINT'&&e.checkpointRole!=='BARRIER_COVERAGE')).sort((a,b)=>b.availableAt-a.availableAt);state=checkpoints[0]??null;}
+  const packageEvidence=events.find(e=>e.evidenceType==='FINAL_MEASUREMENT');if(packageEvidence&&final&&!processing)state={...packageEvidence,...restoreFinalResult(final)};
   const projected=state?.outcome;
   const reduced=reduceOutcome({id:row.signal_id,createdAt:row.created_at,status:row.status,closedAt:row.closed_at},events,
    {asOf:query.asOf,coverageIntervals:state?.covered||[],coverageGaps:state?.gaps||[]});

@@ -2,7 +2,7 @@
 import {mergeIntervals,accumulateQuality} from './quality-measurement.js';
 import {reduceOutcome} from './forward-validation.js';
 const finite=Number.isFinite;
-export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf}){
+export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf,availableAt=asOf}){
  const prior=previous||{processedThrough:subject.createdAt,covered:[],gaps:[],barriers:{},global:{mfe:null,mae:null}};
  const end=finite(subject.closedAt)?Math.min(subject.closedAt,asOf):asOf;
  const observations=[],covered=[],uncertainties=(prior.gaps||[]).filter(g=>g.reason==='BARRIER_BOUNDARY_ORDER_UNKNOWN'),barriers={...prior.barriers};
@@ -13,7 +13,7 @@ export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf}){
   const key=`${type}:${witness.source}`;
   if(!hit||barriers[key]||!finite(target))return;
   const event={...witness,eventId:`${subject.id}:barrier:${type}:${witness.source}`,subjectId:subject.id,evidenceType:'BARRIER_OBSERVATION',
-   eventType:type,level:target,price,eligible:true,availableAt:asOf,observedAt:witness.observedAt??asOf,evaluatorVersion:'b1-witness-v1',measurementOnly:true,decisionUse:false};
+   eventType:type,level:target,price,eligible:true,availableAt,observedAt:witness.observedAt??availableAt,evaluatorVersion:'b1-witness-v1',measurementOnly:true,decisionUse:false};
   barriers[key]=event;event.coverageRef=`${subject.id}:coverage:${asOf}`;events.push(event);
  };
  const market=[];
@@ -73,9 +73,18 @@ export function foldPostEntry(subject,previous,{ticks=[],bars=[],asOf}){
   if(global.mae===null||a>global.mae){global.mae=a;global.maeWitness=observation;}
  }
  const risk=Math.abs(subject.entry-subject.sl);global.mfeR=global.mfe!==null&&risk?global.mfe/risk:null;global.maeR=global.mae!==null&&risk?global.mae/risk:null;
- let outcome=reduceOutcome(subject,Object.values(barriers),{asOf,coverageIntervals:coverage,coverageGaps:gaps});
+ let outcome=reduceOutcome(subject,Object.values(barriers),{asOf:availableAt,measurementEndAt:end,coverageIntervals:coverage,coverageGaps:gaps});
  if(['SUCCESS','FAILURE'].includes(prior.outcome?.directionalOutcome)&&outcome.directionalOutcome!==prior.outcome.directionalOutcome){outcome={...outcome,directionalOutcome:prior.outcome.directionalOutcome,firstDirectionalWitness:prior.outcome.firstDirectionalWitness,timeToTp1:prior.outcome.timeToTp1,timeToSl:prior.outcome.timeToSl,reason:'PREVIOUSLY_PROVEN_FIRST_BARRIER_PRESERVED'};}
  global.coverage=outcome.coverage==='COMPLETE'?'COMPLETE':global.mfe!==null?'OBSERVED_LOWER_BOUND':'INSUFFICIENT';
  const processedBoundaryTicks=[...new Set([...(through===prior.processedThrough?prior.processedBoundaryTicks||[]:[]),...ticks.filter(t=>t.ts===through).map(tickIdentity)])].slice(-32);
+ // Freeze the coverage actually available at discovery. This is not a recovery
+ // accumulator and must never be replaced by coverage collected later.
+ const coverageId=`${subject.id}:coverage:${availableAt}:${Object.keys(barriers).length}`;
+ for(const event of events)event.coverageRef=coverageId;
+ if(events.length)events.unshift({subjectId:subject.id,eventId:coverageId,
+  evidenceType:'COVERAGE_CHECKPOINT',eventType:'COVERAGE_CHECKPOINT',checkpointRole:'BARRIER_COVERAGE',
+  occurredFrom:subject.createdAt,occurredTo:end,availableAt,observedAt:availableAt,
+  covered:coverage,gaps:gaps.slice(0,32),sourceCompleteness:'UNKNOWN',
+  evaluatorVersion:'b1-witness-v1',measurementOnly:true,decisionUse:false});
  return {state:{subjectId:subject.id,processedThrough:through,processedBoundaryTicks,covered:coverage,gaps:gaps.slice(0,32),barriers,quality,global,outcome},events};
 }
