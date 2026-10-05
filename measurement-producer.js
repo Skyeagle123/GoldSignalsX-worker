@@ -1,7 +1,16 @@
 // M1 offline shadow producer. No awaited trading dependency or durable outbox.
 import {prepareDecisionCycle,decisionJournalObservations} from './signal-measurement.js';
 import {censusSnapshot} from './evidence-codec.js';
-import {copyFrozenEvidence,buildMeasurementEnvelope,PRODUCER_BOUNDS} from './measurement-envelope.js';
+import {copyFrozenEvidence,validateDataEvidence,buildMeasurementEnvelope,PRODUCER_BOUNDS} from './measurement-envelope.js';
+
+// Rejected inputs must never be read through ordinary property access.
+function diagnosticIdentifier(input){
+ try{if(!input||typeof input!=='object')return null;
+  for(const key of ['semanticId','cycleId']){const d=Object.getOwnPropertyDescriptor(input,key);if(!d)continue;
+   if(!('value' in d)||!d.enumerable||typeof d.value!=='string'||!d.value||d.value.length>1024||new TextEncoder().encode(d.value).length>1024)return null;
+   return d.value;}
+ }catch{}return null;
+}
 
 export const PRODUCER_GATE='B1_PRODUCER_CAPTURE_ENABLED';
 const injected=new WeakMap(),defaults=new WeakMap();
@@ -36,18 +45,21 @@ export function createMeasurementProducer({enabled=false,transport=null,schedule
  }
  function submit(input,cycle,provenance){
   if(!enabled)return Object.freeze({status:'OFF',durable:false});
-  try{if(!transport||transport.mode!=='OFFLINE'||typeof transport.send!=='function')return diagnostic('TRANSPORT_UNAVAILABLE',input?.semanticId??input?.cycleId??null);}
+  try{if(!transport||transport.mode!=='OFFLINE'||typeof transport.send!=='function')return diagnostic('TRANSPORT_UNAVAILABLE',diagnosticIdentifier(input));}
   catch{return diagnostic('TRANSPORT_UNAVAILABLE');}
   // Reserve cycle capacity independently: six same-cycle confirmations must
   // not consume the slot for their completed seven-attempt census.
-  if(cycle?pendingCycles+unsettledCycles>=PRODUCER_BOUNDS.maxPendingCycles:pendingFacts+unsettledFacts>=maxPending-PRODUCER_BOUNDS.maxPendingCycles)return diagnostic('PRODUCER_CAPACITY_EXCEEDED',input?.semanticId??input?.cycleId??null);
+  if(cycle?pendingCycles+unsettledCycles>=PRODUCER_BOUNDS.maxPendingCycles:pendingFacts+unsettledFacts>=maxPending-PRODUCER_BOUNDS.maxPendingCycles)return diagnostic('PRODUCER_CAPACITY_EXCEEDED',diagnosticIdentifier(input));
   let frozen,frozenProvenance;
   try{
+   validateDataEvidence(input,cycle?{}:{maxInputBytes:PRODUCER_BOUNDS.maxFactInputBytes});
+   // Enrich original candidate references only after validation: the existing
+   // persistence-evidence WeakMap must not be looked up using cloned candidates.
    const source=cycle?decisionJournalObservations(input):input;
    if(cycle&&source.capturedAt==null&&!captureTimes.has(input))captureTimes.set(input,clock());
    frozen=copyFrozenEvidence(cycle?{...source,capturedAt:source.capturedAt??captureTimes.get(input)}:source,cycle?{}:{maxInputBytes:PRODUCER_BOUNDS.maxFactInputBytes});
    if(cycle)frozenProvenance=copyFrozenEvidence(provenance);
-  }catch{return diagnostic('PREPARATION_FAILED',input?.semanticId??input?.cycleId??null);}
+  }catch{return diagnostic('PREPARATION_FAILED',diagnosticIdentifier(input));}
   pending++;if(cycle)pendingCycles++;else pendingFacts++;
   const release=()=>{pending--;if(cycle)pendingCycles--;else pendingFacts--;};
   let resolveDone;const done=new Promise(resolve=>{resolveDone=resolve;});tasks.add(done);

@@ -290,3 +290,50 @@ test('M1-R2 dense evidence remains exact; deep, node, byte and wire work rejects
  producer.submitFact(fact({value:'x'.repeat(3000)}));await producer.whenIdle();assert.equal(sends,0);
  assert(producer.diagnostics().some(x=>x.captureGap===true&&x.durable===false));
 });
+
+test('M1-R2a public cycle entry rejects original accessors before journal enrichment',async()=>{
+ for(const shape of ['filters','nested','array','setter']){
+  let reads=0;const j=completeJournal(after,sm);
+  const descriptor=shape==='setter'?{set(){reads++;},enumerable:true}:{get(){reads++;throw new Error('ACCESSOR_EXECUTED');},enumerable:true};
+  if(shape==='filters'||shape==='setter')Object.defineProperty(j,'filters',descriptor);
+  else if(shape==='nested')Object.defineProperty(j.frames['1m'].bars[0],'c',descriptor);
+  else Object.defineProperty(j.candidates,0,descriptor);
+  const transport=createOfflineTransport(),p=createMeasurementProducer({enabled:true,transport});
+  const result=p.submitCycle(j,provenance);await p.whenIdle();
+  assert.equal(reads,0,shape);assert.equal(result.status,'PREPARATION_FAILED');assert.equal(result.captureGap,true);assert.equal(result.durable,false);assert.equal(transport.packets().length,0);
+ }
+});
+
+test('M1-R2b public fact diagnostics never execute rejected identifier accessors',async()=>{
+ for(const shape of ['getter','throwing','setter','nested','array','malformed']){
+  let reads=0;const input=fact();
+  if(['getter','throwing','setter'].includes(shape))Object.defineProperty(input,'semanticId',shape==='setter'?{set(){reads++;},enumerable:true}:{get(){reads++;if(shape==='throwing')throw new Error('ACCESSOR_EXECUTED');return 'bad';},enumerable:true});
+  else if(shape==='nested')Object.defineProperty(input.payload,'value',{get(){reads++;return 1;},enumerable:true});
+  else if(shape==='array'){input.payload={values:[1]};Object.defineProperty(input.payload.values,0,{get(){reads++;return 1;},enumerable:true});}
+  else input.semanticId={get value(){reads++;return 'bad';}};
+  const p=createMeasurementProducer({enabled:true,transport:createOfflineTransport()});let result;
+  assert.doesNotThrow(()=>{result=p.submitFact(input);});await p.whenIdle();
+  assert.equal(reads,0,shape);assert.equal(result.status,'PREPARATION_FAILED');assert.equal(result.captureGap,true);assert.equal(result.durable,false);
+  if(['getter','throwing','setter','malformed'].includes(shape))assert.equal(result.semanticId,null);
+ }
+ for(const unavailable of [true,false]){
+  let reads=0;const jobs=[],p=createMeasurementProducer({enabled:true,transport:unavailable?null:createOfflineTransport(),schedule:job=>jobs.push(job),maxPending:3});
+  if(!unavailable)p.submitFact(fact());
+  const input={get semanticId(){reads++;throw new Error('ACCESSOR_EXECUTED');}};
+  const result=p.submitFact(input);assert.equal(reads,0);assert.equal(result.semanticId,null);assert.equal(result.captureGap,true);assert.equal(result.durable,false);
+  assert.equal(result.status,unavailable?'TRANSPORT_UNAVAILABLE':'PRODUCER_CAPACITY_EXCEEDED');for(const job of jobs)job();await p.whenIdle();
+ }
+});
+
+test('M1-R2a validated original candidates preserve WeakMap evidence and exact envelopes',async()=>{
+ const j=completeJournal(after,sm),candidate=j.candidates.find(c=>j.officialIds.has(c.id));assert(candidate);
+ sm.rememberOfficialPersistence(candidate,'created',{ok:false,error:'fixture-persistence-failure'});
+ const expected=await prepareCycleEnvelopes(copyFrozenEvidence(sm.decisionJournalObservations(j)),provenance,{preparedAt:now+5000});
+ const transport=createOfflineTransport(),p=createMeasurementProducer({enabled:true,transport,clock:()=>now+5000});
+ p.submitCycle(j,provenance);await p.whenIdle();assert.equal(p.diagnostics().length,0);
+ assert.deepEqual(transport.packets().map(x=>x.wire),expected.map(x=>x.wire));
+ assert.equal(j.candidates.find(c=>c.id===candidate.id),candidate);assert.equal(Object.isFrozen(candidate),false);
+ const official=transport.packets().find(x=>x.envelope.kind==='OFFICIAL_CREATION');assert.equal(official.envelope.payload.performancePersistence.performance,'FAILED');
+ const f=fact(),single=createOfflineTransport(),q=createMeasurementProducer({enabled:true,transport:single,clock:()=>now+31});q.submitFact(f);await q.whenIdle();
+ assert.equal(single.packets()[0].wire,(await envelope(f)).wire);assert.equal(single.packets()[0].envelope.semanticId,f.semanticId);
+});

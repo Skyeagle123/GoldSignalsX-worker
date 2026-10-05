@@ -12,7 +12,7 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const child of Objec
 
 // Map/Set contents become private read-only facades for the legacy preparer.
 // Object.freeze(new Map()) alone would not protect its entries.
-export function copyFrozenEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInputBytes,maxNodes=PRODUCER_BOUNDS.maxNodes,maxDepth=PRODUCER_BOUNDS.maxDepth}={}){
+function walkEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInputBytes,maxNodes=PRODUCER_BOUNDS.maxNodes,maxDepth=PRODUCER_BOUNDS.maxDepth}={},materialize=true){
  if(!Number.isInteger(maxInputBytes)||maxInputBytes<1||maxInputBytes>PRODUCER_BOUNDS.maxInputBytes||
     !Number.isInteger(maxNodes)||maxNodes<1||maxNodes>PRODUCER_BOUNDS.maxNodes||
     !Number.isInteger(maxDepth)||maxDepth<0||maxDepth>PRODUCER_BOUNDS.maxDepth)throw new Error('measurement_input_bound_invalid');
@@ -28,16 +28,15 @@ export function copyFrozenEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInput
    if(Reflect.ownKeys(v).length)throw new Error('measurement_object_invalid');
    const size=Object.getOwnPropertyDescriptor(Map.prototype,'size').get.call(v);
    if(size>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(size);
-   const entries=[];for(const [k,x]of Map.prototype.entries.call(v))entries.push(Object.freeze([copy(k,depth+1),copy(x,depth+1)]));
-   const map=new Map(entries);
-   result=Object.freeze({get:k=>map.get(k),has:k=>map.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});
+   const entries=materialize?[]:null;for(const [k,x]of Map.prototype.entries.call(v)){const key=copy(k,depth+1),value=copy(x,depth+1);if(materialize)entries.push(Object.freeze([key,value]));}
+   if(materialize){const map=new Map(entries);
+    result=Object.freeze({get:k=>map.get(k),has:k=>map.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});}
   }else if(v instanceof Set){
    if(Reflect.ownKeys(v).length)throw new Error('measurement_object_invalid');
    const size=Object.getOwnPropertyDescriptor(Set.prototype,'size').get.call(v);
    if(size>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(size);
-   const entries=[];for(const x of Set.prototype.values.call(v))entries.push(copy(x,depth+1));
-   const set=new Set(entries);
-   result=Object.freeze({has:k=>set.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});
+   const entries=materialize?[]:null;for(const x of Set.prototype.values.call(v)){const value=copy(x,depth+1);if(materialize)entries.push(value);}
+   if(materialize){const set=new Set(entries);result=Object.freeze({has:k=>set.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});}
   }else if(Array.isArray(v)){
    const length=Object.getOwnPropertyDescriptor(v,'length').value;
    if(length>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(length);
@@ -45,21 +44,25 @@ export function copyFrozenEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInput
    // Charge the whole array before allocating its copy or visiting children.
    const keys=Reflect.ownKeys(v);
    if(keys.length!==length+1)throw new Error('measurement_array_invalid');
-   result=[];
+   result=materialize?[]:null;
    for(let i=0;i<length;i++){
     const descriptor=Object.getOwnPropertyDescriptor(v,String(i));
     if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_array_invalid');
-    result.push(copy(descriptor.value,depth+1));
+    const value=copy(descriptor.value,depth+1);if(materialize)result.push(value);
    }
-   Object.freeze(result);
+   if(materialize)Object.freeze(result);
   }else if(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null){
    const keys=Reflect.ownKeys(v);if(keys.length>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(keys.length);
-   result=Object.create(null);for(const key of keys){if(typeof key!=='string')throw new Error('measurement_object_invalid');const descriptor=Object.getOwnPropertyDescriptor(v,key);if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_object_invalid');if(/token|password|secret|authorization|api.?key/i.test(key))throw new Error('measurement_sensitive_field');if(key.length>maxInputBytes)throw new Error('measurement_input_exceeded');charge(bytes(key));result[key]=copy(descriptor.value,depth+1);}Object.freeze(result);
+   result=materialize?Object.create(null):null;for(const key of keys){if(typeof key!=='string')throw new Error('measurement_object_invalid');const descriptor=Object.getOwnPropertyDescriptor(v,key);if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_object_invalid');if(/token|password|secret|authorization|api.?key/i.test(key))throw new Error('measurement_sensitive_field');if(key.length>maxInputBytes)throw new Error('measurement_input_exceeded');charge(bytes(key));const value=copy(descriptor.value,depth+1);if(materialize)result[key]=value;}if(materialize)Object.freeze(result);
   }else throw new Error('measurement_object_invalid');
   seen.delete(v);return result;
  }
  return copy(value);
 }
+
+// Validation traverses descriptors and budgets without cloning observed values.
+export function validateDataEvidence(value,options={}){walkEvidence(value,options,false);}
+export function copyFrozenEvidence(value,options={}){return walkEvidence(value,options,true);}
 
 export async function buildMeasurementEnvelope(options){
  if(!options||(Object.getPrototypeOf(options)!==Object.prototype&&Object.getPrototypeOf(options)!==null))throw new Error('measurement_object_invalid');
