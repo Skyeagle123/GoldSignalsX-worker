@@ -1,6 +1,6 @@
 // Offline M2 only. Explicit Measurement DB capability; no Worker/env/transport.
 import {ENVELOPE_VERSION,PRODUCER_NAMESPACE,ENVELOPE_KINDS,PRODUCER_BOUNDS,validateDataEvidence} from './measurement-envelope.js';
-import {canonicalSerialize,digestPayload,parseEvidence} from './signal-evidence.js';
+import {canonicalSerialize,digestPayload,parseEvidence,ENGINE_SEMANTICS_VERSION} from './signal-evidence.js';
 import {encodeEvidence,digestBytes,censusSnapshot} from './evidence-codec.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {rebuildLifecycleProjection,validateLifecycleProjectionReturn,lifecycleCapability,fenceLifecycleFailure,clearLifecycleFailure} from './measurement-lifecycle.js';
@@ -37,14 +37,106 @@ function manifest(m,receivedAt,blocks=null){
  }
  if(count!==m.count)fail('measurement_manifest_invalid');return m.references.map(r=>r.blockId);
 }
+// Evidence predicates for the accepted Engine v1 contract. No Engine execution,
+// indicators, scoring, pivots or trading decisions are recomputed here.
+const rejectionGates=['minimum-bars','candle-quality','atr','candle-age','receipt-age','provider-age','news-calendar','score','margin','candle-confirmation','mtf-confirmation','mtf-opposition','ny-session','pivot','price-source','price-alignment'];
+const rejectionTfMs={'1m':60000,'5m':300000,'15m':900000,'30m':1800000,'60m':3600000,'240m':14400000,'1d':86400000};
+const rejectionHigherCount={'1m':2,'5m':2,'15m':2,'30m':2,'60m':1,'240m':0,'1d':0};
+const evidenceNumber=v=>typeof v==='number';
+const evidenceBoolean=v=>typeof v==='boolean';
+const evidenceObject=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+const evidenceSame=(a,b)=>Object.is(a,b);
+function rejectionNeed(ok,id){if(!ok)fail('measurement_rejection_'+id+'_invalid');}
+function rejectionOperands(g,keys){const o=g.operands;rejectionNeed(evidenceObject(o)&&Object.keys(o).length===keys.length&&keys.every(k=>Object.hasOwn(o,k)),g.id);return o;}
+function rejectionFilters(f){
+ rejectionNeed(evidenceObject(f)&&evidenceBoolean(f.nyFilterOn)&&evidenceBoolean(f.pivotFilterOn)&&Number.isFinite(f.pivotDistance)&&f.pivotDistance>=0&&f.pivotDistance<=50&&
+  [f.nyStart,f.nyEnd].every(v=>typeof v==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v)),'filters');return f;
+}
+function rejectionNyBlocked(quote,f){
+ if(!f.nyFilterOn)return false;
+ rejectionNeed(Number.isFinite(quote?.providerTimestamp),'ny-session');
+ const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date(quote.providerTimestamp));
+ const minutes=(Number(parts.find(p=>p.type==='hour').value)%24)*60+Number(parts.find(p=>p.type==='minute').value);
+ const clock=s=>Number(s.slice(0,2))*60+Number(s.slice(3)),from=clock(f.nyStart),to=clock(f.nyEnd);
+ return !(from<=to?minutes>=from&&minutes<=to:minutes>=from||minutes<=to);
+}
+function rejectionPredicate(g,d){
+ const e=d.engine,r=e.result,v=e.indicators,s=e.scoring;
+ let o;
+ switch(g.id){
+ case 'minimum-bars':
+  o=rejectionOperands(g,['count']);rejectionNeed(Number.isInteger(o.count)&&o.count>=0&&o.count===d.inputManifest?.primary?.count,g.id);return o.count<40;
+ case 'candle-quality':
+  o=rejectionOperands(g,['quality']);rejectionNeed(unknown(o.quality)||evidenceObject(o.quality)&&(unknown(o.quality.ok)||evidenceBoolean(o.quality.ok)),g.id);return o.quality?.ok===false;
+ case 'atr':
+  o=rejectionOperands(g,['atr']);rejectionNeed(evidenceNumber(o.atr)&&evidenceNumber(v?.atr)&&evidenceSame(o.atr,v.atr),g.id);
+  // Nonfinite ATR is explicitly an Engine rejection, preserved by the codec.
+  return !Number.isFinite(o.atr)||o.atr<=0;
+ case 'candle-age':
+  o=rejectionOperands(g,['age','maxAge']);rejectionNeed(Number.isFinite(o.age)&&o.maxAge===Math.max(rejectionTfMs[d.timeframe]*3,420000)&&
+   o.age===d.evaluatedAt-d.sourceCandle?.openAt,g.id);return o.age>o.maxAge;
+ case 'receipt-age':
+  o=rejectionOperands(g,['receiptAge']);rejectionNeed(evidenceNumber(o.receiptAge)&&evidenceSame(o.receiptAge,d.evaluatedAt-Number(d.quote?.receivedAt||Number(d.quote?.providerTimestamp))),g.id);return o.receiptAge<0||o.receiptAge>20000;
+ case 'provider-age':
+  o=rejectionOperands(g,['providerAge']);rejectionNeed(evidenceNumber(o.providerAge)&&evidenceSame(o.providerAge,d.evaluatedAt-Number(d.quote?.providerTimestamp)),g.id);return o.providerAge< -30000||o.providerAge>90000;
+ case 'news-calendar':
+  o=rejectionOperands(g,['calendarBlocked','gdeltBlocked']);rejectionNeed(evidenceBoolean(o.calendarBlocked)&&(unknown(o.gdeltBlocked)||evidenceBoolean(o.gdeltBlocked)),g.id);return o.calendarBlocked||(!unknown(o.gdeltBlocked)&&o.gdeltBlocked);
+ case 'score':
+  o=rejectionOperands(g,['score','threshold']);rejectionNeed(Number.isFinite(o.score)&&o.threshold===7.4&&o.score===s?.score&&o.score===r.score&&o.score===Math.max(s.bull,s.bear),g.id);return o.score<7.4;
+ case 'margin':
+  o=rejectionOperands(g,['margin','threshold']);rejectionNeed(Number.isFinite(o.margin)&&o.threshold===2&&o.margin===s?.margin&&o.margin===s.score-s.opp&&s.opp===Math.min(s.bull,s.bear),g.id);return o.margin<2;
+ case 'candle-confirmation':
+  o=rejectionOperands(g,['candle']);rejectionNeed(evidenceBoolean(o.candle)&&o.candle===s?.candle&&o.candle===(s.leader==='buy'?e.candleConfirmation?.bullC:e.candleConfirmation?.bearC),g.id);return !o.candle;
+ case 'mtf-confirmation':
+  o=rejectionOperands(g,['confirm','required']);rejectionNeed(Number.isInteger(o.confirm)&&o.confirm>=0&&o.confirm===s?.confirm&&o.required===Math.min(1,rejectionHigherCount[d.timeframe])&&o.required===s.required,g.id);return o.confirm<o.required;
+ case 'mtf-opposition':
+  o=rejectionOperands(g,['oppositions','confirm','count']);rejectionNeed([o.oppositions,o.confirm,o.count].every(x=>Number.isInteger(x)&&x>=0)&&o.oppositions===s?.oppositions&&o.confirm===s.confirm&&o.count===e.mtf?.length,g.id);return Boolean(o.oppositions>o.confirm&&o.count);
+ case 'ny-session':
+  o=rejectionOperands(g,['nyBlocked','filters']);rejectionNeed(evidenceBoolean(o.nyBlocked)&&o.nyBlocked===rejectionNyBlocked(d.quote,rejectionFilters(o.filters)),g.id);return o.nyBlocked;
+ case 'pivot':{
+  o=rejectionOperands(g,['pivotBlocked','piv','near']);const f=rejectionFilters(e.gates[12].operands?.filters);
+  rejectionNeed(evidenceBoolean(o.pivotBlocked),g.id);
+  if(o.piv===null)rejectionNeed(o.near===null,g.id);
+  else{const keys=['P','R1','R2','R3','S1','S2','S3'];rejectionNeed(evidenceObject(o.piv)&&keys.every(k=>Number.isFinite(o.piv[k]))&&evidenceObject(o.near)&&keys.includes(o.near.label)&&o.near.value===o.piv[o.near.label]&&o.near.distance===Math.abs(v.C-o.near.value)&&keys.every(k=>o.near.distance<=Math.abs(v.C-o.piv[k])),g.id);}
+  const blocked=Boolean(f.pivotFilterOn&&(!o.piv||(o.near&&o.near.distance<f.pivotDistance)));rejectionNeed(o.pivotBlocked===blocked,g.id);return blocked;
+ }
+ case 'price-source':
+  o=rejectionOperands(g,['consistent','same','stored']);rejectionNeed([o.consistent,o.same,o.stored].every(evidenceBoolean)&&o.consistent===(o.same||(o.stored&&e.gates[15].operands?.aligned)),g.id);return !o.consistent;
+ case 'price-alignment':
+  o=rejectionOperands(g,['aligned','gap','atr','C']);rejectionNeed(evidenceBoolean(o.aligned)&&evidenceNumber(o.gap)&&Number.isFinite(o.atr)&&Number.isFinite(o.C)&&o.atr===v?.atr&&o.atr===r.atr&&o.C===v.C&&o.C===r.lastClose&&
+   evidenceSame(o.gap,Math.abs(r.livePrice-o.C))&&evidenceSame(r.livePrice,Number(d.quote?.canonicalPrice))&&o.aligned===(o.gap<=Math.max(o.atr*.75,o.C*.002)),g.id);return !o.aligned;
+ }
+ fail('measurement_rejection_gate_identity_invalid');
+}
+function validateRejectionGates(d){
+ const e=d.engine;rejectionNeed(d.versions?.engineSemanticsVersion===ENGINE_SEMANTICS_VERSION&&Array.isArray(e.gates)&&e.gates.length===rejectionGates.length,'gate_identity');
+ let terminal=null,failed=false;
+ for(let i=0;i<e.gates.length;i++){
+  const g=e.gates[i];rejectionNeed(evidenceObject(g)&&g.id===rejectionGates[i]&&g.version===1&&g.ordinal===i,'gate_identity');
+  if(terminal!==null){rejectionNeed(g.result==='NOT_EVALUATED'&&!Object.hasOwn(g,'operands')&&!Object.hasOwn(g,'reasonCode'),'gate_order');continue;}
+  rejectionNeed(['PASS','FAIL'].includes(g.result)&&g.reasonCode===g.id+(g.result==='FAIL'?'_failed':'_passed'),'gate_identity');
+  const predicate=rejectionPredicate(g,d);rejectionNeed(predicate===(g.result==='FAIL'),g.id);
+  if(predicate){failed=true;if(i<6)terminal=g.id;}
+ }
+ rejectionNeed(failed,'gate_order');
+ if(terminal){const r=e.result;
+  if(terminal==='candle-age')rejectionNeed(r.age===e.gates[3].operands.age&&r.lastTs===d.sourceCandle.openAt,'result');
+  if(terminal==='receipt-age')rejectionNeed(evidenceSame(r.receiptAge,e.gates[4].operands.receiptAge),'result');
+  if(terminal==='provider-age')rejectionNeed(evidenceSame(r.providerAge,e.gates[5].operands.providerAge),'result');
+  // The first six gates return immediately, before scoring and level construction.
+  rejectionNeed(!Object.hasOwn(e,'scoring')&&!Object.hasOwn(e,'levels'),'gate_order');
+ }else{
+  const s=e.scoring,r=e.result;rejectionNeed(evidenceObject(s)&&Number.isFinite(s.bull)&&Number.isFinite(s.bear)&&s.bull===r.bull&&s.bear===r.bear&&s.leader===(s.bull>=s.bear?'buy':'sell')&&
+   s.confirm===(s.leader==='buy'?r.mtf?.bull:r.mtf?.bear)&&s.oppositions===(s.leader==='buy'?r.mtf?.bear:r.mtf?.bull),'result');
+ }
+}
 // Only accepted Engine rejections may carry a non-directional census identity.
 function nonDirectionalRejection(d){
- const e=d.engine,gates=['minimum-bars','candle-quality','atr','candle-age','receipt-age','provider-age','news-calendar','score','margin','candle-confirmation','mtf-confirmation','mtf-opposition','ny-session','pivot','price-source','price-alignment'];
- return d.kind==='CANDIDATE'&&d.outcome==='ENGINE_REJECTED'&&d.levelsStatus==='NOT_COMPUTED_BY_ENGINE'&&
+ const e=d.engine;
+ const valid=d.kind==='CANDIDATE'&&d.outcome==='ENGINE_REJECTED'&&d.levelsStatus==='NOT_COMPUTED_BY_ENGINE'&&
   e?.result?.side==='none'&&e.result.tf===d.timeframe&&e.identity?.tf===d.timeframe&&e.identity.evaluationAt===d.evaluatedAt&&
-  ['entry','tp1','tp2','sl'].every(k=>unknown(e.levels?.[k])&&unknown(e.result[k]))&&
-  Array.isArray(e.gates)&&e.gates.length===gates.length&&e.gates.every((g,i)=>g.id===gates[i]&&g.version===1&&g.ordinal===i&&['PASS','FAIL','NOT_EVALUATED'].includes(g.result))&&
-  e.gates.some(g=>g.result==='FAIL'&&g.reasonCode===g.id+'_failed');
+  ['entry','tp1','tp2','sl'].every(k=>unknown(e.levels?.[k])&&unknown(e.result[k]));
+ if(valid)validateRejectionGates(d);return valid;
 }
 function decision(d,receivedAt){
  exactKeys(d,['admissionContext','broadMtf','callerGates','candidateKey','capturedAt','createdAt','cycleId','decisionUse','direction','engine','engineMtf','evaluatedAt','evaluationId','evidenceCompleteness','exposure','inputManifest','kind','levelsStatus','measurementOnly','officialPersistence','officialSignalId','outcome','quote','skippedReason','sourceCandle','symbol','timeframe','versions']);
