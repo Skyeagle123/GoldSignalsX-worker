@@ -13,12 +13,32 @@ const capabilityToken=Symbol('measurement.lifecycle.capability');
 const capabilities=new WeakMap();
 export function lifecycleCapability(db){
  let c=db[capabilityToken]||capabilities.get(db);
- if(!c){c={pending:new Set(),exhausted:false};capabilities.set(db,c);if(Object.isExtensible(db))Object.defineProperty(db,capabilityToken,{value:c,enumerable:true});}
+ if(!c){c={pending:new Set(),generations:new Map(),exhausted:false};capabilities.set(db,c);if(Object.isExtensible(db))Object.defineProperty(db,capabilityToken,{value:c,enumerable:true});}
  return c;
 }
-export function fenceLifecycleFailure(db,signalId){if(!signalId)return;const c=lifecycleCapability(db);if(c.pending.size>=4032&&!c.pending.has(signalId))c.exhausted=true;else c.pending.add(signalId);}
-export function clearLifecycleFailure(db,signalId){lifecycleCapability(db).pending.delete(signalId);}
+export function fenceLifecycleFailure(db,signalId){
+ if(!signalId)return;const c=lifecycleCapability(db);
+ if(c.pending.size>=4032&&!c.pending.has(signalId))c.exhausted=true;else c.pending.add(signalId);
+ const generation=c.generations.get(signalId);if(generation)generation.valid=false;
+}
+export function clearLifecycleFailure(db,signalId){const c=lifecycleCapability(db);c.pending.delete(signalId);c.generations.delete(signalId);}
 export function assertLifecycleCapability(db,signalId){const c=lifecycleCapability(db);if(c.exhausted||c.pending.has(signalId))throw new Error('measurement_quarantine_capability_pending');}
+
+// Offline transaction adapters must invoke these checks inside the transaction,
+// including synchronously immediately before COMMIT, and roll back on failure.
+export const measurementCommitCheck=Symbol('measurement.commit.check');
+export function lifecycleCommitCheck(db,signalId){
+ const c=lifecycleCapability(db);let generation=c.generations.get(signalId);
+ if(!generation){if(c.generations.size>=4032){c.exhausted=true;assertLifecycleCapability(db,signalId);}generation={valid:true,users:0};c.generations.set(signalId,generation);}
+ generation.users++;
+ const check=()=>{assertLifecycleCapability(db,signalId);if(released||!generation.valid)throw new Error('measurement_quarantine_capability_pending');};
+ let released=false;check.release=()=>{if(released)return;released=true;if(--generation.users===0&&c.generations.get(signalId)===generation)c.generations.delete(signalId);};
+ return check;
+}
+export function checkedMeasurementStatement(db,statement,check){
+ if(db.measurementCommitChecks!==true)throw new Error('measurement_commit_adapter_required');
+ return {...statement,[measurementCommitCheck]:check};
+}
 
 export function projectLifecycle(signalId,facts){
  const result={signalId,createdAt:null,timeframe:null,direction:null,levels:{entry:null,tp1:null,tp2:null,sl:null},
@@ -73,7 +93,7 @@ export function projectLifecycle(signalId,facts){
 }
 
 export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now(),maxFacts=4096}={}){
- assertLifecycleCapability(db,signalId);
+ const commitCheck=lifecycleCommitCheck(db,signalId);try{commitCheck();
  if(!Number.isSafeInteger(rebuiltAt)||rebuiltAt<0||!Number.isInteger(maxFacts)||maxFacts<1||maxFacts>4096)throw new Error('measurement_projection_bound');
  const revision=(await db.prepare('SELECT revision FROM measurement_lifecycle_revisions WHERE signal_id=?').bind(signalId).first())?.revision??0;
  const rows=(await db.prepare(`SELECT f.*,r.ingested_at FROM measurement_lifecycle_facts f
@@ -91,7 +111,7 @@ export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now
  const encoded=await encodeEvidence(p);
  if(p.availableAt>rebuiltAt)throw new Error('measurement_projection_clock_invalid');
  assertLifecycleCapability(db,signalId);
- await db.prepare(`INSERT INTO measurement_lifecycle_projection
+ await db.batch([checkedMeasurementStatement(db,db.prepare(`INSERT INTO measurement_lifecycle_projection
   (signal_id,status,closed_at,created_at,timeframe,direction,entry,tp1,tp2,sl,available_at,fact_count,integrity_status,payload_blob,codec,uncompressed_length,payload_digest,rebuilt_at,source_revision)
   SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
   WHERE (SELECT COUNT(*) FROM measurement_lifecycle_facts WHERE signal_id=?)=?
@@ -101,9 +121,10 @@ export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now
   available_at=excluded.available_at,fact_count=excluded.fact_count,integrity_status=excluded.integrity_status,
   payload_blob=excluded.payload_blob,codec=excluded.codec,uncompressed_length=excluded.uncompressed_length,payload_digest=excluded.payload_digest,rebuilt_at=excluded.rebuilt_at,source_revision=excluded.source_revision
   WHERE excluded.fact_count>=measurement_lifecycle_projection.fact_count`).bind(signalId,p.status,p.closedAt,p.createdAt,p.timeframe,p.direction,
-   p.levels.entry,p.levels.tp1,p.levels.tp2,p.levels.sl,p.availableAt,p.factCount,p.integrityStatus,encoded.data,encoded.codec,encoded.length,digestBytes(encoded.digest),rebuiltAt,revision,signalId,p.factCount,signalId,revision).run();
+   p.levels.entry,p.levels.tp1,p.levels.tp2,p.levels.sl,p.availableAt,p.factCount,p.integrityStatus,encoded.data,encoded.codec,encoded.length,digestBytes(encoded.digest),rebuiltAt,revision,signalId,p.factCount,signalId,revision),commitCheck)]);
  assertLifecycleCapability(db,signalId);
  const stored=await db.prepare('SELECT p.fact_count,p.payload_digest,p.integrity_status,p.source_revision,v.revision FROM measurement_lifecycle_projection p JOIN measurement_lifecycle_revisions v USING(signal_id) WHERE p.signal_id=?').bind(signalId).first();
  if(!stored||stored.source_revision!==revision||stored.revision!==revision||stored.integrity_status!==p.integrityStatus||stored.fact_count!==p.factCount||canonicalSerialize([...stored.payload_digest])!==canonicalSerialize([...digestBytes(encoded.digest)]))throw new Error('measurement_projection_rebuild_raced');
  return p;
+ }finally{commitCheck.release();}
 }

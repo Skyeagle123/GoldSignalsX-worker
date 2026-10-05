@@ -1,5 +1,5 @@
 // Scheduled measurement writer only. Never imported by the reader. No schema initializer.
-import {assertLifecycleCapability,lifecycleCapability} from './measurement-lifecycle.js';
+import {assertLifecycleCapability,lifecycleCapability,lifecycleCommitCheck,checkedMeasurementStatement} from './measurement-lifecycle.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreSharedDecision} from './evidence-codec.js';
 import {parseEvidence} from './signal-evidence.js';
@@ -13,6 +13,7 @@ export async function collectMeasurementFromProjection(db,{asOf,ticks,bars,maxSu
  return collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},true);
 }
 async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPlane){
+ const commitChecks=[];
  try{
   // Official lifecycle subjects have priority over research candidates so newly
   // arriving candidates cannot starve their bounded tick-buffer accumulation.
@@ -45,6 +46,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
   const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
   const rows=[...official,...candidates];
+  if(measurementPlane)for(const row of official){row.commitCheck=lifecycleCommitCheck(db,row.official_signal_id);commitChecks.push(row.commitCheck);}
   if(measurementPlane)lifecycleCapability(db);
   let activeGuard=null,racedOfficial=0;
   const originals=new WeakMap();
@@ -55,7 +57,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    if(!g)return db.batch(raw);
    assertLifecycleCapability(db,g.signalId);
    const result=await db.batch([
-    db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),
+    checkedMeasurementStatement(db,db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),g.check),
     ...raw,db.prepare('DELETE FROM measurement_collector_guards WHERE signal_id=?').bind(g.signalId)
    ]);
    return result.slice(1,-1);
@@ -64,7 +66,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const statement=original.bind(...values),wrapped={...statement,async run(){return activeGuard?(await guardedBatch([statement]))[0]:statement.run();}};
    originals.set(wrapped,statement);return wrapped;
   }};}}:db;
-  const guardFor=row=>measurementPlane&&row.kind==='OFFICIAL'?{signalId:row.official_signal_id,revision:row.selected_revision}:null;
+  const guardFor=row=>measurementPlane&&row.kind==='OFFICIAL'?{signalId:row.official_signal_id,revision:row.selected_revision,check:row.commitCheck}:null;
   const writer=measurementWriter(guardedDb,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
   const subjects=[];
   for(const row of rows){
@@ -132,4 +134,5 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,
    unselectedCoverage:'NOT_ASSERTED; SUBJECT_BUDGET_MAY_LEAVE_GAPS',coverageBasis:'CANONICAL_INPUT_STREAM; BROKER_TICK_COMPLETENESS_UNKNOWN'};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_collection_failed'),captureGap:true};}
+ finally{for(const check of commitChecks)check.release();}
 }
