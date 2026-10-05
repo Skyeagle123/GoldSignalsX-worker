@@ -28,7 +28,8 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
     AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
     AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
    WHERE EXISTS(SELECT 1 FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery a ON a.event_id=r.event_id WHERE r.event_kind='DECISION_CYCLE' AND r.semantic_id=d.cycle_id AND a.ingested_at<=?)
-    AND (d.kind!='OFFICIAL' OR (p.signal_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id)))
+    AND ((d.kind='CANDIDATE' AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine q WHERE q.evaluation_id=d.evaluation_id))
+     OR (d.kind='OFFICIAL' AND p.signal_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id)))
     AND s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`:
    `SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
    s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
@@ -44,11 +45,12 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
     AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
     AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
     AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id))`).bind(asOf,asOf).first():{n:0};
+  const capability=measurementPlane?lifecycleCapability(db):null;
   const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
-  const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
+  const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length+(capability?.pendingEvaluations.size||0))).results?.filter(row=>!capability?.pendingEvaluations.has(row.evaluation_id)).slice(0,maxSubjects-official.length)||[]:[];
   const rows=[...official,...candidates];
   if(measurementPlane)for(const row of official){row.commitCheck=lifecycleCommitCheck(db,row.official_signal_id,row.evaluation_id);commitChecks.push(row.commitCheck);}
-  if(measurementPlane)lifecycleCapability(db);
+  if(measurementPlane)for(const row of candidates){row.commitCheck=lifecycleCommitCheck(db,null,row.evaluation_id,{requireUnquarantinedEvaluation:true});commitChecks.push(row.commitCheck);}
   let activeGuard=null,racedOfficial=0;
   const originals=new WeakMap();
   // Guard and mutation share one atomic batch. This is per subject, never a
@@ -56,7 +58,8 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   async function guardedBatch(statements){
    const raw=statements.map(s=>originals.get(s)||s),g=activeGuard;
    if(!g)return db.batch(raw);
-   assertLifecycleCapability(db,g.signalId);
+   assertLifecycleCapability(db,g.signalId,g.evaluationId);
+   if(g.kind==='CANDIDATE')return commitMeasurement(db,raw,g.check);
    const result=await commitMeasurement(db,[
     db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),
     ...raw,db.prepare('DELETE FROM measurement_collector_guards WHERE signal_id=?').bind(g.signalId)
@@ -67,8 +70,8 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const statement=original.bind(...values),wrapped={...statement,async run(){return activeGuard?(await guardedBatch([statement]))[0]:statement.run();}};
    originals.set(wrapped,statement);return wrapped;
   }};}}:db;
-  const guardFor=row=>measurementPlane&&row.kind==='OFFICIAL'?{signalId:row.official_signal_id,revision:row.selected_revision,check:row.commitCheck}:null;
-  const writer=measurementWriter(guardedDb,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
+  const guardFor=row=>measurementPlane?(row.kind==='OFFICIAL'?{kind:row.kind,signalId:row.official_signal_id,evaluationId:row.evaluation_id,revision:row.selected_revision,check:row.commitCheck}:{kind:row.kind,signalId:null,evaluationId:row.evaluation_id,check:row.commitCheck}):null;
+  const writer=measurementWriter(guardedDb,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map(),writtenBlocks=new Set();
   const subjects=[];
   for(const row of rows){
    const rich=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
@@ -104,9 +107,10 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const built=await buildMarketManifest('1m',selected,asOf);for(const b of built.blocks)blocks.set(b.blockId,b);
    subjects.push({row,subject,folded,manifest:built.manifest,observationAsOf});
   }
-  for(const b of blocks.values())await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));
+  if(!measurementPlane)for(const b of blocks.values())await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));
   for(const {row,subject,folded,manifest,observationAsOf} of subjects){
    activeGuard=guardFor(row);try{
+   if(measurementPlane)for(const ref of manifest.references){const b=blocks.get(ref.blockId);if(b&&!writtenBlocks.has(b.blockId)){await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));writtenBlocks.add(b.blockId);}}
    if(folded.events.length)await writer.immutableBatch(folded.events.map(event=>({type:'outcome',values:{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,
     occurred_at:event.occurredAt??null,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},payload:event})),
     {links:folded.events.map(event=>({ownerType:'OUTCOME',ownerId:event.eventId,blockIds:manifest.references.map(x=>x.blockId)}))});

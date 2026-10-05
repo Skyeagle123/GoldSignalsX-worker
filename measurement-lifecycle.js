@@ -72,7 +72,9 @@ export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now
  const bindingRows=(await db.prepare('SELECT evaluation_id FROM measurement_decision_bindings WHERE official_signal_id=? LIMIT ?').bind(signalId,maxFacts+1).all()).results||[];
  if(bindingRows.length>maxFacts)throw new Error('measurement_projection_work_exceeded');
  for(const b of bindingRows)assertLifecycleCapability(db,signalId,b.evaluation_id);
- const commitChecks=[];try{commitChecks.push(lifecycleCommitCheck(db,signalId));for(const b of bindingRows)commitChecks.push(lifecycleCommitCheck(db,signalId,b.evaluation_id));for(const check of commitChecks)check();
+ // The native final check compares the entire dependency set through COMMIT.
+ // A binding added after this query must invalidate even an empty discovery.
+ const commitChecks=[];try{commitChecks.push(lifecycleCommitCheck(db,signalId,null,{bindingEvaluationIds:bindingRows.map(b=>b.evaluation_id)}));for(const b of bindingRows)commitChecks.push(lifecycleCommitCheck(db,signalId,b.evaluation_id));for(const check of commitChecks)check();
  const revision=(await db.prepare('SELECT revision FROM measurement_lifecycle_revisions WHERE signal_id=?').bind(signalId).first())?.revision??0;
  const rows=(await db.prepare(`SELECT f.*,r.ingested_at FROM measurement_lifecycle_facts f
   JOIN measurement_ingress_recovery r ON r.event_id=f.event_id AND r.ingested_at IS NOT NULL WHERE f.signal_id=? ORDER BY f.event_id LIMIT ?`).bind(signalId,maxFacts+1).all()).results||[];
@@ -103,6 +105,7 @@ export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now
  assertLifecycleCapability(db,signalId);
  const stored=await db.prepare('SELECT p.fact_count,p.payload_digest,p.integrity_status,p.source_revision,v.revision FROM measurement_lifecycle_projection p JOIN measurement_lifecycle_revisions v USING(signal_id) WHERE p.signal_id=?').bind(signalId).first();
  if(!stored||stored.source_revision!==revision||stored.revision!==revision||stored.integrity_status!==p.integrityStatus||stored.fact_count!==p.factCount||canonicalSerialize([...stored.payload_digest])!==canonicalSerialize([...digestBytes(encoded.digest)]))throw new Error('measurement_projection_rebuild_raced');
+ for(const check of commitChecks)check();
  return p;
  }finally{for(const check of commitChecks)check.release();}
 }

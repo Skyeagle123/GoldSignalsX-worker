@@ -64,12 +64,22 @@ export function clearMeasurementLifecycle(db,signalId,evaluationId=null){
  const c=required(db).root.state;if(signalId){c.pending.delete(signalId);c.generations.delete(`signal:${signalId}`);}if(evaluationId){c.pendingEvaluations.delete(evaluationId);c.generations.delete(`evaluation:${evaluationId}`);}
 }
 export function assertMeasurementLifecycle(db,signalId,evaluationId=null){const c=required(db).root.state;if(c.exhausted||c.pending.has(signalId)||evaluationId&&c.pendingEvaluations.has(evaluationId))throw new Error('measurement_quarantine_capability_pending');}
-export function acquireMeasurementCommitCheck(db,signalId,evaluationId=null){
- const root=required(db).root,c=root.state,keys=[`signal:${signalId}`,...(evaluationId?[`evaluation:${evaluationId}`]:[])],tokens=[];
+export function acquireMeasurementCommitCheck(db,signalId,evaluationId=null,{bindingEvaluationIds=null,requireUnquarantinedEvaluation=false}={}){
+ const root=required(db).root,c=root.state,keys=[...(signalId?[`signal:${signalId}`]:[]),...(evaluationId?[`evaluation:${evaluationId}`]:[])],tokens=[];
+ if(bindingEvaluationIds!==null&&(!signalId||!Array.isArray(bindingEvaluationIds)||new Set(bindingEvaluationIds).size!==bindingEvaluationIds.length))throw new Error('measurement_projection_binding_invalid');
+ if(requireUnquarantinedEvaluation&&!evaluationId)throw new Error('measurement_evaluation_required');
+ const expectedBindings=bindingEvaluationIds===null?null:[...bindingEvaluationIds].sort();
  try{for(const key of keys){let token=c.generations.get(key);if(!token){if(c.generations.size>=8064){c.exhausted=true;throw new Error('measurement_quarantine_capability_pending');}token={valid:true,users:0};c.generations.set(key,token);}token.users++;tokens.push([key,token]);}}
  catch(error){for(const [key,t]of tokens)if(--t.users===0&&c.generations.get(key)===t)c.generations.delete(key);throw error;}
  let released=false;
- const check=()=>{root.metrics.subjectChecks++;if(released||c.exhausted||c.pending.has(signalId)||evaluationId&&c.pendingEvaluations.has(evaluationId)||tokens.some(([,t])=>!t.valid))throw new Error('measurement_quarantine_capability_pending');};
+ const check=()=>{root.metrics.subjectChecks++;if(released||c.exhausted||c.pending.has(signalId)||evaluationId&&c.pendingEvaluations.has(evaluationId)||tokens.some(([,t])=>!t.valid))throw new Error('measurement_quarantine_capability_pending');
+  if(expectedBindings!==null){
+   const current=root.prepare('SELECT evaluation_id FROM measurement_decision_bindings WHERE official_signal_id=? ORDER BY evaluation_id LIMIT ?').all(signalId,expectedBindings.length+1).map(r=>r.evaluation_id);
+   if(current.length!==expectedBindings.length||current.some((id,i)=>id!==expectedBindings[i]))throw new Error('measurement_projection_binding_changed');
+   if(current.some(id=>c.pendingEvaluations.has(id)))throw new Error('measurement_quarantine_capability_pending');
+  }
+  if(requireUnquarantinedEvaluation&&root.prepare('SELECT 1 FROM measurement_decision_quarantine WHERE evaluation_id=?').get(evaluationId))throw new Error('measurement_quarantine_capability_pending');
+ };
  check.release=()=>{if(released)return;released=true;for(const [key,t]of tokens)if(--t.users===0&&c.generations.get(key)===t)c.generations.delete(key);};
  leases.set(check,{root,check});return Object.freeze(check);
 }

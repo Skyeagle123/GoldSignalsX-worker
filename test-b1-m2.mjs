@@ -516,7 +516,7 @@ test('M2 final R1 paused Official dispatch does not block unrelated candidate pr
  const broken=support(binding,{...binding,beforeBatch(){throw new Error('INTENT_STORAGE_FAILURE');}});await createOfflineMeasurementConsumer(broken,{clock:()=>now+86400000}).ingest(await badCreation());
  // Local suspension is subject-specific: other candidates commit while the
  // original Official dispatch is still held at the adapter boundary.
- const other=await collectMeasurementFromProjection(binding,{asOf:now+86400002,bars:lateTp2Bars(),ticks:[],maxSubjects:8});assert(other.ok);assert(other.updated>0);assert.equal(lifecycleCapability(held.paused),lifecycleCapability(binding));
+ const other=await collectMeasurementFromProjection(binding,{asOf:now+86400002,bars:lateTp2Bars(),ticks:[],maxSubjects:8});assert(other.ok,JSON.stringify(other));assert(other.updated>0);assert.equal(lifecycleCapability(held.paused),lifecycleCapability(binding));
  assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,0);
  held.release();const result=await work;assert.equal(result.updated,0);assert.equal(result.deferredOfficialSubjects,1);db.close();
 });
