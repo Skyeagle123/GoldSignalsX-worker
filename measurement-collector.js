@@ -1,4 +1,5 @@
 // Scheduled measurement writer only. Never imported by the reader. No schema initializer.
+import {assertLifecycleCapability,lifecycleCapability} from './measurement-lifecycle.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreSharedDecision} from './evidence-codec.js';
 import {parseEvidence} from './signal-evidence.js';
@@ -17,14 +18,15 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   // arriving candidates cannot starve their bounded tick-buffer accumulation.
   // Within each class, the least recently processed subject gets the next turn.
   const select=measurementPlane?`SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
-   s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
+   s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at,p.source_revision AS selected_revision
    FROM signal_measurement_state s JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id
    LEFT JOIN measurement_lifecycle_projection p ON p.signal_id=d.official_signal_id AND p.available_at<=?
+    AND p.source_revision=(SELECT revision FROM measurement_lifecycle_revisions WHERE signal_id=p.signal_id)
     AND p.integrity_status='COMPLETE' AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
     AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
     AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
    WHERE EXISTS(SELECT 1 FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery a ON a.event_id=r.event_id WHERE r.event_kind='DECISION_CYCLE' AND r.semantic_id=d.cycle_id AND a.ingested_at<=?)
-    AND (d.kind!='OFFICIAL' OR (p.signal_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM measurement_decision_conflicts c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id)))
+    AND (d.kind!='OFFICIAL' OR (p.signal_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id)))
     AND s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`:
    `SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
    s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
@@ -35,15 +37,35 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   const deferredOfficial=measurementPlane?await db.prepare(`SELECT COUNT(*) AS n FROM signal_measurement_state s
    JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id WHERE s.kind='OFFICIAL' AND s.next_observe_at<=?
    AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_projection p WHERE p.signal_id=d.official_signal_id
-    AND p.available_at<=? AND p.integrity_status='COMPLETE'
+    AND p.available_at<=? AND p.source_revision=(SELECT revision FROM measurement_lifecycle_revisions WHERE signal_id=p.signal_id) AND p.integrity_status='COMPLETE'
     AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
     AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
     AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
-    AND NOT EXISTS(SELECT 1 FROM measurement_decision_conflicts c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id))`).bind(asOf,asOf).first():{n:0};
+    AND NOT EXISTS(SELECT 1 FROM measurement_decision_quarantine c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id))`).bind(asOf,asOf).first():{n:0};
   const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
   const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
   const rows=[...official,...candidates];
-  const writer=measurementWriter(db,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
+  if(measurementPlane)lifecycleCapability(db);
+  let activeGuard=null,racedOfficial=0;
+  const originals=new WeakMap();
+  // Guard and mutation share one atomic batch. This is per subject, never a
+  // global work lock. A revision mismatch raises and rolls back the mutation.
+  async function guardedBatch(statements){
+   const raw=statements.map(s=>originals.get(s)||s),g=activeGuard;
+   if(!g)return db.batch(raw);
+   assertLifecycleCapability(db,g.signalId);
+   const result=await db.batch([
+    db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),
+    ...raw,db.prepare('DELETE FROM measurement_collector_guards WHERE signal_id=?').bind(g.signalId)
+   ]);
+   return result.slice(1,-1);
+  }
+  const guardedDb=measurementPlane?{batch:guardedBatch,prepare(sql){const original=db.prepare(sql);return {...original,bind(...values){
+   const statement=original.bind(...values),wrapped={...statement,async run(){return activeGuard?(await guardedBatch([statement]))[0]:statement.run();}};
+   originals.set(wrapped,statement);return wrapped;
+  }};}}:db;
+  const guardFor=row=>measurementPlane&&row.kind==='OFFICIAL'?{signalId:row.official_signal_id,revision:row.selected_revision}:null;
+  const writer=measurementWriter(guardedDb,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
   const subjects=[];
   for(const row of rows){
    const rich=await db.prepare('SELECT * FROM measurement_rich_evidence WHERE evidence_id=?').bind(`decision:${row.evaluation_id}`).first();
@@ -65,7 +87,9 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    if(latest&&latest.availableAt>=(previous?.outcome?.evidenceAsOf??subject.createdAt))previous={...previous,processedThrough:latest.occurredTo,covered:latest.covered,gaps:latest.gaps,quality:latest.quality,global:latest.global,outcome:latest.outcome};
    const existing=(await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
    for(const record of existing){const event=await decodeStoredOutcome(record);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
-   if(latest?.availableAt===asOf){await writer.state(subject.id,row.cohort_id,previous,asOf);updated++;continue;}
+   if(latest?.availableAt===asOf){activeGuard=guardFor(row);try{await writer.state(subject.id,row.cohort_id,previous,asOf);updated++;}
+    catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message)))racedOfficial++;else throw error;}
+    finally{activeGuard=null;}continue;}
    const observationAsOf=Math.min(asOf,subject.measurementHorizonAt??asOf);
    const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf,availableAt:asOf});
    folded.state.measurementHorizonAt=subject.measurementHorizonAt;
@@ -79,6 +103,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   }
   for(const b of blocks.values())await writer.immutable('market',{block_id:b.blockId,timeframe:b.tf,from_at:b.from,to_at:b.to,recorded_at:asOf},parseEvidence(b.payload));
   for(const {row,subject,folded,manifest,observationAsOf} of subjects){
+   activeGuard=guardFor(row);try{
    if(folded.events.length)await writer.immutableBatch(folded.events.map(event=>({type:'outcome',values:{event_id:event.eventId,subject_id:subject.id,event_type:event.eventType,
     occurred_at:event.occurredAt??null,available_at:asOf,recorded_at:asOf,block_ids_json:'[]'},payload:event})),
     {links:folded.events.map(event=>({ownerType:'OUTCOME',ownerId:event.eventId,blockIds:manifest.references.map(x=>x.blockId)}))});
@@ -100,8 +125,10 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const complete=(subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt)||(subject.closedAt&&subject.closedAt<=asOf);
    if(complete){const finalization=await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:asOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});resourceReviews.push(...finalization.resourceReviews);}
    else await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
+   }catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message)))racedOfficial++;else throw error;}
+   finally{activeGuard=null;}
   }
-  return {ok:true,updated,resourceReviews,...(measurementPlane?{deferredOfficialSubjects:deferredOfficial.n,...(deferredOfficial.n?{captureGap:true,lifecycleStatus:'PENDING'}:{})}:{}),subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
+  return {ok:true,updated,resourceReviews,...(measurementPlane?{deferredOfficialSubjects:deferredOfficial.n+racedOfficial,...(deferredOfficial.n+racedOfficial?{captureGap:true,lifecycleStatus:'PENDING'}:{})}:{}),subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,
    unselectedCoverage:'NOT_ASSERTED; SUBJECT_BUDGET_MAY_LEAVE_GAPS',coverageBasis:'CANONICAL_INPUT_STREAM; BROKER_TICK_COMPLETENESS_UNKNOWN'};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_collection_failed'),captureGap:true};}

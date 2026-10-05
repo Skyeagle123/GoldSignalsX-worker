@@ -3,7 +3,7 @@ import {ENVELOPE_VERSION,PRODUCER_NAMESPACE,ENVELOPE_KINDS,PRODUCER_BOUNDS,valid
 import {canonicalSerialize,digestPayload,parseEvidence} from './signal-evidence.js';
 import {encodeEvidence,digestBytes,censusSnapshot} from './evidence-codec.js';
 import {measurementWriter} from './signal-evidence-store.js';
-import {rebuildLifecycleProjection} from './measurement-lifecycle.js';
+import {rebuildLifecycleProjection,lifecycleCapability,fenceLifecycleFailure,clearLifecycleFailure} from './measurement-lifecycle.js';
 
 const textEncoder=new TextEncoder();
 const fail=reason=>{throw new Error(reason);};
@@ -130,6 +130,16 @@ async function validatePayload(e,receivedAt){
    flag(p);
    if(!identity(p.primarySignalId)||!identity(p.confirmationSignalId)||p.primarySignalId===p.confirmationSignalId||e.semanticId!==`${p.primarySignalId}:confirmation:${p.confirmationSignalId}`)fail('measurement_semantic_identity_invalid');
    if(!unknown(p.linkPersistence)&&!['SUCCEEDED','FAILED'].includes(p.linkPersistence))fail('measurement_confirmation_invalid');
+   if(unknown(p.link)){if(p.linkPersistence==='SUCCEEDED')fail('measurement_confirmation_invalid');}
+   else if(Object.hasOwn(p.link,'signalId')){
+    exactKeys(p.link,['signalId','timeframe']);
+    if(p.link.signalId!==p.confirmationSignalId||!frames.includes(p.link.timeframe))fail('measurement_confirmation_invalid');
+   }else{
+    exactKeys(p.link,['type','confirmationSignalId','primarySignalId','tf','side','conf','score','signalBarTs','confirmedAt']);
+    if(p.link.type!=='later-confirmation'||p.link.confirmationSignalId!==p.confirmationSignalId||p.link.primarySignalId!==p.primarySignalId||!frames.includes(p.link.tf)||!['buy','sell'].includes(p.link.side)||!Number.isFinite(p.link.conf)||!Number.isFinite(p.link.score))fail('measurement_confirmation_invalid');
+    requiredClock(p.link.signalBarTs,receivedAt);requiredClock(p.link.confirmedAt,receivedAt);
+    if(!equal(p.link.confirmedAt,e.clocks.occurredAt))fail('measurement_confirmation_invalid');
+   }
   }else if(e.kind==='CAPTURE_GAP'){flag(p);if(p.captureGap!==true||p.durable!==false)fail('measurement_capture_gap_invalid');}
  }
 }
@@ -158,6 +168,7 @@ function decisions(e){return e.kind==='DECISION_CYCLE'?e.payload.records.filter(
 
 export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={}){
  if(!db||typeof db.prepare!=='function'||typeof db.batch!=='function')fail('measurement_atomic_db_required');
+ lifecycleCapability(db);
  async function ingest(wire,{receivedAt=now()}={}){
   let e,bindings=[],committed=false,batchAttempted=false;
   // Track durable batch confirmation even if the historical writer's later
@@ -169,12 +180,12 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
    for(const d of decisions(e))bindings.push({id:d.evaluationId,signalId:d.officialSignalId,digest:await digestPayload(canonicalSerialize(d))});
    const found=await db.prepare('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts r LEFT JOIN measurement_ingress_recovery s ON s.event_id=r.event_id WHERE r.event_id=? OR r.semantic_key=?').bind(e.eventId,e.semanticKey).all();
    const duplicate=!!found.results?.length;
-   if(duplicate&&found.results.some(r=>r.event_id!==e.eventId||r.payload_digest!==e.payloadDigest||r.semantic_key!==e.semanticKey))fail('measurement_ingress_integrity_conflict');
    // Check before the writer's own same-record preflight, which can otherwise
    // reject a changed census before the cross-kind conflict trigger runs.
    // The trigger remains the atomic guard against concurrent first deliveries.
    for(const b of bindings){const original=await db.prepare('SELECT payload_digest FROM measurement_decision_bindings WHERE evaluation_id=?').bind(b.id).first();
     if(original&&original.payload_digest!==b.digest)fail('measurement_decision_integrity_conflict');}
+   if(duplicate&&found.results.some(r=>r.event_id!==e.eventId||r.payload_digest!==e.payloadDigest||r.semantic_key!==e.semanticKey))fail('measurement_ingress_integrity_conflict');
    const c=e.clocks,mask=['occurredAt','observedAt','preparedAt'].reduce((n,k,i)=>n+(c[k]?.$unavailable?1<<i:0),0);
    const receipt=db.prepare(`INSERT INTO measurement_ingress_receipts
     (event_id,semantic_key,semantic_id,event_kind,producer_namespace,envelope_version,payload_digest,occurred_at,observed_at,prepared_at,clock_unavailable,received_at,processing_started_at,ingestion_status)
@@ -212,11 +223,16 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
     // The conflicting batch rolled back. Persist a small immutable incident so
     // an earlier valid projection cannot remain usable after contradiction.
     try{for(const b of bindings){const old=await db.prepare('SELECT payload_digest,official_signal_id FROM measurement_decision_bindings WHERE evaluation_id=?').bind(b.id).first();if(old&&old.payload_digest!==b.digest){
+     // First durably fence the subject as PENDING. If the later immutable
+     // marker fails, this intent still blocks publication and collection.
+     fenceLifecycleFailure(db,old.official_signal_id);
+     await db.batch([db.prepare("INSERT INTO measurement_decision_quarantine(evaluation_id,state,detected_at) VALUES(?,'PENDING',?) ON CONFLICT DO NOTHING").bind(b.id,now())]);
+     clearLifecycleFailure(db,old.official_signal_id);
      await db.prepare('INSERT INTO measurement_decision_conflicts(evaluation_id,rejected_digest,detected_at) VALUES(?,?,?) ON CONFLICT DO NOTHING').bind(b.id,b.digest,now()).run();
      if(old.official_signal_id){await db.prepare("UPDATE measurement_lifecycle_projection SET integrity_status='CONFLICT',status=NULL,closed_at=NULL WHERE signal_id=?").bind(old.official_signal_id).run();await rebuildLifecycleProjection(db,old.official_signal_id,{rebuiltAt:now()});}
     }}
      const signalId=subject(e);if(signalId)await rebuildLifecycleProjection(db,signalId,{rebuiltAt:now()});
-    }catch{return {ok:false,status:'INTEGRITY_CONFLICT',error:reason,durable:false,captureGap:true,retryable:true,conflictStatus:'RECONCILIATION_PENDING'};}
+    }catch{return {ok:false,status:'INTEGRITY_CONFLICT',error:reason,durable:false,captureGap:true,retryable:true,conflictStatus:'RECONCILIATION_PENDING',projectionStatus:'PENDING',quarantineDurability:'UNKNOWN_OR_PENDING'};}
     return {ok:false,status:'INTEGRITY_CONFLICT',error:reason,durable:false,captureGap:true,conflictStatus:'RECORDED'};
    }
    if(committed)return {ok:true,status:'ACCEPTED',durable:true,acknowledgementStatus:'RECONCILIATION_PENDING',projectionStatus:'PENDING',processingStatus:'PENDING',retryable:true,captureGap:true,error:reason};

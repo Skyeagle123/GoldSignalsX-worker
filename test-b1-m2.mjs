@@ -330,3 +330,142 @@ test('M2-R5 unavailable receipt lookup is retryable, not a false rejection of an
  const result=await broken.ingest(fact.wire);assert.equal(result.status,'RETRYABLE');assert.equal(result.durable,null);assert(result.retryable);
  assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);assert.equal((await consumer.ingest(fact.wire)).status,'DUPLICATE');db.close();
 });
+
+// Final residuals: exercise real public operations with deterministic interleavings.
+function interleaveBinding(binding,{match,operation,method='first',afterRead=false}){
+ let once=true;
+ return {...binding,prepare(sql){const original=binding.prepare(sql);return {...original,bind(...values){const statement=original.bind(...values);
+  return {...statement,async [method](){if(once&&match(sql)){once=false;const prior=afterRead?await statement[method]():null;await operation();if(afterRead)return prior;}return statement[method]();}};
+ }};}};
+}
+function lateTp2Bars(){const levels=created.engine.levels;return Array.from({length:120},(_,i)=>({t:now+i*60000,o:levels.entry,h:i?levels.tp2+1:levels.entry,l:levels.entry,c:levels.entry,v:1,provider:'mt5'}));}
+async function badCreation(){return edited(creation,e=>e.payload.decisionEvidence.engine.levels.entry=4200);}
+
+test('M2 residual R1 selected active Official is deferred atomically after SL and failed refresh',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);
+ const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),sl=await lifecycle(id,'sl');
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('INSERT INTO measurement_lifecycle_projection')),{clock:()=>now+86400000});
+ const racing=interleaveBinding(binding,{match:s=>s==='SELECT * FROM measurement_rich_evidence WHERE evidence_id=?',operation:async()=>assert.equal((await broken.ingest(sl.wire)).projectionStatus,'PENDING')});
+ const result=await collectMeasurementFromProjection(racing,{asOf:now+7260000,bars:lateTp2Bars(),ticks:[],maxSubjects:1});
+ assert(result.ok);assert.equal(result.updated,0);assert.equal(result.deferredOfficialSubjects,1);assert(result.captureGap);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,0);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_collector_guards').get().n,0);
+ assert.equal((await consumer.ingest(sl.wire)).projectionStatus,'CURRENT');
+ assert((await collectMeasurementFromProjection(binding,{asOf:now+86400001,bars:lateTp2Bars(),ticks:[],maxSubjects:1})).ok);
+ const {decodeStoredOutcome}=await import('./evidence-codec.js');
+ for(const row of db.prepare('SELECT * FROM signal_outcome_evidence WHERE subject_id=?').all(id)){const p=await decodeStoredOutcome(row);assert.notEqual(p.eventType,'TP2');if(p.occurredTo!=null)assert(p.occurredTo<=now+60000);}
+ const count=db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n;
+ assert((await collectMeasurementFromProjection(binding,{asOf:now+86400002,bars:lateTp2Bars(),ticks:[],maxSubjects:1})).ok);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,count);db.close();
+});
+test('M2 residual R1 conflict arriving after selection defers outcomes and cursor',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);const bad=await badCreation();
+ const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ const racing=interleaveBinding(binding,{match:s=>s==='SELECT * FROM measurement_rich_evidence WHERE evidence_id=?',operation:async()=>assert.equal((await consumer.ingest(bad)).conflictStatus,'RECORDED')});
+ const result=await collectMeasurementFromProjection(racing,{asOf:now+86400001,bars:lateTp2Bars(),ticks:[],maxSubjects:1});
+ assert(result.ok);assert.equal(result.updated,0);assert.equal(result.deferredOfficialSubjects,1);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,0);db.close();
+});
+test('M2 residual R1 mutation guard detects a fact arriving immediately before DB batch',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ let once=true;const racing={...binding,prepare(sql){const original=binding.prepare(sql);return {...original,bind(...v){return {...original.bind(...v),testSql:sql};}};},async batch(statements){
+  if(once&&statements[0]?.testSql?.startsWith('INSERT INTO measurement_collector_guards')){once=false;assert((await consumer.ingest((await lifecycle(id,'sl')).wire)).ok);}return binding.batch(statements);
+ }};
+ const result=await collectMeasurementFromProjection(racing,{asOf:now+86400001,bars:lateTp2Bars(),ticks:[],maxSubjects:1});
+ assert.equal(once,false);assert(result.ok);assert.equal(result.updated,0);assert.equal(result.deferredOfficialSubjects,1);assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,0);db.close();
+});
+test('M2 residual R2 stale rebuild cannot overwrite committed quarantine',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);const bad=await badCreation();
+ const racing=interleaveBinding(binding,{match:s=>s.startsWith('SELECT c.evaluation_id FROM measurement_decision_conflicts'),method:'all',afterRead:true,operation:async()=>{
+  assert.equal((await consumer.ingest(bad)).conflictStatus,'RECORDED');assert.equal(projection(db,id).integrity_status,'CONFLICT');
+ }});
+ const result=await createOfflineMeasurementConsumer(racing,{clock:()=>now+86400000}).ingest(creation.wire);
+ assert.notEqual(result.projectionStatus,'CURRENT');assert.equal(projection(db,id).integrity_status,'CONFLICT');
+ assert.equal((await consumer.ingest(creation.wire)).projectionStatus,'CONFLICT');db.close();
+});
+test('M2 residual R2 CAS fences conflict appearing after all rebuild reads before publication',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);const bad=await badCreation();
+ const racing=interleaveBinding(binding,{match:s=>s.startsWith('INSERT INTO measurement_lifecycle_projection'),method:'run',operation:async()=>assert.equal((await consumer.ingest(bad)).conflictStatus,'RECORDED')});
+ const result=await createOfflineMeasurementConsumer(racing,{clock:()=>now+86400000}).ingest(creation.wire);
+ assert.equal(result.projectionStatus,'PENDING');assert.equal(projection(db,id).integrity_status,'CONFLICT');db.close();
+});
+test('M2 residual R2 failed immutable conflict marker leaves durable pending quarantine',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);const bad=await badCreation();
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('INSERT INTO measurement_decision_conflicts')),{clock:()=>now+86400000});
+ const r=await broken.ingest(bad);assert(r.retryable);assert.equal(r.conflictStatus,'RECONCILIATION_PENDING');assert.equal(r.projectionStatus,'PENDING');
+ assert.equal(db.prepare('SELECT state FROM measurement_decision_quarantine').get().state,'PENDING');assert.equal(projection(db,id).integrity_status,'CONFLICT');
+ assert.equal((await consumer.ingest(creation.wire)).projectionStatus,'PENDING');
+ assert.equal((await collectMeasurementFromProjection(binding,{asOf:now+86400001,bars:lateTp2Bars(),ticks:[],maxSubjects:1})).deferredOfficialSubjects,1);
+ assert.equal((await consumer.ingest(bad)).conflictStatus,'RECORDED');assert.equal(db.prepare('SELECT state FROM measurement_decision_quarantine').get().state,'CONFLICT');
+ assert.equal((await consumer.ingest(creation.wire)).projectionStatus,'CONFLICT');db.close();
+});
+test('M2 residual R2 failed quarantine transaction never claims successful quarantine',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);
+ const unavailable={...binding,async batch(){throw new Error('QUARANTINE_STORAGE_UNAVAILABLE');}};
+ const r=await createOfflineMeasurementConsumer(unavailable,{clock:()=>now+86400000}).ingest(await badCreation());
+ assert(r.retryable);assert.equal(r.conflictStatus,'RECONCILIATION_PENDING');assert.equal(r.quarantineDurability,'UNKNOWN_OR_PENDING');assert.equal(r.projectionStatus,'PENDING');
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_decision_conflicts').get().n,0);
+ assert.equal((await consumer.ingest(creation.wire)).projectionStatus,'PENDING');
+ await assert.rejects(rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400001}),/capability_pending/);
+ const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ const collected=await collectMeasurementFromProjection(binding,{asOf:now+86400001,bars:lateTp2Bars(),ticks:[],maxSubjects:1});assert.equal(collected.updated,0);assert.equal(collected.deferredOfficialSubjects,1);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ assert.equal((await consumer.ingest(await badCreation())).conflictStatus,'RECORDED');assert.equal(projection(db,id).integrity_status,'CONFLICT');db.close();
+});
+test('M2 residual R2 identical concurrent rebuilds remain deterministic and usable',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(creation.wire);
+ const results=await Promise.all([rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400000}),rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400000})]);
+ assert.deepEqual(results[0],results[1]);assert.equal(projection(db,id).integrity_status,'COMPLETE');db.close();
+});
+test('M2 residual R3 numeric/contradictory/malformed nested links reject without writes',async()=>{
+ const packet=await confirmation('primary','child');
+ const bad=[e=>e.payload.link=123,e=>e.payload.link.signalId='other',e=>e.payload.link.primarySignalId=123,e=>e.payload.linkPersistence={status:'SUCCEEDED'},e=>e.payload.link={type:'later-confirmation',confirmationSignalId:'child',primarySignalId:123,tf:'5m',side:'buy',conf:80,score:80,signalBarTs:now-300000,confirmedAt:now+30}];
+ for(const mutate of bad){const {db,consumer}=await setup();const r=await consumer.ingest(await edited(packet,mutate));assert.equal(r.status,'REJECTED');
+  assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,0);assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,0);db.close();}
+});
+test('M2 residual R3 full captured links and unavailable/failure states remain exact',async()=>{
+ const packet=await confirmation('primary','child');
+ const full={type:'later-confirmation',confirmationSignalId:'child',primarySignalId:'primary',tf:'5m',side:'buy',conf:80,score:75,signalBarTs:now-300000,confirmedAt:now+30};
+ for(const [link,persistence] of [[packet.envelope.payload.link,'SUCCEEDED'],[full,'SUCCEEDED'],[full,'FAILED'],[null,null],[{$unavailable:'undefined'},{$unavailable:'undefined'}]]){
+  const {db,consumer}=await setup();const wire=await edited(packet,e=>{e.payload.link=link;e.payload.linkPersistence=persistence;});assert((await consumer.ingest(wire)).ok);
+  const fact=await decodeStoredEvidence(db.prepare('SELECT * FROM measurement_lifecycle_facts').get());
+  const {parseEvidence,canonicalSerialize}=await import('./signal-evidence.js');assert.equal(canonicalSerialize(fact),canonicalSerialize(parseEvidence(wire).payload));
+  const p=await decodeStoredEvidence(projection(db,'child'));assert.equal(p.integrityStatus,'PARTIAL');assert.equal(p.status,null);assert.equal(p.owningPrimaryId,'primary');db.close();
+ }
+});
+test('M2 residual migration upgrades populated 0005 and fences old caches until rebuild',async()=>{
+ const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
+ for(const file of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql','0004_measurement_ingress.sql','0005_measurement_ingress_recovery.sql'])db.exec(await fs.readFile(new URL('migrations/'+file,import.meta.url),'utf8'));
+ const {transactionalBinding}=await import('./test-fixtures/b1-sqlite.mjs'),binding=transactionalBinding(db);
+ // Populate the previous schema with its exact previous consumer/projection.
+ const urls=[];try{
+  const root=new URL('./',import.meta.url);
+  for(const [original,name] of [['measurement-lifecycle.js','.m2-upgrade-lifecycle.mjs'],['measurement-consumer.js','.m2-upgrade-consumer.mjs']]){
+   const url=new URL(name,root);urls.push(url);let source=execFileSync('git',['show',`abe2a408f8e8fdf2292df31646aac4960458a9dd:${original}`],{encoding:'utf8'});
+   if(original==='measurement-consumer.js')source=source.replace("'./measurement-lifecycle.js'","'./.m2-upgrade-lifecycle.mjs'");await fs.writeFile(url,source);
+  }
+  const old=await import(urls[1].href);const consumer=old.createOfflineMeasurementConsumer(binding,{clock:()=>now+86400000});assert((await consumer.ingest(cycle.wire)).ok);assert((await consumer.ingest(creation.wire)).ok);
+  const before=db.prepare('SELECT * FROM measurement_lifecycle_facts').all();
+  db.exec(await fs.readFile(new URL('migrations/0006_measurement_commit_fences.sql',import.meta.url),'utf8'));
+  assert.deepEqual(db.prepare('SELECT * FROM measurement_lifecycle_facts').all(),before);assert.equal(projection(db,id).source_revision,0);
+  assert.equal((await collectMeasurementFromProjection(binding,{asOf:now+86400001,bars:[],ticks:[],maxSubjects:1})).deferredOfficialSubjects,1);
+  await rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400001});assert(projection(db,id).source_revision>0);assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+ }finally{await Promise.all(urls.map(url=>fs.unlink(url)));db.close();}
+});
+test('M2 residual R2 failed quarantine blocks an older rebuild through shared offline capability',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(creation.wire);const before=projection(db,id),bad=await badCreation();
+ const unavailable={...binding,async batch(){throw new Error('QUARANTINE_UNAVAILABLE');}};
+ const racing=interleaveBinding(binding,{match:s=>s.startsWith('SELECT c.evaluation_id FROM measurement_decision_conflicts'),method:'all',afterRead:true,operation:async()=>{
+  const r=await createOfflineMeasurementConsumer(unavailable,{clock:()=>now+86400000}).ingest(bad);assert.equal(r.projectionStatus,'PENDING');
+ }});
+ const r=await createOfflineMeasurementConsumer(racing,{clock:()=>now+86400000}).ingest(creation.wire);assert.equal(r.projectionStatus,'PENDING');assert(r.retryable);
+ assert.deepEqual(projection(db,id),before);assert.equal((await consumer.ingest(bad)).conflictStatus,'RECORDED');db.close();
+});
+test('M2 residual R2 SQL publication fence independently rejects stale or quarantined COMPLETE',async()=>{
+ const {db,consumer}=await setup();await consumer.ingest(creation.wire);const row=projection(db,id);await consumer.ingest(await badCreation());
+ assert.throws(()=>db.prepare("UPDATE measurement_lifecycle_projection SET source_revision=?,payload_blob=?,integrity_status='COMPLETE' WHERE signal_id=?").run(row.source_revision,row.payload_blob,id),/rebuild_raced/);
+ assert.equal(projection(db,id).integrity_status,'CONFLICT');db.close();
+});

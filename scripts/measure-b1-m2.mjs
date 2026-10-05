@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {database,cyclePackets,lifecycle,confirmation,now} from '../test-fixtures/b1-m2.mjs';
 import {createOfflineMeasurementConsumer} from '../measurement-consumer.js';
+import {collectMeasurementFromProjection} from '../measurement-collector.js';
 import {rebuildLifecycleProjection} from '../measurement-lifecycle.js';
 import {sqliteRecordPayloadBytes} from '../measurement-resource-budget.js';
 import {buildMeasurementEnvelope} from '../measurement-envelope.js';
 const output=process.argv[2];if(!output)throw new Error('output path required');
-const tables=['measurement_ingress_receipts','measurement_lifecycle_facts','measurement_lifecycle_projection','measurement_ingress_recovery','measurement_decision_bindings','measurement_decision_conflicts'];
+const tables=['measurement_ingress_receipts','measurement_lifecycle_facts','measurement_lifecycle_projection','measurement_ingress_recovery','measurement_decision_bindings','measurement_decision_conflicts','measurement_lifecycle_revisions','measurement_decision_quarantine','measurement_collector_guards'];
 function payloads(db){return Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT * FROM ${table}`).all().map(row=>sqliteRecordPayloadBytes(Object.values(row)))]));}
 function allocation(db){
  const objects=db.prepare("SELECT name,pgsize,payload,ncell FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE type='table' AND name IN ("+tables.map(()=>'?').join(',')+") OR type='index' AND tbl_name IN ("+tables.map(()=>'?').join(',')+"))").all(...tables,...tables);
@@ -16,6 +17,7 @@ function allocation(db){
   indexes:Object.fromEntries([...new Set(objects.map(r=>r.name))].map(name=>[name,objects.filter(r=>r.name===name).reduce((n,r)=>n+r.pgsize,0)])),
   rows:Object.fromEntries(Object.entries(rows).map(([name,bytes])=>[name,{count:bytes.length,min:bytes.length?Math.min(...bytes):0,max:bytes.length?Math.max(...bytes):0,total:bytes.reduce((a,b)=>a+b,0)}]))};
 }
+function projectionRevision(db,id){return db.prepare('SELECT source_revision FROM measurement_lifecycle_projection WHERE signal_id=?').get(id).source_revision;}
 async function operations(consumer,calls,wire){calls.length=0;const result=await consumer.ingest(wire);return {result,preparedReads:calls.filter(s=>/^SELECT/.test(s)).length,preparedWrites:calls.filter(s=>/^(INSERT|UPDATE|DELETE)/.test(s)).length};}
 const report={basis:'LOCAL SQLite record payload before allocation; physical dbstat includes table/index pages; synthetic mature rowid sensitivity is not a full production workload',profiles:{},allocation:{}};
 for(const heavy of [false,true]){
@@ -51,7 +53,21 @@ for(const heavy of [false,true]){
  const {censusSnapshot}=await import('../evidence-codec.js');cp.census=censusSnapshot(cp.decisionEvidence);
  const ce=census.envelope,conflict=await buildMeasurementEnvelope({kind:ce.kind,semanticId:ce.semanticId,payload:cp,occurredAt:ce.clocks.occurredAt,observedAt:ce.clocks.observedAt,preparedAt:ce.clocks.preparedAt});
  report.recovery.crossKindConflict=await operations(consumer,calls,conflict.wire);assert.equal(report.recovery.crossKindConflict.result.status,'INTEGRITY_CONFLICT');
- report.recovery.conflictRowBytes=payloads(db).measurement_decision_conflicts;db.close();
+ report.recovery.conflictRowBytes=payloads(db).measurement_decision_conflicts;
+ report.recovery.quarantineRowBytes=payloads(db).measurement_decision_quarantine;
+ report.recovery.revisionRowBytes=payloads(db).measurement_lifecycle_revisions;db.close();
+}
+{
+ const {db,binding,calls}=await database(),consumer=createOfflineMeasurementConsumer(binding,{clock:()=>now+2000});
+ const ps=await cyclePackets(),creation=ps.find(p=>p.envelope.kind==='OFFICIAL_CREATION');
+ for(const p of [ps[0],creation])assert((await consumer.ingest(p.wire)).ok);
+ const levels=creation.envelope.payload.decisionEvidence.engine.levels;
+ const bars=Array.from({length:10},(_,i)=>({t:now+i*60000,o:levels.entry,h:levels.entry,l:levels.entry,c:levels.entry,v:1,provider:'mt5'}));
+ calls.length=0;const result=await collectMeasurementFromProjection(binding,{asOf:now+600000,bars,ticks:[],maxSubjects:1});assert(result.ok);
+ report.collectorGuard={result,preparedReads:calls.filter(s=>/^SELECT/.test(s)).length,preparedWrites:calls.filter(s=>/^(INSERT|UPDATE|DELETE)/.test(s)).length,
+  guardTransactions:calls.filter(s=>s.startsWith('INSERT INTO measurement_collector_guards')).length,guardRowsAfterCommit:db.prepare('SELECT count(*) n FROM measurement_collector_guards').get().n,
+  transientGuardPayloadBytes:sqliteRecordPayloadBytes([creation.envelope.semanticId,projectionRevision(db,creation.envelope.semanticId),now+600000])};
+ db.close();
 }
 for(const [name,rowidBase]of [['fresh',0],['90day',181440],['365dayStress',735840]]){
  const {db,binding}=await database(),consumer=createOfflineMeasurementConsumer(binding,{clock:()=>now+86400000});

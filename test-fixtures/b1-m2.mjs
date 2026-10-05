@@ -8,7 +8,7 @@ import * as sm from '../signal-measurement.js';
 export {now};
 export async function database(){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
- for(const file of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql','0004_measurement_ingress.sql','0005_measurement_ingress_recovery.sql'])db.exec(await fs.readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
+ for(const file of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql','0004_measurement_ingress.sql','0005_measurement_ingress_recovery.sql','0006_measurement_commit_fences.sql'])db.exec(await fs.readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
  const calls=[];return {db,calls,binding:transactionalBinding(db,{calls})};
 }
 export async function cyclePackets({heavy=false}={}){
