@@ -37,10 +37,19 @@ function manifest(m,receivedAt,blocks=null){
  }
  if(count!==m.count)fail('measurement_manifest_invalid');return m.references.map(r=>r.blockId);
 }
+// Only accepted Engine rejections may carry a non-directional census identity.
+function nonDirectionalRejection(d){
+ const e=d.engine,gates=['minimum-bars','candle-quality','atr','candle-age','receipt-age','provider-age','news-calendar','score','margin','candle-confirmation','mtf-confirmation','mtf-opposition','ny-session','pivot','price-source','price-alignment'];
+ return d.kind==='CANDIDATE'&&d.outcome==='ENGINE_REJECTED'&&d.levelsStatus==='NOT_COMPUTED_BY_ENGINE'&&
+  e?.result?.side==='none'&&e.result.tf===d.timeframe&&e.identity?.tf===d.timeframe&&e.identity.evaluationAt===d.evaluatedAt&&
+  ['entry','tp1','tp2','sl'].every(k=>unknown(e.levels?.[k])&&unknown(e.result[k]))&&
+  Array.isArray(e.gates)&&e.gates.length===gates.length&&e.gates.every((g,i)=>g.id===gates[i]&&g.version===1&&g.ordinal===i&&['PASS','FAIL','NOT_EVALUATED'].includes(g.result))&&
+  e.gates.some(g=>g.result==='FAIL'&&g.reasonCode===g.id+'_failed');
+}
 function decision(d,receivedAt){
  exactKeys(d,['admissionContext','broadMtf','callerGates','candidateKey','capturedAt','createdAt','cycleId','decisionUse','direction','engine','engineMtf','evaluatedAt','evaluationId','evidenceCompleteness','exposure','inputManifest','kind','levelsStatus','measurementOnly','officialPersistence','officialSignalId','outcome','quote','skippedReason','sourceCandle','symbol','timeframe','versions']);
  flag(d);if(!identity(d.evaluationId)||!identity(d.cycleId)||!['CANDIDATE','OFFICIAL'].includes(d.kind))fail('measurement_decision_identity_invalid');
- if(!frames.includes(d.timeframe)||!unknown(d.direction)&&!['buy','sell'].includes(d.direction)||!d.evaluationId.startsWith(d.cycleId+':'))fail('measurement_decision_identity_invalid');
+ if(!frames.includes(d.timeframe)||!unknown(d.direction)&&!['buy','sell'].includes(d.direction)&&!(d.direction==='none'&&nonDirectionalRejection(d))||!d.evaluationId.startsWith(d.cycleId+':'))fail('measurement_decision_identity_invalid');
  for(const k of ['createdAt','evaluatedAt','capturedAt'])clock(d[k],receivedAt);
  if(!d.inputManifest||!Array.isArray(d.inputManifest.engineMtf))fail('measurement_manifest_invalid');
  for(const m of [d.inputManifest.primary,...d.inputManifest.engineMtf,d.inputManifest.research1m])manifest(m,receivedAt);

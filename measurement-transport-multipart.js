@@ -30,7 +30,11 @@ const cloneResult=result=>parseEvidence(canonicalSerialize(result,16384));
 export function createOfflineMultipartTransport({consumer,store:storage=createVolatileTransportStore(),clock=()=>Date.now(),maxAttempts=3,maxReplays=4,retryDelayMs=1000,retentionMs=MOCK_RETENTION_MS,hook=null}={}){
  const root=stores.get(storage);
  if(!root||!consumer||typeof consumer.ingest!=='function'||typeof clock!=='function'||hook!==null&&typeof hook!=='function'||!bounded(maxAttempts,1,16)||!bounded(maxReplays,1,16)||!bounded(retryDelayMs,0,86400000)||!bounded(retentionMs,1,MOCK_RETENTION_MS))throw new Error('transport_runtime_invalid');
- const runtime={active:true};
+ const runtime={active:true,validations:new Set(),framings:new Set()};
+ // Tokens belong to one runtime. Crash and late finally blocks share idempotent release.
+ function admit(kind){const token={kind};runtime[kind].add(token);root[kind]++;return token;}
+ function release(token){if(runtime[token.kind].delete(token))root[token.kind]--;}
+
  const now=()=>clockValue(clock());
  const live=()=>{if(!runtime.active)throw new Error('transport_runtime_crashed');};
  const instrument=async(phase,id)=>{if(hook)await hook(phase,id);live();};
@@ -89,7 +93,7 @@ export function createOfflineMultipartTransport({consumer,store:storage=createVo
  async function receive(wire,{signal}={}){
   live();if(signal?.aborted)return {status:'ABORTED',durable:false};
   if(root.validations>=64){root.metrics.capacityRejected++;return {status:'CAPACITY_PENDING',classification:'RETRYABLE',durable:false};}
-  root.validations++;try{
+  const admission=admit('validations');try{
    let f;try{f=(await validateTransportFragment(wire)).manifest;}catch(error){return await reject(wire,String(error.message),/digest|identity/.test(error.message)?'INTEGRITY_CONFLICT':'PERMANENT_MALFORMED');}
    live();if(signal?.aborted)return {status:'ABORTED',durable:false};const at=now();root.metrics.received++;
    let r=root.records.get(f.eventId);
@@ -115,36 +119,38 @@ export function createOfflineMultipartTransport({consumer,store:storage=createVo
    if(r.status==='ACKNOWLEDGED'||r.status==='DLQ')return snapshot(r);
    if(r.pieces.size===r.manifest.count){if(r.status==='STAGING')r.status='READY';return await dispatch(r);}
    return snapshot(r);
-  }finally{root.validations--;}
+  }finally{release(admission);}
  }
  async function redeliver(id,{replay=false}={}){
   live();const r=root.records.get(id);if(!r)return {status:'NOT_FOUND',durable:false};
   if(root.locks.has(id))return root.locks.get(id).promise;
+  expireRecord(r,now());
   if(r.status==='EXPIRED_INCOMPLETE')return snapshot(r);
   if(replay){
    if(r.replays>=maxReplays)return {status:'REPLAY_LIMIT',durable:false,eventId:id};
    await instrument('beforeReplay',id);
    // Another replay or owner cleanup may have occurred during the optional hook.
    if(root.records.get(id)!==r)return {status:'NOT_FOUND',durable:false};
+   expireRecord(r,now());
    if(r.status==='EXPIRED_INCOMPLETE')return snapshot(r);
    if(root.locks.has(id))return root.locks.get(id).promise;
    if(r.replays>=maxReplays)return {status:'REPLAY_LIMIT',durable:false,eventId:id};
    r.replays++;r.expiresAt=clockValue(now()+retentionMs);
   }else if(r.status==='DLQ')return snapshot(r);
-  if(replay||r.status==='ACKNOWLEDGED'){r.cycleAttempts=0;r.status='READY';r.nextAt=null;}
+  if(replay||r.status==='ACKNOWLEDGED'){if(r.status==='ACKNOWLEDGED')r.expiresAt=clockValue(now()+retentionMs);r.cycleAttempts=0;r.status='READY';r.nextAt=null;}
   return dispatch(r);
  }
  const api={mode:'OFFLINE',store:storage,receive,
   async send(packet,{signal}={}){
    live();if(signal?.aborted)return {status:'ABORTED',durable:false};
-   if(root.framings>=16)return {status:'OFFLINE_CAPACITY_EXCEEDED',durable:false};root.framings++;
+   if(root.framings>=16)return {status:'OFFLINE_CAPACITY_EXCEEDED',durable:false};const admission=admit('framings');
    try{
     const fragments=await fragmentMeasurementPacket(packet,{receivedAt:now()});live();
     const eventId=JSON.parse(fragments[0]).eventId,wasAcknowledged=root.records.get(eventId)?.status==='ACKNOWLEDGED';let result;
     for(const fragment of fragments){result=await receive(fragment,{signal});if(['ABORTED','CAPACITY_PENDING','REJECTED'].includes(result.status)||result.dlqId)return result;}
     if(wasAcknowledged)result=await redeliver(eventId);
     return {...result,status:result.status==='ACKNOWLEDGED'?(wasAcknowledged?'DUPLICATE':'OFFLINE_ACCEPTED'):result.status,transportStatus:result.status};
-   }finally{root.framings--;}
+   }finally{release(admission);}
   },
   retry:id=>redeliver(id),replay:id=>redeliver(id,{replay:true}),
   async replayPoison(id){live();const p=root.poison.get(id);if(!p)return {status:'NOT_FOUND',durable:false};if(p.replays>=maxReplays)return {status:'REPLAY_LIMIT',durable:false};p.replays++;await instrument('beforePoisonReplay',id);return receive(p.wire);},
@@ -153,8 +159,8 @@ export function createOfflineMultipartTransport({consumer,store:storage=createVo
   dlq(){live();return {events:[...root.records.values()].filter(r=>r.status==='DLQ').map(r=>({...snapshot(r),fragments:[...r.pieces.values()]})),
    poison:[...root.poison.values()].map(p=>({...p}))};},
   discard(id){live();if(root.locks.has(id)||root.validations)return false;const r=root.records.get(id);if(!r||!['ACKNOWLEDGED','DLQ','EXPIRED_INCOMPLETE'].includes(r.status))return false;root.bytes-=r.bytes;root.metrics.discardedBytes+=r.bytes;root.records.delete(id);return true;},
-  metrics:()=>({...root.metrics,events:root.records.size,stagingBytes:root.bytes,poisonEntries:root.poison.size,poisonBytes:root.dlqBytes,deliveriesInFlight:root.locks.size,validationsInFlight:root.validations}),
-  crash(){if(!runtime.active)return;runtime.active=false;for(const [id,lease]of root.locks)if(lease.owner===runtime){lease.valid=false;root.locks.delete(id);const r=root.records.get(id);
+  metrics:()=>({...root.metrics,events:root.records.size,stagingBytes:root.bytes,poisonEntries:root.poison.size,poisonBytes:root.dlqBytes,deliveriesInFlight:root.locks.size,validationsInFlight:root.validations,framingsInFlight:root.framings,ownedValidations:runtime.validations.size,ownedFramings:runtime.framings.size}),
+  crash(){if(!runtime.active)return;runtime.active=false;for(const kind of ['validations','framings'])for(const token of runtime[kind])release(token);for(const [id,lease]of root.locks)if(lease.owner===runtime){lease.valid=false;root.locks.delete(id);const r=root.records.get(id);
     if(r.status==='DELIVERING'){failure(r,'DURABILITY_UNKNOWN','runtime_lost_before_acknowledgement',now());r.status='RETRY_PENDING';r.nextAt=now();}}}
  };return Object.freeze(api);
 }

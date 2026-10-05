@@ -234,14 +234,15 @@ test('M3 receive admission bounds 65 concurrent arrivals with explicit backpress
  const {transport}=runtime();const results=await Promise.all(Array.from({length:65},()=>transport.receive(frames[0])));
  assert.equal(results.filter(r=>r.status==='CAPACITY_PENDING').length,1);assert.equal(transport.inspect(id).receivedFragments,1);assert.equal(transport.metrics().validationsInFlight,0);
 });
-test('M3 genuine M1 early-rejection packet is completely framed; inherited M2 rejection is explicit',async()=>{
+test('M3 finalized M1 early-rejection packet is completely framed and durably accepted',async()=>{
  const {after}=await loadM1Workers(),source=completeJournal(after,sm),tf='5m',trace={},mtf=engine.HIGHER_SIGNAL_TIMEFRAMES[tf]||[];
  const result=engine.computeServerSignal(source.frames[tf].bars,{tf,mtf:mtf.map(tf=>source.frames[tf]),live:source.live,barsSource:'d1',evaluationAt:now,filters:source.filters,dataQuality:{ok:false,reason:'synthetic-quality-failure'}},trace);
- const early=sm.beginDecisionCycle(now,source.frames,source.live,null,source.filters);early.capturedAt=now+1234;sm.observeAttempt(early,{tf,trace,result,requestedMtf:mtf,includedMtf:mtf});
- const [p]=await prepareCycleEnvelopes(sm.decisionJournalObservations(early),provenance,{preparedAt:now+5000});assert.equal(p.wireBytes,182996);
- const fs=await fragmentMeasurementPacket(p,options);assert.equal(fs.length,5);const {transport,calls}=runtime();const r=await deliver(transport,fs);
- assert.equal(r.status,'DLQ');assert.equal(r.reason,'measurement_decision_identity_invalid');assert.equal(calls.length,0);
- assert.deepEqual(transport.dlq().events[0].fragments,fs); // no truncation or disguised success
+ const early=sm.beginDecisionCycle(now,source.frames,source.live,null,source.filters);early.capturedAt=now+1234;early.failedOfficialId=null;sm.observeAttempt(early,{tf,trace,result,requestedMtf:mtf,includedMtf:mtf});
+ const [p]=await prepareCycleEnvelopes(sm.decisionJournalObservations(early),provenance,{preparedAt:now+5000});
+ const fs=await fragmentMeasurementPacket(p,options);assert.equal(fs.length,5);const {db,binding}=await database();
+ try{const transport=runtime({consumer:createOfflineMeasurementConsumer(binding,{clock:()=>now+86400000})}).transport;const r=await deliver(transport,fs);
+ assert.equal(r.status,'ACKNOWLEDGED');assert.equal(r.consumerResult.durable,true);assert.equal(db.prepare('SELECT COUNT(*) n FROM signal_decision_evidence').get().n,1);
+ }finally{db.close();}
 });
 test('M3 maximum valid geometry stages actual last fragment without allocating declared total',async()=>{
  const f=JSON.parse(frames[0]);Object.assign(f,{totalBytes:MAX_EVENT_BYTES,count:MAX_FRAGMENTS,ordinal:MAX_FRAGMENTS-1});
