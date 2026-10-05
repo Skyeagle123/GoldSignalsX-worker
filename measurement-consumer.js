@@ -69,7 +69,8 @@ function rejectionPredicate(g,d){
  case 'candle-quality':
   o=rejectionOperands(g,['quality']);rejectionNeed(unknown(o.quality)||evidenceObject(o.quality)&&(unknown(o.quality.ok)||evidenceBoolean(o.quality.ok)),g.id);return o.quality?.ok===false;
  case 'atr':
-  o=rejectionOperands(g,['atr']);rejectionNeed(evidenceNumber(o.atr)&&evidenceNumber(v?.atr)&&evidenceSame(o.atr,v.atr),g.id);
+  o=rejectionOperands(g,['atr']);rejectionNeed(evidenceNumber(o.atr)&&evidenceNumber(v?.atr)&&evidenceNumber(v?.marketProfile?.atr)&&
+   evidenceSame(o.atr,v.atr)&&evidenceSame(o.atr,v.marketProfile.atr),g.id);
   // Nonfinite ATR is explicitly an Engine rejection, preserved by the codec.
   return !Number.isFinite(o.atr)||o.atr<=0;
  case 'candle-age':
@@ -108,6 +109,35 @@ function rejectionPredicate(g,d){
  }
  fail('measurement_rejection_gate_identity_invalid');
 }
+function rejectionMtfReferences(d,terminal){
+ const e=d.engine,m=d.engineMtf,id='mtf_cross_reference';
+ rejectionNeed(Array.isArray(e.mtf)&&evidenceObject(m)&&Array.isArray(m.frames),id);
+ // Terminal pre-scoring returns never call timeframeBias, even for included inputs.
+ if(terminal){rejectionNeed(e.mtf.length===0&&m.frames.length===0&&!Object.hasOwn(e.result,'mtf'),id);return;}
+ const inputs=d.inputManifest?.engineMtf;
+ rejectionNeed(Array.isArray(inputs)&&Array.isArray(m.requested)&&Array.isArray(m.included)&&Array.isArray(m.excluded)&&
+  new Set(m.requested).size===m.requested.length&&new Set(m.included).size===m.included.length&&
+  m.requested.every(tf=>frames.includes(tf))&&m.included.every(tf=>m.requested.includes(tf))&&
+  equal(m.included,m.requested.filter(tf=>m.included.includes(tf)))&&
+  equal(m.excluded.map(f=>f?.tf),m.requested.filter(tf=>!m.included.includes(tf)))&&
+  e.mtf.length===m.included.length&&m.frames.length===e.mtf.length&&inputs.length===e.mtf.length,id);
+ const counts={bull:0,bear:0,neutral:0};
+ for(let i=0;i<e.mtf.length;i++){
+  const f=e.mtf[i],copy=m.frames[i],input=inputs[i],r=f?.result;
+  rejectionNeed(evidenceObject(f)&&f.tf===m.included[i]&&input?.tf===f.tf&&Number.isInteger(f.count)&&f.count>=0&&f.count===input.count&&
+   evidenceObject(copy)&&copy.requested===true&&copy.included===true&&equal(copy.inputManifest,input)&&
+   ['tf','count','lastClosedBar','result','detail'].every(k=>Object.hasOwn(f,k)&&Object.hasOwn(copy,k)&&equal(f[k],copy[k]))&&
+   equal(copy.admissionGateResults,e.gates.filter(g=>g.id.startsWith('mtf-')))&&
+   evidenceObject(r)&&['bullish','bearish','neutral'].includes(r.direction)&&Number.isFinite(r.strength)&&r.strength>=0&&r.strength<=1&&evidenceObject(f.detail),id);
+  if(f.count<40)rejectionNeed(r.direction==='neutral'&&r.strength===0&&Object.keys(f.detail).length===0,id);
+  else rejectionNeed(evidenceObject(f.detail.result)&&equal(r,f.detail.result),id);
+  counts[r.direction==='bullish'?'bull':r.direction==='bearish'?'bear':'neutral']++;
+ }
+ const s=e.scoring,r=e.result,confirm=s.leader==='buy'?counts.bull:counts.bear,oppositions=s.leader==='buy'?counts.bear:counts.bull;
+ rejectionNeed(evidenceObject(r.mtf)&&['bull','bear','neutral'].every(k=>r.mtf[k]===counts[k])&&
+  s.confirm===confirm&&s.oppositions===oppositions&&e.gates[10].operands.confirm===confirm&&
+  e.gates[11].operands.confirm===confirm&&e.gates[11].operands.oppositions===oppositions&&e.gates[11].operands.count===e.mtf.length,id);
+}
 function validateRejectionGates(d){
  const e=d.engine;rejectionNeed(d.versions?.engineSemanticsVersion===ENGINE_SEMANTICS_VERSION&&Array.isArray(e.gates)&&e.gates.length===rejectionGates.length,'gate_identity');
  let terminal=null,failed=false;
@@ -129,6 +159,7 @@ function validateRejectionGates(d){
   const s=e.scoring,r=e.result;rejectionNeed(evidenceObject(s)&&Number.isFinite(s.bull)&&Number.isFinite(s.bear)&&s.bull===r.bull&&s.bear===r.bear&&s.leader===(s.bull>=s.bear?'buy':'sell')&&
    s.confirm===(s.leader==='buy'?r.mtf?.bull:r.mtf?.bear)&&s.oppositions===(s.leader==='buy'?r.mtf?.bear:r.mtf?.bull),'result');
  }
+ rejectionMtfReferences(d,terminal);
 }
 // Only accepted Engine rejections may carry a non-directional census identity.
 function nonDirectionalRejection(d){
