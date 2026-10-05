@@ -3,7 +3,7 @@ import {ENVELOPE_VERSION,PRODUCER_NAMESPACE,ENVELOPE_KINDS,PRODUCER_BOUNDS,valid
 import {canonicalSerialize,digestPayload,parseEvidence} from './signal-evidence.js';
 import {encodeEvidence,digestBytes,censusSnapshot} from './evidence-codec.js';
 import {measurementWriter} from './signal-evidence-store.js';
-import {rebuildLifecycleProjection,lifecycleCapability,fenceLifecycleFailure,clearLifecycleFailure} from './measurement-lifecycle.js';
+import {rebuildLifecycleProjection,validateLifecycleProjectionReturn,lifecycleCapability,fenceLifecycleFailure,clearLifecycleFailure} from './measurement-lifecycle.js';
 
 const textEncoder=new TextEncoder();
 const fail=reason=>{throw new Error(reason);};
@@ -247,7 +247,7 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
  async function finish(e,result,rebuiltAt){
   for(const d of decisions(e)){const c=lifecycleCapability(db);if(c.exhausted||c.pending.has(d.officialSignalId)||c.pendingEvaluations.has(d.evaluationId))return {ok:true,...result,projectionStatus:'PENDING',captureGap:true,retryable:true};if(!subject(e)){const q=await db.prepare('SELECT state FROM measurement_decision_quarantine WHERE evaluation_id=?').bind(d.evaluationId).first();if(q)return {ok:true,...result,projectionStatus:q.state==='CONFLICT'?'CONFLICT':'PENDING',captureGap:true,retryable:true};}}
   const signalId=subject(e);
-  if(signalId){try{const projection=await rebuildLifecycleProjection(db,signalId,{rebuiltAt});if(projection?.integrityStatus==='CONFLICT')return {ok:true,...result,projectionStatus:'CONFLICT',captureGap:true};}catch(error){return {ok:true,...result,projectionStatus:'PENDING',projectionError:String(error?.message),captureGap:true,retryable:true};}}
+  if(signalId){try{const projection=await rebuildLifecycleProjection(db,signalId,{rebuiltAt});if(projection)validateLifecycleProjectionReturn(db,projection);if(projection?.integrityStatus==='CONFLICT')return {ok:true,...result,projectionStatus:'CONFLICT',captureGap:true};}catch(error){return {ok:true,...result,projectionStatus:'PENDING',projectionError:String(error?.message),captureGap:true,retryable:true};}}
   return {ok:true,...result,projectionStatus:signalId?'CURRENT':'NOT_APPLICABLE'};
  }
  return Object.freeze({mode:'OFFLINE',ingest});

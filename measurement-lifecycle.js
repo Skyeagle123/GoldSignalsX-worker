@@ -1,4 +1,4 @@
-import {measurementAdapterState,acquireMeasurementCommitCheck,commitMeasurement,suspendMeasurementLifecycle,clearMeasurementLifecycle,assertMeasurementLifecycle} from './measurement-adapter.js';
+import {measurementAdapterState,acquireMeasurementCommitCheck,commitMeasurement,validateMeasurementProjectionReturn,suspendMeasurementLifecycle,clearMeasurementLifecycle,assertMeasurementLifecycle} from './measurement-adapter.js';
 // M2 projection cache. Immutable captured facts, never trading tables, are truth.
 import {encodeEvidence,decodeStoredEvidence,digestBytes} from './evidence-codec.js';
 import {canonicalSerialize} from './signal-evidence.js';
@@ -13,6 +13,12 @@ export const fenceLifecycleFailure=suspendMeasurementLifecycle;
 export const clearLifecycleFailure=clearMeasurementLifecycle;
 export const assertLifecycleCapability=assertMeasurementLifecycle;
 export const lifecycleCommitCheck=acquireMeasurementCommitCheck;
+const returnedProjections=new WeakMap();
+export function validateLifecycleProjectionReturn(db,projection){
+ const record=returnedProjections.get(projection);
+ if(!record||record.capability!==lifecycleCapability(db))throw new Error('measurement_projection_return_required');
+ validateMeasurementProjectionReturn(db,record.snapshot);
+}
 
 export function projectLifecycle(signalId,facts){
  const result={signalId,createdAt:null,timeframe:null,direction:null,levels:{entry:null,tp1:null,tp2:null,sl:null},
@@ -105,7 +111,10 @@ export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now
  assertLifecycleCapability(db,signalId);
  const stored=await db.prepare('SELECT p.fact_count,p.payload_digest,p.integrity_status,p.source_revision,v.revision FROM measurement_lifecycle_projection p JOIN measurement_lifecycle_revisions v USING(signal_id) WHERE p.signal_id=?').bind(signalId).first();
  if(!stored||stored.source_revision!==revision||stored.revision!==revision||stored.integrity_status!==p.integrityStatus||stored.fact_count!==p.factCount||canonicalSerialize([...stored.payload_digest])!==canonicalSerialize([...digestBytes(encoded.digest)]))throw new Error('measurement_projection_rebuild_raced');
- for(const check of commitChecks)check();
+ const snapshot=Object.freeze({signalId,revision,factCount:p.factCount,integrityStatus:p.integrityStatus,status:p.status,closedAt:p.closedAt,availableAt:p.availableAt,
+  payloadDigest:Object.freeze([...digestBytes(encoded.digest)]),bindingEvaluationIds:Object.freeze(bindingRows.map(b=>b.evaluation_id))});
+ validateMeasurementProjectionReturn(db,snapshot,commitChecks);
+ returnedProjections.set(p,{capability:lifecycleCapability(db),snapshot});
  return p;
  }finally{for(const check of commitChecks)check.release();}
 }
