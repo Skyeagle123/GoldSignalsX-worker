@@ -7,12 +7,14 @@ import * as sm from '../signal-measurement.js';
 import * as engine from '../signal-engine.js';
 import {copyFrozenEvidence,buildMeasurementEnvelope,PRODUCER_BOUNDS} from '../measurement-envelope.js';
 import {prepareCycleEnvelopes} from '../measurement-producer.js';
+import {installOfflineMeasurementProducer} from '../measurement-producer.js';
+import {createOfflineTransport} from '../measurement-transport.js';
 const output=process.argv[2],iterations=40,warmup=5;
 if(!output)throw new Error('local output path required');
 const savedClock=Date.now;Date.now=()=>now+1234;
 const savedFetch=globalThis.fetch;globalThis.fetch=()=>{throw new Error('M1_BENCHMARK_NO_NETWORK');};
 try{
- const {after}=await loadM1Workers(),sources={representative:completeJournal(after,sm),heavyValid:completeJournal(after,sm,{heavy:true}),activeOwnership:completeJournal(after,sm,{heavy:true,active:true})};
+ const {before,after}=await loadM1Workers(),sources={representative:completeJournal(after,sm),heavyValid:completeJournal(after,sm,{heavy:true}),activeOwnership:completeJournal(after,sm,{heavy:true,active:true})};
  // Price actual local persistence results, rather than the capture fixture's
  // minimal successful-persistence stand-in.
  for(const source of Object.values(sources))for(const candidate of source.candidates.filter(c=>source.officialIds.has(c.id))){
@@ -70,10 +72,33 @@ try{
  }
  facts.push({profile:'capture-gap',kind:'CAPTURE_GAP',semanticId:'local-gap:cycle',occurredAt:now,observedAt:now+100,
   payload:{status:'TRANSPORT_UNAVAILABLE',cycleId:source.cycleId,captureGap:true,durable:false,measurementOnly:true,decisionUse:false}});
- for(const fact of facts){const p=await buildMeasurementEnvelope({...fact,preparedAt:now+5000});wire.push({profile:fact.profile,kind:p.envelope.kind,semanticId:p.envelope.semanticId,canonicalLogicalBytes:p.payloadBytes,payloadBytes:p.payloadBytes,wireBytes:p.wireBytes,headerBytes:p.headerBytes,fragmentationNeeded:p.requiresFutureFragmentation});}
+ for(const fact of facts){const {profile,...fields}=fact;const p=await buildMeasurementEnvelope({...fields,preparedAt:now+5000});wire.push({profile,kind:p.envelope.kind,semanticId:p.envelope.semanticId,canonicalLogicalBytes:p.payloadBytes,payloadBytes:p.payloadBytes,wireBytes:p.wireBytes,headerBytes:p.headerBytes,fragmentationNeeded:p.requiresFutureFragmentation});}
  const groups={};for(const row of wire){const key=row.profile+':'+row.kind;(groups[key]||=[]).push(row.wireBytes);}
+ // Paired local latency comparison ends when runSignalCycle settles: no
+ // deferred preparation is charged to this pre-completion measurement.
+ const criticalSamples=[],deferredSamples=[];
+ for(let i=-warmup;i<iterations;i++){
+  const sample={};
+  for(const [kind,module]of (i%2?[['enabled',after],['baseline',before]]:[['baseline',before],['enabled',after]])){
+   const x=cycleEnvironment(module,{telegram:true}),enabled=kind==='enabled';
+   x.env.B1_PRODUCER_CAPTURE_ENABLED=enabled?'1':'0';x.env.B1_CODE_COMMIT=BASELINE;x.env.B1_MEASUREMENT_EFFECTIVE_AT=provenance.measurementEffectiveAt;
+   const producer=installOfflineMeasurementProducer(x.env,{transport:createOfflineTransport()});
+   try{
+    const started=performance.now();await module.runSignalCycle(x.env,null,{nyFilterOn:false,pivotFilterOn:false});
+    const completed=performance.now();sample[kind+'TradingMs']=completed-started;
+    if(enabled){await producer.whenIdle();sample.deferredEndToIdleMs=performance.now()-completed;
+     assert.equal(producer.diagnostics().length,0);}
+   }finally{x.db.database.close();}
+  }
+  if(i>=0){criticalSamples.push({...sample,preTradingIncrementMs:sample.enabledTradingMs-sample.baselineTradingMs});deferredSamples.push(sample.deferredEndToIdleMs);}
+ }
  const report={baseline:BASELINE,node:process.version,iterations,warmup,bounds:PRODUCER_BOUNDS,wire,wireDistributions:Object.fromEntries(Object.entries(groups).map(([k,a])=>[k,{count:a.length,minimum:Math.min(...a),...summarize(a)}])),
   maximumTestedEnvelopeBytes:Math.max(...wire.map(x=>x.wireBytes)),costs,
-  limitations:['Tested maxima are not universal evidence maxima. Wire/input/node bounds are enforced failure boundaries, not truncation.','Local elapsed timing includes hashing awaits and GC; process CPU includes runtime/GC/native hashing work and is not Worker isolate CPU. Neither is a Production guarantee.','capturePreparationMs includes reused baseline manifest/snapshot construction and its own canonicalization/hashing; envelope-specific stages are separately timed.','Memory deltas can be negative because GC runs; they are not per-envelope heap maxima.','No transport fragmentation, network, durable capture, infrastructure or Production access.']};
+  tradingBoundaryCost:{samples:iterations,profiles:['exact baseline','M1 enabled, offline mock'],
+   baselineTradingMs:summarize(criticalSamples.map(x=>x.baselineTradingMs)),
+   enabledTradingMs:summarize(criticalSamples.map(x=>x.enabledTradingMs)),
+   preTradingIncrementMs:summarize(criticalSamples.map(x=>x.preTradingIncrementMs)),
+   deferredEndToIdleMs:summarize(deferredSamples)},
+  limitations:['Tested maxima are not universal evidence maxima. Wire/input/node bounds are enforced failure boundaries, not truncation.','The paired preTradingIncrementMs is a noisy local end-to-end latency difference, not isolated instruction CPU or a hard worst-case bound; negative samples are possible. DeferredEndToIdle includes local timer/transport as well as preparation.','Local elapsed timing includes hashing awaits and GC; process CPU includes runtime/GC/native hashing work and is not Worker isolate CPU. Neither is a Production guarantee.','capturePreparationMs includes reused baseline manifest/snapshot construction and its own canonicalization/hashing; envelope-specific stages are separately timed.','Memory deltas can be negative because GC runs; they are not per-envelope heap maxima.','No transport fragmentation, network, durable capture, infrastructure or Production access.']};
  await fs.writeFile(output,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({maximum:report.maximumTestedEnvelopeBytes,costs:report.costs},null,2));
 }finally{Date.now=savedClock;globalThis.fetch=savedFetch;}

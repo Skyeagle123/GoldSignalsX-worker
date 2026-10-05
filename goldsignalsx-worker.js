@@ -1,4 +1,4 @@
-import {measurementProducerEnabled,observeM1DecisionCycle,observeM1Fact} from './measurement-producer.js';
+import {measurementProducerEnabled,observeM1DecisionCycle,observeM1Fact,deferM1Work} from './measurement-producer.js';
 import {exposureEvidenceState} from './signal-evidence.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
 import {measurementWriter} from './signal-evidence-store.js';
@@ -3496,7 +3496,7 @@ async function readProductionPerformance(env,searchParams=new URLSearchParams())
   };
 }
 
-async function saveSignalState(env,signal,event) {
+async function saveSignalState(env,signal,event,noteM1=null) {
   if (!env.GSX_KV) return;
   await env.GSX_KV.put(`signal:state:${signal.tf}`,JSON.stringify(signal),{expirationTtl:90*24*60*60});
   await env.GSX_KV.put(`signal:log:${signal.id}:${event}`,JSON.stringify({...signal,event}),{expirationTtl:90*24*60*60});
@@ -3510,10 +3510,10 @@ async function saveSignalState(env,signal,event) {
   } else {
     performanceResult=await performanceWrite;
   }
-  observeM1LifecycleResult(env,signal,event,performanceResult);
+  if(noteM1&&event!=='created')noteM1({kind:'lifecycle',signal,event,result:performanceResult});
 }
 
-async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySignalId,eventAt) {
+async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySignalId,eventAt,noteM1=null) {
   if (!env.GSX_KV||!primary) return null;
   const key=`signal:state:${primary.tf}`;
   const stored=await readKvJson(env,key);
@@ -3531,11 +3531,7 @@ async function persistLinkedMtfConfirmation(env,primary,confirmation,primarySign
       {expirationTtl:90*24*60*60}
     )
   ]);
-  if(measurementProducerEnabled(env)){
-    try{observeM1Fact(env,{kind:'CONFIRMATION_LINK',semanticId:`${primarySignalId}:confirmation:${confirmation.id}`,
-      occurredAt:eventAt,observedAt:null,payload:{primarySignalId,confirmationSignalId:confirmation.id,
-        link:linked.mtfConfirmations.at(-1),linkPersistence:'SUCCEEDED',measurementOnly:true,decisionUse:false}});}catch{}
-  }
+  if(noteM1)noteM1({kind:'confirmation',primarySignalId,confirmationSignalId:confirmation.id,eventAt,link:linked.mtfConfirmations.at(-1)});
   return linked;
 }
 
@@ -3759,9 +3755,22 @@ function captureBroadMatrices(candidates,evaluations) {
   catch { return null; }
 }
 
-function finishM1DecisionCycle(env,journal,result,observations){
+function finishM1DecisionCycle(env,journal,result,observations,pendingM1){
   const output=finishDecisionCycle(journal,result,observations);
-  observeM1DecisionCycle(env,journal);
+  if(measurementProducerEnabled(env)){
+    // Capture only this scalar before the legacy collector may stamp the same
+    // journal. All copy, serialization and transport run after trading settles.
+    const capturedAt=journal?.capturedAt??new Date().getTime();
+    deferM1Work(env,()=>{
+      for(const fact of pendingM1){
+        if(fact.kind==='lifecycle')observeM1LifecycleResult(env,fact.signal,fact.event,fact.result);
+        else if(fact.kind==='confirmation')observeM1Fact(env,{kind:'CONFIRMATION_LINK',semanticId:`${fact.primarySignalId}:confirmation:${fact.confirmationSignalId}`,
+          occurredAt:fact.eventAt,observedAt:null,payload:{primarySignalId:fact.primarySignalId,confirmationSignalId:fact.confirmationSignalId,
+            link:fact.link,linkPersistence:'SUCCEEDED',measurementOnly:true,decisionUse:false}});
+      }
+      observeM1DecisionCycle(env,{...journal,capturedAt});
+    });
+  }
   return output;
 }
 
@@ -3786,6 +3795,8 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   }));
   const trackingBars=frames['1m'].bars;
   const measurement=beginDecisionCycle(now,frames,live,news,filters);
+  const pendingM1=[];
+  const noteM1=measurementProducerEnabled(env)?fact=>{pendingM1.push(fact);}:null;
   const currentSignals={};
   const candidates=[];
   const evaluations=new Map();
@@ -3812,14 +3823,14 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
           ),
           recordProductionPerformanceSafely(env,expired,'expired')
         ]);
-        observeM1LifecycleResult(env,expired,'expired',persistenceResults[2]);
+        if(noteM1)noteM1({kind:'lifecycle',signal:expired,event:'expired',result:persistenceResults[2]});
         currentSignals[tf]=expired;
         continue;
       }
       const lifecycle=updateSignalLifecycleAcrossBars(
         existing,trackingBars,liveFresh?live.price:NaN,now,60_000,String(live?.source||'unknown')
       );
-      for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event);
+      for (const transition of lifecycle.events) await saveSignalState(env,transition.signal,transition.event,noteM1);
       if (!lifecycle.events.length) {
         await env.GSX_KV.put(`signal:state:${tf}`,JSON.stringify(lifecycle.signal),{expirationTtl:90*24*60*60});
       } else if (JSON.stringify(lifecycle.events.at(-1).signal)!==JSON.stringify(lifecycle.signal)) {
@@ -3923,13 +3934,13 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
       };
     }
     try {
-      await saveSignalState(env,signal,'created');
+      await saveSignalState(env,signal,'created',noteM1);
       officialPrimaryTelemetryIds.add(signal.id);
     } catch (error) {
       if (exposureStub) {
         await exposureStub.cancelGoldExposureReservation({signalId:signal.id,now:Date.now()}).catch(()=>null);
       }
-      finishM1DecisionCycle(env,measurement,error,{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,failedOfficialId:signal.id});
+      finishM1DecisionCycle(env,measurement,error,{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,failedOfficialId:signal.id},pendingM1);
       throw error;
     }
   }
@@ -3945,7 +3956,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     }
     const eventAt=Number(signal.createdAt)||now;
     const linked=await persistLinkedMtfConfirmation(
-      env,primary,signal,primarySignalId,eventAt
+      env,primary,signal,primarySignalId,eventAt,noteM1
     );
     if (!linked) {
       console.error(JSON.stringify({
@@ -3975,7 +3986,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
     newsReason:String(news?.safety?.reason||'خطر خبري شديد التأثير؛ تم إيقاف الدخول مؤقتاً حتى يهدأ تذبذب السوق')
   });
   const telemetry=await recordSignalTelemetrySafely(env,telemetryRows,now);
-  return finishM1DecisionCycle(env,measurement,{telemetry},{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,broadMatrices:captureBroadMatrices(candidates,evaluations)});
+  return finishM1DecisionCycle(env,measurement,{telemetry},{decisions,candidates,officialIds:officialPrimaryTelemetryIds,confirmationIds:confirmationTelemetryIds,exposureResult,signals:currentSignals,evaluations,broadMatrices:captureBroadMatrices(candidates,evaluations)},pendingM1);
 }
 
 // ===== Helpers =====

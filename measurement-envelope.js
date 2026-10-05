@@ -13,6 +13,9 @@ const freeze=value=>{if(value&&typeof value==='object'){for(const child of Objec
 // Map/Set contents become private read-only facades for the legacy preparer.
 // Object.freeze(new Map()) alone would not protect its entries.
 export function copyFrozenEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInputBytes,maxNodes=PRODUCER_BOUNDS.maxNodes,maxDepth=PRODUCER_BOUNDS.maxDepth}={}){
+ if(!Number.isInteger(maxInputBytes)||maxInputBytes<1||maxInputBytes>PRODUCER_BOUNDS.maxInputBytes||
+    !Number.isInteger(maxNodes)||maxNodes<1||maxNodes>PRODUCER_BOUNDS.maxNodes||
+    !Number.isInteger(maxDepth)||maxDepth<0||maxDepth>PRODUCER_BOUNDS.maxDepth)throw new Error('measurement_input_bound_invalid');
  let nodes=0,charged=0;const seen=new Set();
  const charge=n=>{charged+=n;if(charged>maxInputBytes)throw new Error('measurement_input_exceeded');};
  function copy(v,depth=0){
@@ -22,31 +25,62 @@ export function copyFrozenEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInput
   if(typeof v!=='object'||seen.has(v))throw new Error('measurement_serialization_invalid');
   seen.add(v);let result;
   if(v instanceof Map){
-   if(v.size>maxNodes)throw new Error('measurement_input_structure_exceeded');
-   const entries=[...v].map(([k,x])=>Object.freeze([copy(k,depth+1),copy(x,depth+1)])),map=new Map(entries);
+   if(Reflect.ownKeys(v).length)throw new Error('measurement_object_invalid');
+   const size=Object.getOwnPropertyDescriptor(Map.prototype,'size').get.call(v);
+   if(size>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(size);
+   const entries=[];for(const [k,x]of Map.prototype.entries.call(v))entries.push(Object.freeze([copy(k,depth+1),copy(x,depth+1)]));
+   const map=new Map(entries);
    result=Object.freeze({get:k=>map.get(k),has:k=>map.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});
   }else if(v instanceof Set){
-   if(v.size>maxNodes)throw new Error('measurement_input_structure_exceeded');
-   const entries=[...v].map(x=>copy(x,depth+1)),set=new Set(entries);
+   if(Reflect.ownKeys(v).length)throw new Error('measurement_object_invalid');
+   const size=Object.getOwnPropertyDescriptor(Set.prototype,'size').get.call(v);
+   if(size>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(size);
+   const entries=[];for(const x of Set.prototype.values.call(v))entries.push(copy(x,depth+1));
+   const set=new Set(entries);
    result=Object.freeze({has:k=>set.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});
-  }else if(Array.isArray(v)){if(v.length>maxNodes)throw new Error('measurement_input_structure_exceeded');result=Object.freeze(v.map(x=>copy(x,depth+1)));
+  }else if(Array.isArray(v)){
+   const length=Object.getOwnPropertyDescriptor(v,'length').value;
+   if(length>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(length);
+   // Dense, data-only evidence: inspect descriptors, never run an index getter.
+   // Charge the whole array before allocating its copy or visiting children.
+   const keys=Reflect.ownKeys(v);
+   if(keys.length!==length+1)throw new Error('measurement_array_invalid');
+   result=[];
+   for(let i=0;i<length;i++){
+    const descriptor=Object.getOwnPropertyDescriptor(v,String(i));
+    if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_array_invalid');
+    result.push(copy(descriptor.value,depth+1));
+   }
+   Object.freeze(result);
   }else if(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null){
-   const keys=Object.keys(v);if(keys.length>maxNodes)throw new Error('measurement_input_structure_exceeded');
-   result=Object.create(null);for(const key of keys){const descriptor=Object.getOwnPropertyDescriptor(v,key);if(!descriptor||!('value' in descriptor))throw new Error('measurement_object_invalid');charge(bytes(key));result[key]=copy(descriptor.value,depth+1);}Object.freeze(result);
+   const keys=Reflect.ownKeys(v);if(keys.length>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(keys.length);
+   result=Object.create(null);for(const key of keys){if(typeof key!=='string')throw new Error('measurement_object_invalid');const descriptor=Object.getOwnPropertyDescriptor(v,key);if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_object_invalid');if(/token|password|secret|authorization|api.?key/i.test(key))throw new Error('measurement_sensitive_field');if(key.length>maxInputBytes)throw new Error('measurement_input_exceeded');charge(bytes(key));result[key]=copy(descriptor.value,depth+1);}Object.freeze(result);
   }else throw new Error('measurement_object_invalid');
   seen.delete(v);return result;
  }
  return copy(value);
 }
 
-export async function buildMeasurementEnvelope({kind,semanticId,payload,occurredAt,observedAt,preparedAt,
- producerNamespace=PRODUCER_NAMESPACE,maxWireBytes=PRODUCER_BOUNDS.maxWireBytes,measure=null}){
+export async function buildMeasurementEnvelope(options){
+ if(!options||(Object.getPrototypeOf(options)!==Object.prototype&&Object.getPrototypeOf(options)!==null))throw new Error('measurement_object_invalid');
+ const keys=Reflect.ownKeys(options);
+ if(keys.length>9)throw new Error('measurement_object_invalid');
+ for(const key of keys){
+  if(typeof key!=='string'||!['kind','semanticId','payload','occurredAt','observedAt','preparedAt','producerNamespace','maxWireBytes','measure'].includes(key))throw new Error('measurement_object_invalid');
+  const descriptor=Object.getOwnPropertyDescriptor(options,key);
+  if(!descriptor||!('value' in descriptor)||!descriptor.enumerable)throw new Error('measurement_object_invalid');
+ }
+ const {kind,semanticId,payload,occurredAt,observedAt,preparedAt,
+  producerNamespace=PRODUCER_NAMESPACE,maxWireBytes=PRODUCER_BOUNDS.maxWireBytes,measure=null}=options;
  if(!ENVELOPE_KINDS.includes(kind))throw new Error('measurement_envelope_kind_invalid');
  if(typeof semanticId!=='string'||!semanticId||bytes(semanticId)>1024||typeof producerNamespace!=='string'||!producerNamespace||bytes(producerNamespace)>128)throw new Error('measurement_envelope_identity_invalid');
  if(!Number.isInteger(maxWireBytes)||maxWireBytes<1||maxWireBytes>PRODUCER_BOUNDS.maxWireBytes)throw new Error('measurement_envelope_bound_invalid');
  for(const clock of [occurredAt,observedAt,preparedAt])if(clock!==null&&clock!==undefined&&(!Number.isSafeInteger(clock)||clock<0))throw new Error('measurement_envelope_clock_invalid');
  const time=()=>performance.now();let t=time();
- const logical=canonicalSerialize(payload,maxWireBytes);
+ // Preflight and copy before canonicalization. In particular a sparse array or
+ // accessor may not expand or execute before a wire-size rejection.
+ const data=copyFrozenEvidence(payload,{maxInputBytes:Math.min(maxWireBytes,PRODUCER_BOUNDS.maxInputBytes)});
+ const logical=canonicalSerialize(data,maxWireBytes);
  // Occurrence/observation clocks are evidence, unlike transport preparation.
  const digestLogical=canonicalSerialize({clocks:{occurredAt,observedAt},payload:JSON.parse(logical)},maxWireBytes);
  measure?.('canonicalizationMs',time()-t);t=time();

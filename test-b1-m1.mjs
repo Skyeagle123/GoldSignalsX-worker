@@ -160,7 +160,9 @@ test('M1 trading completion does not wait for producer scheduling or a transport
  let timer;
  try{
   const result=await Promise.race([after.runSignalCycle(x.env,null,{nyFilterOn:false,pivotFilterOn:false}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('TRADING_WAITED_FOR_PRODUCER')),1000);})]);
-  assert(result.telemetry);assert(jobs.length>0);assert.equal(sends,0);for(const job of jobs)job();await producer.whenIdle();assert(producer.diagnostics().length>0);
+  assert(result.telemetry);assert.equal(jobs.length,0);assert.equal(sends,0);
+  const idle=producer.whenIdle();await new Promise(resolve=>setTimeout(resolve,0));
+  assert(jobs.length>0);for(const job of jobs)job();await idle;assert(producer.diagnostics().length>0);
  }finally{clearTimeout(timer);Date.now=clock;globalThis.fetch=fetch;x.db.database.close();}
 });
 test('M1 unavailable clock differs from explicit null; accessor properties are never executed',async()=>{
@@ -188,6 +190,103 @@ test('M1 enabled shadow capture does not add reads to the trading Date.now clock
  try{
   reads=0;const original=await before.runSignalCycle(a.env,null,{nyFilterOn:false,pivotFilterOn:false});const oldReads=reads;
   reads=0;const actual=await after.runSignalCycle(b.env,null,{nyFilterOn:false,pivotFilterOn:false});assert.equal(reads,oldReads);assert.deepEqual(actual,original);
-  for(const job of jobs)job();await producer.whenIdle();
+  const idle=producer.whenIdle();await new Promise(resolve=>setTimeout(resolve,0));
+  for(const job of jobs)job();await idle;
  }finally{Date.now=originalClock;globalThis.fetch=fetch;a.db.database.close();b.db.database.close();}
+});
+
+test('M1-R1 active 5m TP1 keeps all six confirmations with advancing clock and default scheduler',async()=>{
+ const originalClock=Date.now,originalMicrotask=globalThis.queueMicrotask,fetch=globalThis.fetch;
+ const active={id:'review-owner',tf:'5m',side:'buy',origin:'server',createdAt:now-10_000,signalBarTs:now-300_000,
+  entry:4100,tp1:4099.99,tp2:4300,sl:4000,status:'active',tp1Hit:false,updatedAt:now-5000,lastPrice:4100,conf:90};
+ const exposure={symbol:'XAUUSD',status:'active',side:'buy',primarySignalId:active.id,primaryTf:'5m',openedAt:now-10_000,maxPositions:1,cooldownUntil:0,confirmations:[],blocked:[]};
+ const results={},traces={};let modeledNow=now;
+ Date.now=()=>modeledNow;globalThis.fetch=throwFetch;
+ try{
+  for(const [label,module,enabled] of [['baseline',before,false],['off',after,false],['on',after,true]]){
+   modeledNow=now;const trace=[],x=cycleEnvironment(module,{activeSignal:active,exposure,telegram:true});traces[label]=trace;
+   const feed=x.env.GOLD_FEED.getByName(),status=feed.status,manage=feed.manageGoldExposure,telegram=feed.queueTelegramEvent;
+   feed.status=async()=>{const value=await status();value.latestQuote.receivedAt=now-19_999;return value;};
+   feed.manageGoldExposure=async input=>{trace.push('EXPOSURE');return manage(input);};
+   feed.queueTelegramEvent=async record=>{trace.push('TELEGRAM');return telegram(record);};
+   globalThis.queueMicrotask=job=>originalMicrotask(()=>{modeledNow+=2;trace.push('PREPARE');job();});
+   x.env[PRODUCER_GATE]=enabled?'1':'0';x.env.B1_CODE_COMMIT=BASELINE;x.env.B1_MEASUREMENT_EFFECTIVE_AT=provenance.measurementEffectiveAt;
+   const producer=installOfflineMeasurementProducer(x.env,{transport:createOfflineTransport({deliver(packet){trace.push('DELIVER:'+packet.envelope.kind);}}),deliveryTimeoutMs:5});
+   try{
+    await module.runSignalCycle(x.env,null,{nyFilterOn:false,pivotFilterOn:false});trace.push('TRADING_COMPLETE');
+    results[label]=x.decisions.flatMap(d=>d.decisions).filter(d=>d.decision==='confirmation').length;
+    assert.equal(x.db.database.prepare("SELECT status,tp1_at FROM production_signals WHERE signal_id='review-owner'").get().status,'tp1');
+    if(enabled){await producer.whenIdle();assert(trace.indexOf('PREPARE')>trace.indexOf('TRADING_COMPLETE'));
+     assert(trace.indexOf('PREPARE')>trace.lastIndexOf('TELEGRAM'));assert(trace.indexOf('PREPARE')>trace.indexOf('EXPOSURE'));
+     assert(trace.indexOf('DELIVER:LIFECYCLE_FACT')>trace.indexOf('TRADING_COMPLETE'));
+     assert(trace.indexOf('DELIVER:CONFIRMATION_LINK')>trace.lastIndexOf('TELEGRAM'));
+     assert(trace.indexOf('DELIVER:DECISION_CYCLE')>trace.indexOf('TRADING_COMPLETE'));
+     assert.equal(producer.diagnostics().length,0);
+    }
+   }finally{x.db.database.close();}
+  }
+  assert.deepEqual(results,{baseline:6,off:6,on:6});assert.equal(traces.off.includes('PREPARE'),false);
+ }finally{Date.now=originalClock;globalThis.queueMicrotask=originalMicrotask;globalThis.fetch=fetch;}
+});
+
+test('M1-R1 failed or hanging delivery begins only after Official persistence and trading return',async()=>{
+ const originalClock=Date.now,fetch=globalThis.fetch;Date.now=()=>now;globalThis.fetch=throwFetch;
+ try{for(const send of [()=>{throw new Error('failed transport');},()=>new Promise(()=>{})]){
+  const x=cycleEnvironment(after,{telegram:true});x.env[PRODUCER_GATE]='1';x.env.B1_CODE_COMMIT=BASELINE;x.env.B1_MEASUREMENT_EFFECTIVE_AT=provenance.measurementEffectiveAt;
+  let deliveries=0,storedAtSend=false;
+  const producer=installOfflineMeasurementProducer(x.env,{transport:{mode:'OFFLINE',send(){deliveries++;storedAtSend=x.db.database.prepare('SELECT COUNT(*) AS n FROM production_signals').get().n>0;return send();}},deliveryTimeoutMs:5});
+  try{const value=await after.runSignalCycle(x.env,null,{nyFilterOn:false,pivotFilterOn:false});assert(value.telemetry);assert.equal(deliveries,0);
+   assert(x.telegramEvents.length>0);assert(x.db.database.prepare('SELECT COUNT(*) AS n FROM production_signals').get().n>0);
+   await producer.whenIdle();assert(deliveries>0);assert.equal(storedAtSend,true);assert(producer.diagnostics().length>0);
+  }finally{x.db.database.close();}
+ }}finally{Date.now=originalClock;globalThis.fetch=fetch;}
+});
+
+test('M1-R1 concurrent deferred cycles do not await one another circularly',async()=>{
+ const producer=createMeasurementProducer({enabled:true,transport:createOfflineTransport(),deliveryTimeoutMs:20});
+ producer.deferWork(()=>producer.submitFact({...fact({cycle:'first'}),semanticId:'production:first:tp1'}));
+ producer.deferWork(()=>producer.submitFact({...fact({cycle:'second'}),semanticId:'production:second:tp1'}));
+ let timer;try{await Promise.race([producer.whenIdle(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('DEFERRED_CYCLE_DEADLOCK')),1000);})]);}
+ finally{clearTimeout(timer);}
+ assert.equal(producer.diagnostics().length,0);
+});
+
+test('M1-R2 rejects sparse, accessor and lossy evidence before reading getters',async()=>{
+ assert.throws(()=>copyFrozenEvidence(Array(20_000),{maxInputBytes:1,maxNodes:2000}),/measurement_input_structure_exceeded/);
+ assert.throws(()=>copyFrozenEvidence(Array.from({length:10},()=>Array(2000)),{maxInputBytes:1,maxNodes:2000}),/exceeded/);
+ for(const array of [Array(2),[1,2]]){
+  let reads=0;Object.defineProperty(array,0,{get(){reads++;return 1;},enumerable:true,configurable:true});
+  assert.throws(()=>copyFrozenEvidence(array),/measurement_array_invalid/);
+  await assert.rejects(buildMeasurementEnvelope({...fact({values:array}),preparedAt:now}),/measurement_array_invalid/);
+  assert.equal(reads,0);
+ }
+ let reads=0;const bad={get observed(){reads++;return 1;}};
+ assert.throws(()=>copyFrozenEvidence({nested:[{ok:true},bad]}),/measurement_object_invalid/);
+ await assert.rejects(buildMeasurementEnvelope({...fact({nested:[bad]}),preparedAt:now}),/measurement_object_invalid/);
+ assert.equal(reads,0);
+ const options={...fact({ok:true}),preparedAt:now};Object.defineProperty(options,'payload',{get(){reads++;return {ok:true};},enumerable:true});
+ await assert.rejects(buildMeasurementEnvelope(options),/measurement_object_invalid/);assert.equal(reads,0);
+ const hidden={ok:true};Object.defineProperty(hidden,'invisible',{value:1});
+ assert.throws(()=>copyFrozenEvidence(hidden),/measurement_object_invalid/);
+ const extra=[1];extra.unused=2;assert.throws(()=>copyFrozenEvidence(extra),/measurement_array_invalid/);
+ const producer=createMeasurementProducer({enabled:true,transport:createOfflineTransport()});
+ producer.submitFact(fact({values:Array(20_000)}));await producer.whenIdle();
+ assert(producer.diagnostics().some(x=>x.status==='PREPARATION_FAILED'&&x.captureGap===true&&x.durable===false));
+});
+
+test('M1-R2 dense evidence remains exact; deep, node, byte and wire work rejects safely',async()=>{
+ const normal={ordered:[NaN,-0,null,undefined,3.125],nested:{ok:true}};
+ const packet=await envelope(fact(normal));const restored=parseEvidence(packet.wire).payload;
+ assert(Number.isNaN(restored.ordered[0]));assert(Object.is(restored.ordered[1],-0));
+ assert.equal(restored.ordered[2],null);assert.deepEqual(restored.ordered.slice(3),[{$unavailable:'undefined'},3.125]);
+ assert.deepEqual(restored.nested,{ok:true});
+ let deep={leaf:1};for(let i=0;i<25;i++)deep={next:deep};
+ assert.throws(()=>copyFrozenEvidence(deep),/measurement_input_structure_exceeded/);
+ await assert.rejects(envelope(fact(deep)),/measurement_input_structure_exceeded/);
+ assert.throws(()=>copyFrozenEvidence(Array.from({length:20},()=>0),{maxNodes:10}),/measurement_input_structure_exceeded/);
+ assert.throws(()=>copyFrozenEvidence('x'.repeat(200),{maxInputBytes:100}),/measurement_input_exceeded/);
+ await assert.rejects(buildMeasurementEnvelope({...fact({value:'x'.repeat(10000)}),preparedAt:now,maxWireBytes:1000}),/measurement_input_exceeded/);
+ let sends=0;const producer=createMeasurementProducer({enabled:true,transport:{mode:'OFFLINE',send(){sends++;}},maxWireBytes:1000});
+ producer.submitFact(fact({value:'x'.repeat(3000)}));await producer.whenIdle();assert.equal(sends,0);
+ assert(producer.diagnostics().some(x=>x.captureGap===true&&x.durable===false));
 });
