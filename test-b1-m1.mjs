@@ -304,6 +304,37 @@ test('M1-R2a public cycle entry rejects original accessors before journal enrich
  }
 });
 
+test('M1-R2a public cycle entry rejects unsupported array prototypes without inherited execution',async()=>{
+ for(const shape of ['map','throwing-map','iterator-getter','iterator-method','custom-method','null-prototype']){
+  let calls=0;
+  class CandidateArray extends Array {}
+  const candidates=new CandidateArray();
+  if(shape==='map'||shape==='throwing-map')Object.defineProperty(CandidateArray.prototype,'map',{get(){calls++;if(shape==='throwing-map')throw new Error('INHERITED_EXECUTED');return Array.prototype.map;}});
+  if(shape==='iterator-getter')Object.defineProperty(CandidateArray.prototype,Symbol.iterator,{get(){calls++;throw new Error('INHERITED_EXECUTED');}});
+  if(shape==='iterator-method')Object.defineProperty(CandidateArray.prototype,Symbol.iterator,{value(){calls++;throw new Error('INHERITED_EXECUTED');}});
+  const j=completeJournal(after,sm);for(const candidate of j.candidates)Array.prototype.push.call(candidates,candidate);
+  if(shape==='custom-method')Object.setPrototypeOf(candidates,{map(){calls++;return [];}});
+  if(shape==='null-prototype')Object.setPrototypeOf(candidates,null);
+  j.candidates=candidates;
+  const transport=createOfflineTransport(),p=createMeasurementProducer({enabled:true,transport});let result;
+  assert.doesNotThrow(()=>{result=p.submitCycle(j,provenance);},shape);await p.whenIdle();
+  assert.equal(calls,0,shape);assert.equal(result.status,'PREPARATION_FAILED',shape);
+  assert.equal(result.captureGap,true);assert.equal(result.durable,false);assert.equal(transport.packets().length,0);
+ }
+});
+
+test('M1-R2a standard dense and nested arrays preserve exact public-entry wire',async()=>{
+ const j=completeJournal(after,sm);
+ const expected=await prepareCycleEnvelopes(copyFrozenEvidence(sm.decisionJournalObservations(j)),provenance,{preparedAt:now+5000});
+ const transport=createOfflineTransport(),p=createMeasurementProducer({enabled:true,transport,clock:()=>now+5000});
+ assert.equal(p.submitCycle(j,provenance).status,'SCHEDULED');await p.whenIdle();
+ assert.equal(p.diagnostics().length,0);assert.deepEqual(transport.packets().map(x=>x.wire),expected.map(x=>x.wire));
+ const input=fact({values:[[null,NaN,-0],[1,[undefined,3.125]]]}),single=createOfflineTransport();
+ const q=createMeasurementProducer({enabled:true,transport:single,clock:()=>now+31});
+ assert.equal(q.submitFact(input).status,'SCHEDULED');await q.whenIdle();
+ assert.equal(q.diagnostics().length,0);assert.equal(single.packets()[0].wire,(await envelope(input)).wire);
+});
+
 test('M1-R2b public fact diagnostics never execute rejected identifier accessors',async()=>{
  for(const shape of ['getter','throwing','setter','nested','array','malformed']){
   let reads=0;const input=fact();

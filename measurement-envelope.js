@@ -38,6 +38,8 @@ function walkEvidence(value,{maxInputBytes=PRODUCER_BOUNDS.maxInputBytes,maxNode
    const entries=materialize?[]:null;for(const x of Set.prototype.values.call(v)){const value=copy(x,depth+1);if(materialize)entries.push(value);}
    if(materialize){const set=new Set(entries);result=Object.freeze({has:k=>set.has(k),[Symbol.iterator]:()=>entries[Symbol.iterator]()});}
   }else if(Array.isArray(v)){
+   // Enrichment may use Array methods: only the standard data-array prototype is supported.
+   if(Object.getPrototypeOf(v)!==Array.prototype)throw new Error('measurement_array_invalid');
    const length=Object.getOwnPropertyDescriptor(v,'length').value;
    if(length>maxNodes)throw new Error('measurement_input_structure_exceeded');charge(length);
    // Dense, data-only evidence: inspect descriptors, never run an index getter.
