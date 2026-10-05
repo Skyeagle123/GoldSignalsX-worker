@@ -1,5 +1,6 @@
 // Scheduled measurement writer only. Never imported by the reader. No schema initializer.
-import {assertLifecycleCapability,lifecycleCapability,lifecycleCommitCheck,checkedMeasurementStatement} from './measurement-lifecycle.js';
+import {assertLifecycleCapability,lifecycleCapability,lifecycleCommitCheck} from './measurement-lifecycle.js';
+import {commitMeasurement,assertMeasurementAdapter} from './measurement-adapter.js';
 import {measurementWriter} from './signal-evidence-store.js';
 import {decodeStoredEvidence,decodeStoredOutcome,decodeProcessingState,restoreSharedDecision} from './evidence-codec.js';
 import {parseEvidence} from './signal-evidence.js';
@@ -10,7 +11,7 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
 }
 // M2-only entry: a separate measurement database, no trading-table fallback.
 export async function collectMeasurementFromProjection(db,{asOf,ticks,bars,maxSubjects=8,maxWrites=80}){
- return collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},true);
+ assertMeasurementAdapter(db);return collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},true);
 }
 async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPlane){
  const commitChecks=[];
@@ -46,7 +47,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
   const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
   const rows=[...official,...candidates];
-  if(measurementPlane)for(const row of official){row.commitCheck=lifecycleCommitCheck(db,row.official_signal_id);commitChecks.push(row.commitCheck);}
+  if(measurementPlane)for(const row of official){row.commitCheck=lifecycleCommitCheck(db,row.official_signal_id,row.evaluation_id);commitChecks.push(row.commitCheck);}
   if(measurementPlane)lifecycleCapability(db);
   let activeGuard=null,racedOfficial=0;
   const originals=new WeakMap();
@@ -56,10 +57,10 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const raw=statements.map(s=>originals.get(s)||s),g=activeGuard;
    if(!g)return db.batch(raw);
    assertLifecycleCapability(db,g.signalId);
-   const result=await db.batch([
-    checkedMeasurementStatement(db,db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),g.check),
+   const result=await commitMeasurement(db,[
+    db.prepare('INSERT INTO measurement_collector_guards(signal_id,revision,as_of) VALUES(?,?,?)').bind(g.signalId,g.revision,asOf),
     ...raw,db.prepare('DELETE FROM measurement_collector_guards WHERE signal_id=?').bind(g.signalId)
-   ]);
+   ],g.check);
    return result.slice(1,-1);
   }
   const guardedDb=measurementPlane?{batch:guardedBatch,prepare(sql){const original=db.prepare(sql);return {...original,bind(...values){

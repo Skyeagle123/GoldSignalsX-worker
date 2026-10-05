@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
-import {transactionalBinding} from './b1-sqlite.mjs';
+import {createOfflineSqliteMeasurementAdapter} from '../measurement-adapter.js';
 import {buildMeasurementEnvelope} from '../measurement-envelope.js';
 import {prepareCycleEnvelopes} from '../measurement-producer.js';
 import {completeJournal,loadM1Workers,provenance,now} from './b1-m1.mjs';
@@ -9,7 +9,7 @@ export {now};
 export async function database(){
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');
  for(const file of ['0001_measurement_evidence.sql','0002_measurement_storage_tiers.sql','0003_measurement_dependency_closure.sql','0004_measurement_ingress.sql','0005_measurement_ingress_recovery.sql','0006_measurement_commit_fences.sql'])db.exec(await fs.readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
- const calls=[];return {db,calls,binding:transactionalBinding(db,{calls})};
+ const calls=[];return {db,calls,binding:await createOfflineSqliteMeasurementAdapter(db,{calls})};
 }
 export async function cyclePackets({heavy=false}={}){
  const {after}=await loadM1Workers();const journal=completeJournal(after,sm,{heavy});

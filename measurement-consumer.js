@@ -177,14 +177,14 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
   try{
    e=await validateMeasurementWire(wire,{receivedAt});
    const startedAt=now();if(!Number.isSafeInteger(startedAt)||startedAt<receivedAt)fail('measurement_ingress_clock_invalid');
-   for(const d of decisions(e))bindings.push({id:d.evaluationId,signalId:d.officialSignalId,digest:await digestPayload(canonicalSerialize(d))});
+   for(const d of decisions(e))bindings.push({id:d.evaluationId,signalId:d.officialSignalId,attemptedSignalId:d.officialSignalId,digest:await digestPayload(canonicalSerialize(d))});
    const found=await db.prepare('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts r LEFT JOIN measurement_ingress_recovery s ON s.event_id=r.event_id WHERE r.event_id=? OR r.semantic_key=?').bind(e.eventId,e.semanticKey).all();
    const duplicate=!!found.results?.length;
    // Check before the writer's own same-record preflight, which can otherwise
    // reject a changed census before the cross-kind conflict trigger runs.
    // The trigger remains the atomic guard against concurrent first deliveries.
    for(const b of bindings){const original=await db.prepare('SELECT payload_digest,official_signal_id FROM measurement_decision_bindings WHERE evaluation_id=?').bind(b.id).first();
-    if(original&&original.payload_digest!==b.digest){contradictions.push({...b,signalId:original.official_signal_id});fenceLifecycleFailure(db,original.official_signal_id);fail('measurement_decision_integrity_conflict');}}
+    if(original&&original.payload_digest!==b.digest){contradictions.push({...b,signalId:original.official_signal_id});fenceLifecycleFailure(db,original.official_signal_id,b.id);fail('measurement_decision_integrity_conflict');}}
    if(duplicate&&found.results.some(r=>r.event_id!==e.eventId||r.payload_digest!==e.payloadDigest||r.semantic_key!==e.semanticKey))fail('measurement_ingress_integrity_conflict');
    const c=e.clocks,mask=['occurredAt','observedAt','preparedAt'].reduce((n,k,i)=>n+(c[k]?.$unavailable?1<<i:0),0);
    const receipt=db.prepare(`INSERT INTO measurement_ingress_receipts
@@ -220,17 +220,20 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
   }catch(error){
    const reason=String(error?.message||'measurement_ingress_failed');
    if(/decision_integrity_conflict/.test(reason)){
+    // SQL's canonical-conflict trigger is validated contradiction evidence.
+    // Suspend evaluations/attempted subjects before any fallible enrichment.
+    if(!contradictions.length)for(const b of bindings)fenceLifecycleFailure(db,b.signalId,b.id);
     // The conflicting batch rolled back. Persist a small immutable incident so
     // an earlier valid projection cannot remain usable after contradiction.
     try{for(const b of [...contradictions,...bindings.filter(b=>!contradictions.some(c=>c.id===b.id))]){const known=contradictions.find(c=>c.id===b.id);const old=known?{official_signal_id:known.signalId,payload_digest:null}:await db.prepare('SELECT payload_digest,official_signal_id FROM measurement_decision_bindings WHERE evaluation_id=?').bind(b.id).first();if(old&&old.payload_digest!==b.digest){
      // First durably fence the subject as PENDING. If the later immutable
      // marker fails, this intent still blocks publication and collection.
-     fenceLifecycleFailure(db,old.official_signal_id);
+     fenceLifecycleFailure(db,old.official_signal_id,b.id);
      await db.batch([db.prepare("INSERT INTO measurement_decision_quarantine(evaluation_id,state,detected_at) VALUES(?,'PENDING',?) ON CONFLICT DO NOTHING").bind(b.id,now())]);
-     clearLifecycleFailure(db,old.official_signal_id);
+     clearLifecycleFailure(db,old.official_signal_id,b.id);if(b.attemptedSignalId!==old.official_signal_id)clearLifecycleFailure(db,b.attemptedSignalId);
      await db.prepare('INSERT INTO measurement_decision_conflicts(evaluation_id,rejected_digest,detected_at) VALUES(?,?,?) ON CONFLICT DO NOTHING').bind(b.id,b.digest,now()).run();
      if(old.official_signal_id){await db.prepare("UPDATE measurement_lifecycle_projection SET integrity_status='CONFLICT',status=NULL,closed_at=NULL WHERE signal_id=?").bind(old.official_signal_id).run();await rebuildLifecycleProjection(db,old.official_signal_id,{rebuiltAt:now()});}
-    }}
+    }else if(old){clearLifecycleFailure(db,b.signalId,b.id);}}
      const signalId=subject(e);if(signalId)await rebuildLifecycleProjection(db,signalId,{rebuiltAt:now()});
     }catch{return {ok:false,status:'INTEGRITY_CONFLICT',error:reason,durable:false,captureGap:true,retryable:true,conflictStatus:'RECONCILIATION_PENDING',projectionStatus:'PENDING',quarantineDurability:'UNKNOWN_OR_PENDING'};}
     return {ok:false,status:'INTEGRITY_CONFLICT',error:reason,durable:false,captureGap:true,conflictStatus:'RECORDED'};
@@ -242,7 +245,7 @@ export function createOfflineMeasurementConsumer(db,{clock:now=()=>Date.now()}={
   }
  }
  async function finish(e,result,rebuiltAt){
-  for(const d of decisions(e)){const c=lifecycleCapability(db);if(c.exhausted||c.pending.has(d.officialSignalId))return {ok:true,...result,projectionStatus:'PENDING',captureGap:true,retryable:true};if(!subject(e)){const q=await db.prepare('SELECT state FROM measurement_decision_quarantine WHERE evaluation_id=?').bind(d.evaluationId).first();if(q)return {ok:true,...result,projectionStatus:q.state==='CONFLICT'?'CONFLICT':'PENDING',captureGap:true,retryable:true};}}
+  for(const d of decisions(e)){const c=lifecycleCapability(db);if(c.exhausted||c.pending.has(d.officialSignalId)||c.pendingEvaluations.has(d.evaluationId))return {ok:true,...result,projectionStatus:'PENDING',captureGap:true,retryable:true};if(!subject(e)){const q=await db.prepare('SELECT state FROM measurement_decision_quarantine WHERE evaluation_id=?').bind(d.evaluationId).first();if(q)return {ok:true,...result,projectionStatus:q.state==='CONFLICT'?'CONFLICT':'PENDING',captureGap:true,retryable:true};}}
   const signalId=subject(e);
   if(signalId){try{const projection=await rebuildLifecycleProjection(db,signalId,{rebuiltAt});if(projection?.integrityStatus==='CONFLICT')return {ok:true,...result,projectionStatus:'CONFLICT',captureGap:true};}catch(error){return {ok:true,...result,projectionStatus:'PENDING',projectionError:String(error?.message),captureGap:true,retryable:true};}}
   return {ok:true,...result,projectionStatus:signalId?'CURRENT':'NOT_APPLICABLE'};
