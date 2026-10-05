@@ -5,17 +5,32 @@ import {parseEvidence} from './signal-evidence.js';
 import {foldPostEntry} from './post-entry-evidence.js';
 import {buildMarketManifest} from './market-evidence.js';
 export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWrites=80}){
+ return collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},false);
+}
+// M2-only entry: a separate measurement database, no trading-table fallback.
+export async function collectMeasurementFromProjection(db,{asOf,ticks,bars,maxSubjects=8,maxWrites=80}){
+ return collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},true);
+}
+async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPlane){
  try{
   // Official lifecycle subjects have priority over research candidates so newly
   // arriving candidates cannot starve their bounded tick-buffer accumulation.
   // Within each class, the least recently processed subject gets the next turn.
-  const select=`SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
+  const select=measurementPlane?`SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
+   s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
+   FROM signal_measurement_state s JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id
+   LEFT JOIN measurement_lifecycle_projection p ON p.signal_id=d.official_signal_id AND p.available_at<=?
+    AND p.integrity_status!='CONFLICT' AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
+   WHERE EXISTS(SELECT 1 FROM measurement_ingress_receipts r WHERE r.event_kind='DECISION_CYCLE' AND r.semantic_id=d.cycle_id AND r.ingested_at<=?)
+    AND s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`:
+   `SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
    s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
    FROM signal_measurement_state s JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id
    LEFT JOIN production_signals p ON p.signal_id=d.official_signal_id
    WHERE s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`;
-  const official=(await db.prepare(select).bind('OFFICIAL',asOf,maxSubjects).all()).results||[];
-  const candidates=official.length<maxSubjects?(await db.prepare(select).bind('CANDIDATE',asOf,maxSubjects-official.length).all()).results||[]:[];
+  const selectClass=(kind,limit)=>db.prepare(select).bind(...(measurementPlane?[asOf,asOf]:[]),kind,asOf,limit).all();
+  const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
+  const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
   const rows=[...official,...candidates];
   const writer=measurementWriter(db,{maxWrites});let updated=0;const resourceReviews=[];const blocks=new Map();
   const subjects=[];
@@ -44,6 +59,7 @@ export async function collectMeasurement(db,{asOf,ticks,bars,maxSubjects=8,maxWr
    const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf,availableAt:asOf});
    folded.state.measurementHorizonAt=subject.measurementHorizonAt;
    folded.state.productionLifecycleEvidence=row.kind==='OFFICIAL'?(row.status?'AVAILABLE':'UNAVAILABLE'):'NOT_APPLICABLE';
+   if(measurementPlane)folded.state.lifecycleEvidenceBasis='IMMUTABLE_CAPTURED_MEASUREMENT_FACTS';
    if(row.kind==='OFFICIAL'&&!row.status){folded.state.nextObservationAt=asOf+86400000;folded.state.captureGap=true;}
    folded.state.measurementStatus=subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt?'HORIZON_ATTEMPT_COMPLETE; COVERAGE_MAY_BE_INSUFFICIENT':'COLLECTING';
    const selected=bars.filter(b=>b.t>=createdAt&&b.t+60000<=Math.min(observationAsOf,subject.closedAt??observationAsOf)&&b.t+60000>(previous?.processedThrough??createdAt));
