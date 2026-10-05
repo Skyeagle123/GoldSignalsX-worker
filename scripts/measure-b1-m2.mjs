@@ -7,14 +7,14 @@ import {rebuildLifecycleProjection} from '../measurement-lifecycle.js';
 import {sqliteRecordPayloadBytes} from '../measurement-resource-budget.js';
 import {buildMeasurementEnvelope} from '../measurement-envelope.js';
 const output=process.argv[2];if(!output)throw new Error('output path required');
-const tables=['measurement_ingress_receipts','measurement_lifecycle_facts','measurement_lifecycle_projection'];
+const tables=['measurement_ingress_receipts','measurement_lifecycle_facts','measurement_lifecycle_projection','measurement_ingress_recovery','measurement_decision_bindings','measurement_decision_conflicts'];
 function payloads(db){return Object.fromEntries(tables.map(table=>[table,db.prepare(`SELECT * FROM ${table}`).all().map(row=>sqliteRecordPayloadBytes(Object.values(row)))]));}
 function allocation(db){
- const objects=db.prepare("SELECT name,pgsize,payload,ncell FROM dbstat WHERE name LIKE 'measurement_ingress_%' OR name LIKE 'measurement_lifecycle_%' OR name LIKE 'sqlite_autoindex_measurement_ingress_%' OR name LIKE 'sqlite_autoindex_measurement_lifecycle_%'").all();
+ const objects=db.prepare("SELECT name,pgsize,payload,ncell FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE type='table' AND name IN ("+tables.map(()=>'?').join(',')+") OR type='index' AND tbl_name IN ("+tables.map(()=>'?').join(',')+"))").all(...tables,...tables);
  const rows=payloads(db),recordBytes=Object.values(rows).flat().reduce((a,b)=>a+b,0),physicalBytes=objects.reduce((n,r)=>n+r.pgsize,0);
  return {recordBytes,physicalBytes,physicalToRecordFactor:physicalBytes/recordBytes,
   indexes:Object.fromEntries([...new Set(objects.map(r=>r.name))].map(name=>[name,objects.filter(r=>r.name===name).reduce((n,r)=>n+r.pgsize,0)])),
-  rows:Object.fromEntries(Object.entries(rows).map(([name,bytes])=>[name,{count:bytes.length,min:Math.min(...bytes),max:Math.max(...bytes),total:bytes.reduce((a,b)=>a+b,0)}]))};
+  rows:Object.fromEntries(Object.entries(rows).map(([name,bytes])=>[name,{count:bytes.length,min:bytes.length?Math.min(...bytes):0,max:bytes.length?Math.max(...bytes):0,total:bytes.reduce((a,b)=>a+b,0)}]))};
 }
 async function operations(consumer,calls,wire){calls.length=0;const result=await consumer.ingest(wire);return {result,preparedReads:calls.filter(s=>/^SELECT/.test(s)).length,preparedWrites:calls.filter(s=>/^(INSERT|UPDATE|DELETE)/.test(s)).length};}
 const report={basis:'LOCAL SQLite record payload before allocation; physical dbstat includes table/index pages; synthetic mature rowid sensitivity is not a full production workload',profiles:{},allocation:{}};
@@ -30,6 +30,28 @@ for(const heavy of [false,true]){
  calls.length=0;await rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400000});measures.rebuild={preparedReads:calls.filter(s=>/^SELECT/.test(s)).length,preparedWrites:calls.filter(s=>/^INSERT/.test(s)).length,factsDecoded:3};
  const link=await confirmation(id,'5m:1790865000000:buy');measures.confirmation=await operations(consumer,calls,link.wire);
  report.profiles[heavy?'heavy':'representative']={payloadBytes:payloads(db),operations:measures};db.close();
+}
+{
+ const {db,binding,calls}=await database(),consumer=createOfflineMeasurementConsumer(binding,{clock:()=>now+86400000});
+ const ps=await cyclePackets(),cycle=ps[0],creation=ps.find(p=>p.envelope.kind==='OFFICIAL_CREATION');
+ const fill=db.prepare("INSERT INTO signal_measurement_state(subject_id,state_version,payload_json,updated_at) VALUES(?,1,'{}',?)");
+ for(let i=0;i<4032;i++)fill.run('capacity:'+i,now);
+ report.recovery={pending:await operations(consumer,calls,cycle.wire)};
+ assert.equal(report.recovery.pending.result.processingStatus,'PENDING');
+ report.recovery.pendingRowBytes=payloads(db).measurement_ingress_recovery;
+ db.prepare("DELETE FROM signal_measurement_state WHERE subject_id LIKE 'capacity:%'").run();
+ report.recovery.repaired=await operations(consumer,calls,cycle.wire);assert.equal(report.recovery.repaired.result.processingStatus,'CURRENT');
+ await consumer.ingest(creation.wire);
+ const e=creation.envelope,d=structuredClone(e.payload);d.decisionEvidence.engine.levels.entry+=1;
+ const bad=await buildMeasurementEnvelope({kind:e.kind,semanticId:e.semanticId,payload:d,occurredAt:e.clocks.occurredAt,observedAt:e.clocks.observedAt,preparedAt:e.clocks.preparedAt});
+ // Same-kind conflicts remain 1-read/0-write. A different-kind census conflict
+ // prices the canonical-conflict incident and projection quarantine separately.
+ const census=ps.find(p=>p.envelope.kind==='EVALUATION_CENSUS'&&p.envelope.semanticId===e.payload.evaluationId);
+ const cp=structuredClone(census.envelope.payload);cp.decisionEvidence.engine.levels.entry+=1;
+ const {censusSnapshot}=await import('../evidence-codec.js');cp.census=censusSnapshot(cp.decisionEvidence);
+ const ce=census.envelope,conflict=await buildMeasurementEnvelope({kind:ce.kind,semanticId:ce.semanticId,payload:cp,occurredAt:ce.clocks.occurredAt,observedAt:ce.clocks.observedAt,preparedAt:ce.clocks.preparedAt});
+ report.recovery.crossKindConflict=await operations(consumer,calls,conflict.wire);assert.equal(report.recovery.crossKindConflict.result.status,'INTEGRITY_CONFLICT');
+ report.recovery.conflictRowBytes=payloads(db).measurement_decision_conflicts;db.close();
 }
 for(const [name,rowidBase]of [['fresh',0],['90day',181440],['365dayStress',735840]]){
  const {db,binding}=await database(),consumer=createOfflineMeasurementConsumer(binding,{clock:()=>now+86400000});

@@ -21,7 +21,7 @@ test('M2 fresh separate migration chain, historical migrations unchanged and no 
 });
 test('M2 actual M1 cycle and census durable atomic ingestion, duplicate delivery and semantic conflict',async()=>{
  const {db,consumer}=await setup();assert.equal((await consumer.ingest(cycle.wire)).status,'ACCEPTED');
- const receipt=db.prepare('SELECT * FROM measurement_ingress_receipts').get();
+ const receipt=db.prepare('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery s ON s.event_id=r.event_id').get();
  assert.equal((await consumer.ingest(cycle.wire)).status,'DUPLICATE');assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,1);
  for(const packet of packets.slice(1))assert.equal((await consumer.ingest(packet.wire)).ok,true);
  assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,7);
@@ -78,7 +78,7 @@ test('M2 incompatible terminal facts stay immutable and make projection unavaila
 });
 test('M2 first receipt/durable availability never backdated by old observation or redelivery',async()=>{
  const {db,consumer,time}=await setup();time(now+100000);const tp1=await lifecycle(id,'tp1');await consumer.ingest(tp1.wire,{receivedAt:now+90000});
- const r=db.prepare('SELECT * FROM measurement_ingress_receipts').get();assert.equal(r.occurred_at,now+60000);assert.equal(r.observed_at,now+60010);assert.equal(r.received_at,now+90000);assert.equal(r.ingested_at,now+100000);
+ const r=db.prepare('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery s ON s.event_id=r.event_id').get();assert.equal(r.occurred_at,now+60000);assert.equal(r.observed_at,now+60010);assert.equal(r.received_at,now+90000);assert.equal(r.ingested_at,now+100000);
  time(now+200000);await consumer.ingest(tp1.wire);assert.equal(projection(db,id).available_at,now+100000);db.close();
 });
 test('M2 confirmations preserve ownership and link persistence before/after Primary',async()=>{
@@ -123,7 +123,7 @@ test('M2 concurrent identical/conflicting redelivery is protected by atomic rece
  const a=createOfflineMeasurementConsumer(atomic,{clock:()=>now+86400000}),b=createOfflineMeasurementConsumer(atomic,{clock:()=>now+86400001});
  const fact=await lifecycle(id,'tp1');const results=await Promise.all([a.ingest(fact.wire),b.ingest(fact.wire)]);assert(results.every(r=>r.ok));
  assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,1);assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);
- assert(results.every(r=>r.ingestedAt===db.prepare('SELECT ingested_at FROM measurement_ingress_receipts').get().ingested_at));
+ assert(results.every(r=>r.ingestedAt===db.prepare('SELECT ingested_at FROM measurement_ingress_recovery').get().ingested_at));
  const e=(await lifecycle(id,'tp2')).envelope,change=await buildMeasurementEnvelope({kind:e.kind,semanticId:e.semanticId,payload:{...e.payload,observedPrice:4000},occurredAt:e.clocks.occurredAt,observedAt:e.clocks.observedAt,preparedAt:e.clocks.preparedAt});
  const pair=await Promise.all([a.ingest(JSON.stringify(e)),b.ingest(change.wire)]);assert.equal(pair.filter(r=>r.ok).length,1);assert.equal(pair.filter(r=>r.status==='INTEGRITY_CONFLICT').length,1);db.close();
 });
@@ -145,7 +145,188 @@ test('M2 stale/budget-pending projection is explicit and cannot be used as curre
 });
 test('M2 unavailable clocks remain distinct from null; no reporting writes or trading imports',async()=>{
  const {db,consumer}=await setup();const gap=await buildMeasurementEnvelope({kind:'CAPTURE_GAP',semanticId:'gap',payload:{captureGap:true,durable:false,measurementOnly:true,decisionUse:false},occurredAt:undefined,observedAt:null,preparedAt:now});
- assert.equal((await consumer.ingest(gap.wire)).ok,true);const receipt=db.prepare('SELECT * FROM measurement_ingress_receipts').get();assert.equal(receipt.clock_unavailable,1);assert.equal(receipt.observed_at,null);
+ assert.equal((await consumer.ingest(gap.wire)).ok,true);const receipt=db.prepare('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery s ON s.event_id=r.event_id').get();assert.equal(receipt.clock_unavailable,1);assert.equal(receipt.observed_at,null);
  for(const name of ['measurement-consumer.js','measurement-lifecycle.js']){const text=await fs.readFile(new URL(name,import.meta.url),'utf8');assert(!/\bfetch\s*\(|GSX_DB|production_signals|cloudflare:|https?:\/\//.test(text));}
  const worker=await fs.readFile(new URL('goldsignalsx-worker.js',import.meta.url),'utf8');assert(!worker.includes('measurement-consumer'));db.close();
+});
+
+// Public-ingress regressions for the six independently reproduced M2 defects.
+async function edited(packet,change){
+ const e=JSON.parse(packet.wire);change(e);
+ const {canonicalSerialize,digestPayload}=await import('./signal-evidence.js');
+ e.payloadDigest=await digestPayload(canonicalSerialize({clocks:{occurredAt:e.clocks.occurredAt,observedAt:e.clocks.observedAt},payload:e.payload},2*1024**2));
+ e.eventId=`m1:${await digestPayload(canonicalSerialize([e.producerNamespace,e.kind,e.semanticId,e.payloadDigest]))}`;
+ return canonicalSerialize(e,2*1024**2);
+}
+function faultBinding(binding,match){
+ let armed=true;
+ return {...binding,prepare(sql){
+  const original=binding.prepare(sql);
+  return {...original,bind(...v){
+   const statement=original.bind(...v);
+   return {...statement,
+    async run(){if(armed&&match(sql)){armed=false;throw new Error('PROJECTION_UNAVAILABLE');}return statement.run();},
+    async first(){if(armed&&match(sql)){armed=false;throw new Error('POST_COMMIT_TEST_FAILURE');}return statement.first();},
+    async all(){if(armed&&match(sql)){armed=false;throw new Error('RECEIPT_LOOKUP_UNAVAILABLE');}return statement.all();}
+   };
+  }};
+ }};
+}
+test('M2-R1 SL + failed projection defers Official without cursor/outcomes; recovery resumes safely',async()=>{
+ const {db,binding,consumer,time}=await setup();time(now+7200000);for(const p of [cycle,creation])assert.equal((await consumer.ingest(p.wire)).ok,true);
+ const sl=await lifecycle(id,'sl');
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('INSERT INTO measurement_lifecycle_projection')),{clock:()=>now+7200000});
+ assert.equal((await broken.ingest(sl.wire)).projectionStatus,'PENDING');
+ const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ const levels=created.engine.levels;
+ const bars=Array.from({length:120},(_,i)=>({t:now+i*60000,o:levels.entry,h:i?levels.tp2+1:levels.entry,l:i?levels.entry:levels.sl-1,c:levels.entry,v:1,provider:'mt5'}));
+ const deferred=await collectMeasurementFromProjection(binding,{asOf:now+7260000,bars,ticks:[],maxSubjects:1});assert(deferred.ok);assert.equal(deferred.deferredOfficialSubjects,1);assert(deferred.captureGap);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_outcome_evidence WHERE subject_id=?').get(id).n,0);
+ assert.equal((await consumer.ingest(sl.wire)).projectionStatus,'CURRENT');
+ const result=await collectMeasurementFromProjection(binding,{asOf:now+7260000,bars,ticks:[],maxSubjects:1});assert(result.ok);assert.equal(result.updated,1);
+ for(const row of db.prepare('SELECT * FROM signal_outcome_evidence WHERE subject_id=?').all(id)){
+  const {decodeStoredOutcome}=await import('./evidence-codec.js');const outcome=await decodeStoredOutcome(row);
+  if(outcome.occurredTo!=null)assert(outcome.occurredTo<=now+60000);
+  assert.notEqual(outcome.eventType,'TP2');
+ }
+ db.close();
+});
+test('M2-R1 missing/partial/conflicted Official projection remains pending without cursor writes',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ for(const mode of ['absent','partial','conflict']){
+  if(mode==='partial'){await consumer.ingest(creation.wire);db.prepare("UPDATE measurement_lifecycle_projection SET integrity_status='PARTIAL'").run();}
+  if(mode==='conflict')db.prepare("UPDATE measurement_lifecycle_projection SET integrity_status='CONFLICT'").run();
+  assert((await collectMeasurementFromProjection(binding,{asOf:now+86400000,bars:[],ticks:[]})).ok);
+  assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ }db.close();
+});
+test('M2-R2 identical canonical evidence reconciles cycle/census/Official in either order',async()=>{
+ for(const order of [[cycle,creation],[creation,cycle]]){const {db,consumer}=await setup();for(const p of order)assert((await consumer.ingest(p.wire)).ok);
+  const census=packets.find(p=>p.envelope.semanticId===created.evaluationId);assert((await consumer.ingest(census.wire)).ok);
+  assert.equal(db.prepare('SELECT count(*) n FROM measurement_decision_bindings WHERE evaluation_id=?').get(created.evaluationId).n,1);
+  assert.equal(projection(db,id).integrity_status,'COMPLETE');db.close();}
+});
+test('M2-R2 cross-kind Entry/levels/direction/timeframe conflicts quarantine both delivery orders',async()=>{
+ for(const mutation of [d=>d.engine.levels.entry=4200,d=>d.engine.levels.tp2+=1,d=>d.direction='sell',d=>d.timeframe='15m']){
+  const bad=await edited(creation,e=>mutation(e.payload.decisionEvidence));
+  for(const reverse of [false,true]){const {db,consumer}=await setup();assert((await consumer.ingest(reverse?bad:cycle.wire)).ok);
+   const conflict=await consumer.ingest(reverse?cycle.wire:bad);assert.equal(conflict.status,'INTEGRITY_CONFLICT');assert.equal(conflict.conflictStatus,'RECORDED');
+   assert.equal(db.prepare('SELECT count(*) n FROM measurement_decision_conflicts').get().n,1);
+   if(reverse)assert.equal(projection(db,id).integrity_status,'CONFLICT');
+   else {await consumer.ingest(creation.wire);assert.equal(projection(db,id).integrity_status,'CONFLICT');}
+   db.close();}
+ }
+});
+test('M2-R2 concurrent cross-kind conflicting delivery has one canonical winner, unusable projection',async()=>{
+ const {db,binding}=await database();let tail=Promise.resolve();const atomic={...binding,batch(ss){const work=tail.then(()=>binding.batch(ss));tail=work.catch(()=>{});return work;}};
+ const a=createOfflineMeasurementConsumer(atomic,{clock:()=>now+86400000}),b=createOfflineMeasurementConsumer(atomic,{clock:()=>now+86400000});
+ const bad=await edited(creation,e=>e.payload.decisionEvidence.engine.levels.entry=4200);
+ const results=await Promise.all([a.ingest(cycle.wire),b.ingest(bad)]);
+ assert.equal(results.filter(r=>r.ok).length,1);assert.equal(results.filter(r=>r.status==='INTEGRITY_CONFLICT').length,1);
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_decision_conflicts').get().n,1);
+ await a.ingest(creation.wire);assert.equal(projection(db,id).integrity_status,'CONFLICT');db.close();
+});
+test('M2-R3 malformed pins/links/ownership/scalars reject before any receipt or evidence',async()=>{
+ const mutations=[
+  e=>e.payload.officialPins[0].blockIds=123,
+  e=>e.payload.officialPins[0].blockIds=null,
+  e=>e.payload.officialPins[0].officialId='other-owner',
+  e=>e.payload.officialPins[0].blockIds=[],
+  e=>e.payload.links[0].ownerId='other-cycle',
+  e=>e.payload.links[0].blockIds=['missing-block'],
+  e=>e.payload.records.find(r=>r.type==='decision').values.evaluated_at+=864000000,
+  e=>e.payload.records.find(r=>r.type==='decision').values.candidate_key='unrelated-key',
+  e=>e.payload.records.find(r=>r.type==='cycle').values.evaluated_at+=1,
+  e=>e.clocks.observedAt+=1,
+  e=>e.payload.records.find(r=>r.type==='decision').payload.inputManifest.primary.references[0].blockId='other-block',
+ ];
+ for(const mutation of mutations){const {db,consumer}=await setup();const r=await consumer.ingest(await edited(cycle,mutation));assert.equal(r.status,'REJECTED',JSON.stringify(r));
+  assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,0);assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,0);db.close();}
+});
+test('M2-R3 exact tags and decoded finite clocks reject ambiguous/Infinity/future/invalid values',async()=>{
+ const fact=await lifecycle(id,'tp1');
+ for(const value of [{$unavailable:'undefined',$number:'Infinity'},{$number:'Infinity'},{$number:'NaN'},{$number:'wat'},now+86400001,-1,1.25]){
+  const {db,consumer}=await setup();const wire=await edited(fact,e=>{e.payload.occurredAt=value;e.clocks.occurredAt=value;});
+  assert.equal((await consumer.ingest(wire)).status,'REJECTED');assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,0);db.close();
+ }
+});
+test('M2-R4 five-second persistence delay establishes availability after commit, duplicate preserves fence',async()=>{
+ const {db,binding}=await database();let time=now+100000;
+ const slow={...binding,async batch(ss){time+=5000;return binding.batch(ss);}};
+ const consumer=createOfflineMeasurementConsumer(slow,{clock:()=>time}),fact=await lifecycle(id,'tp1');
+ const r=await consumer.ingest(fact.wire,{receivedAt:now+90000});assert(r.ok);assert.equal(r.ingestedAt,now+105000);
+ assert.equal(db.prepare('SELECT processing_started_at FROM measurement_ingress_receipts').get().processing_started_at,now+100000);
+ assert.equal(projection(db,id).available_at,now+105000);time+=100000;
+ assert.equal((await consumer.ingest(fact.wire)).ingestedAt,now+105000);
+ await rebuildLifecycleProjection(slow,id,{rebuiltAt:time});assert.equal(projection(db,id).available_at,now+105000);db.close();
+});
+test('M2-R4 failed availability-fence write keeps evidence unavailable until idempotent replay',async()=>{
+ const {db,binding}=await database();const fact=await lifecycle(id,'tp1');
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('UPDATE measurement_ingress_recovery')),{clock:()=>now+100000});
+ const result=await broken.ingest(fact.wire);assert(result.ok);assert.equal(result.durable,true);assert.equal(result.acknowledgementStatus,'RECONCILIATION_PENDING');
+ assert.equal(db.prepare('SELECT ingested_at FROM measurement_ingress_recovery').get().ingested_at,null);assert.equal(projection(db,id),undefined);
+ const fixed=createOfflineMeasurementConsumer(binding,{clock:()=>now+200000});assert.equal((await fixed.ingest(fact.wire)).ingestedAt,now+200000);assert.equal(projection(db,id).available_at,now+200000);db.close();
+});
+test('M2-R5 post-commit receipt read failure is durable/pending, retry remains one immutable fact',async()=>{
+ const {db,binding}=await database();
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('SELECT r.*,s.ingested_at,s.processing_status')),{clock:()=>now+100000});
+ const fact=await lifecycle(id,'tp1'),r=await broken.ingest(fact.wire);assert(r.ok);assert.equal(r.durable,true);assert.equal(r.acknowledgementStatus,'RECONCILIATION_PENDING');assert.notEqual(r.status,'REJECTED');
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);
+ const fixed=createOfflineMeasurementConsumer(binding,{clock:()=>now+200000});assert.equal((await fixed.ingest(fact.wire)).status,'DUPLICATE');assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);db.close();
+});
+test('M2-R5 lost commit acknowledgement is explicitly unknown and recoverable',async()=>{
+ const {db,binding}=await database();let once=true;
+ const uncertain={...binding,async batch(ss){const r=await binding.batch(ss);if(once){once=false;throw new Error('COMMIT_ACK_LOST');}return r;}};
+ const consumer=createOfflineMeasurementConsumer(uncertain,{clock:()=>now+100000});const fact=await lifecycle(id,'tp1');
+ const r=await consumer.ingest(fact.wire);assert.equal(r.status,'DURABILITY_UNKNOWN');assert.equal(r.durable,null);assert(r.retryable);
+ assert.equal((await consumer.ingest(fact.wire)).status,'DUPLICATE');assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);db.close();
+});
+test('M2-R6 4032-subject capacity preserves census + pending gap; replay initializes exactly once',async()=>{
+ const {db,consumer}=await setup();const fill=db.prepare("INSERT INTO signal_measurement_state(subject_id,state_version,payload_json,updated_at) VALUES(?,1,'{}',?)");
+ for(let i=0;i<4032;i++)fill.run('capacity:'+i,now);
+ const first=await consumer.ingest(cycle.wire);assert(first.ok);assert.equal(first.durable,true);assert.equal(first.processingStatus,'PENDING');assert(first.captureGap);assert(first.processingCaptureGaps.length>0);
+ assert.equal(db.prepare('SELECT count(*) n FROM signal_decision_evidence').get().n,7);
+ assert.equal(db.prepare("SELECT processing_status FROM measurement_ingress_recovery WHERE event_id=?").get(cycle.envelope.eventId).processing_status,'PENDING');
+ db.prepare("DELETE FROM signal_measurement_state WHERE subject_id LIKE 'capacity:%'").run();
+ const repaired=await consumer.ingest(cycle.wire);assert.equal(repaired.status,'DUPLICATE');assert.equal(repaired.processingStatus,'CURRENT');assert.equal(repaired.processingCaptureGaps.length,0);
+ const before=db.prepare('SELECT * FROM signal_measurement_state ORDER BY subject_id').all();assert.equal(before.length,7);
+ await consumer.ingest(cycle.wire);assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state ORDER BY subject_id').all(),before);
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_ingress_receipts').get().n,1);db.close();
+});
+
+test('M2-R2 changed census is quarantined before historical writer preflight rejects it',async()=>{
+ const {db,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);
+ const census=packets.find(p=>p.envelope.kind==='EVALUATION_CENSUS'&&p.envelope.semanticId===created.evaluationId);
+ const wire=await edited(census,e=>{e.payload.decisionEvidence.engine.levels.entry=4200;});
+ // Keep the compact census consistent: the defect is cross-kind evidence, not
+ // a counterfeit compact census. Use the established codec, not a new reducer.
+ const {censusSnapshot}=await import('./evidence-codec.js');
+ const packet={wire};const valid=await edited(packet,e=>{e.payload.census=censusSnapshot(e.payload.decisionEvidence);});
+ const result=await consumer.ingest(valid);assert.equal(result.status,'INTEGRITY_CONFLICT');assert.equal(result.conflictStatus,'RECORDED');
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_decision_conflicts').get().n,1);assert.equal(projection(db,id).integrity_status,'CONFLICT');db.close();
+});
+
+test('M2-R4 unfenced/old-availability cache cannot become Official collection truth',async()=>{
+ const {db,binding,consumer}=await setup();await consumer.ingest(cycle.wire);await consumer.ingest(creation.wire);
+ const before=db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id);
+ // A rebuildable cache from an older availability contract is insufficient,
+ // even when its count and COMPLETE state happen to match current facts.
+ db.prepare('UPDATE measurement_lifecycle_projection SET available_at=? WHERE signal_id=?').run(now,id);
+ assert.equal((await collectMeasurementFromProjection(binding,{asOf:now+86400000,bars:[],ticks:[]})).deferredOfficialSubjects,1);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);
+ await rebuildLifecycleProjection(binding,id,{rebuiltAt:now+86400000});
+ assert.throws(()=>db.prepare('DELETE FROM measurement_ingress_recovery WHERE event_id=?').run(creation.envelope.eventId),/immutable/);
+ // Simulate an existing pre-fence local receipt, without changing its immutable
+ // evidence or cache. Only the local test fixture bypasses the new delete guard.
+ db.exec('DROP TRIGGER measurement_availability_no_delete');db.prepare('DELETE FROM measurement_ingress_recovery WHERE event_id=?').run(creation.envelope.eventId);
+ assert.equal((await collectMeasurementFromProjection(binding,{asOf:now+86400000,bars:[],ticks:[]})).deferredOfficialSubjects,1);
+ assert.deepEqual(db.prepare('SELECT * FROM signal_measurement_state WHERE subject_id=?').get(id),before);db.close();
+});
+
+test('M2-R5 unavailable receipt lookup is retryable, not a false rejection of an accepted event',async()=>{
+ const {db,binding,consumer}=await setup();const fact=await lifecycle(id,'tp1');assert((await consumer.ingest(fact.wire)).ok);
+ const broken=createOfflineMeasurementConsumer(faultBinding(binding,s=>s.startsWith('SELECT r.*,s.ingested_at FROM measurement_ingress_receipts')),{clock:()=>now+86400000});
+ const result=await broken.ingest(fact.wire);assert.equal(result.status,'RETRYABLE');assert.equal(result.durable,null);assert(result.retryable);
+ assert.equal(db.prepare('SELECT count(*) n FROM measurement_lifecycle_facts').get().n,1);assert.equal((await consumer.ingest(fact.wire)).status,'DUPLICATE');db.close();
 });

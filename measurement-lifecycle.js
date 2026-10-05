@@ -60,13 +60,16 @@ export function projectLifecycle(signalId,facts){
 export async function rebuildLifecycleProjection(db,signalId,{rebuiltAt=Date.now(),maxFacts=4096}={}){
  if(!Number.isSafeInteger(rebuiltAt)||rebuiltAt<0||!Number.isInteger(maxFacts)||maxFacts<1||maxFacts>4096)throw new Error('measurement_projection_bound');
  const rows=(await db.prepare(`SELECT f.*,r.ingested_at FROM measurement_lifecycle_facts f
-  JOIN measurement_ingress_receipts r ON r.event_id=f.event_id WHERE f.signal_id=? ORDER BY f.event_id LIMIT ?`).bind(signalId,maxFacts+1).all()).results||[];
+  JOIN measurement_ingress_recovery r ON r.event_id=f.event_id AND r.ingested_at IS NOT NULL WHERE f.signal_id=? ORDER BY f.event_id LIMIT ?`).bind(signalId,maxFacts+1).all()).results||[];
  // Work bound only, not an evidence admission/count/retention policy. All facts
  // remain immutable; a pending projection is unavailable to the collector.
  if(rows.length>maxFacts)throw new Error('measurement_projection_work_exceeded');
  if(!rows.length)return null;
  const facts=[];for(const row of rows)facts.push({...row,payload:await decodeStoredEvidence(row)});
- const p=projectLifecycle(signalId,facts),encoded=await encodeEvidence(p);
+ const p=projectLifecycle(signalId,facts);
+ const conflicts=await db.prepare('SELECT c.evaluation_id FROM measurement_decision_conflicts c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=?').bind(signalId).all();
+ if(conflicts.results?.length){p.integrityStatus='CONFLICT';p.status=null;p.closedAt=null;p.conflicts.push('canonicalDecision');}
+ const encoded=await encodeEvidence(p);
  if(p.availableAt>rebuiltAt)throw new Error('measurement_projection_clock_invalid');
  await db.prepare(`INSERT INTO measurement_lifecycle_projection
   (signal_id,status,closed_at,created_at,timeframe,direction,entry,tp1,tp2,sl,available_at,fact_count,integrity_status,payload_blob,codec,uncompressed_length,payload_digest,rebuilt_at)

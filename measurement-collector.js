@@ -20,8 +20,11 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
    FROM signal_measurement_state s JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id
    LEFT JOIN measurement_lifecycle_projection p ON p.signal_id=d.official_signal_id AND p.available_at<=?
-    AND p.integrity_status!='CONFLICT' AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
-   WHERE EXISTS(SELECT 1 FROM measurement_ingress_receipts r WHERE r.event_kind='DECISION_CYCLE' AND r.semantic_id=d.cycle_id AND r.ingested_at<=?)
+    AND p.integrity_status='COMPLETE' AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
+    AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
+    AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
+   WHERE EXISTS(SELECT 1 FROM measurement_ingress_receipts r JOIN measurement_ingress_recovery a ON a.event_id=r.event_id WHERE r.event_kind='DECISION_CYCLE' AND r.semantic_id=d.cycle_id AND a.ingested_at<=?)
+    AND (d.kind!='OFFICIAL' OR (p.signal_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM measurement_decision_conflicts c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id)))
     AND s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`:
    `SELECT d.evaluation_id,d.kind,d.official_signal_id,d.cohort_id,d.payload_json AS entry_json,
    s.payload_json AS state_json,s.payload_blob AS state_blob,s.codec AS state_codec,s.uncompressed_length AS state_length,s.payload_digest AS state_digest,s.updated_at AS state_updated_at,p.status,p.closed_at
@@ -29,6 +32,14 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    LEFT JOIN production_signals p ON p.signal_id=d.official_signal_id
    WHERE s.kind=? AND s.next_observe_at<=? ORDER BY s.next_observe_at,s.subject_id LIMIT ?`;
   const selectClass=(kind,limit)=>db.prepare(select).bind(...(measurementPlane?[asOf,asOf]:[]),kind,asOf,limit).all();
+  const deferredOfficial=measurementPlane?await db.prepare(`SELECT COUNT(*) AS n FROM signal_measurement_state s
+   JOIN signal_decision_evidence d ON d.evaluation_id=s.evaluation_id WHERE s.kind='OFFICIAL' AND s.next_observe_at<=?
+   AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_projection p WHERE p.signal_id=d.official_signal_id
+    AND p.available_at<=? AND p.integrity_status='COMPLETE'
+    AND p.fact_count=(SELECT COUNT(*) FROM measurement_lifecycle_facts f WHERE f.signal_id=p.signal_id)
+    AND NOT EXISTS(SELECT 1 FROM measurement_lifecycle_facts f LEFT JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id AND a.ingested_at IS NULL)
+    AND p.available_at=(SELECT MAX(a.ingested_at) FROM measurement_lifecycle_facts f JOIN measurement_ingress_recovery a ON a.event_id=f.event_id WHERE f.signal_id=p.signal_id)
+    AND NOT EXISTS(SELECT 1 FROM measurement_decision_conflicts c JOIN measurement_decision_bindings b ON b.evaluation_id=c.evaluation_id WHERE b.official_signal_id=d.official_signal_id))`).bind(asOf,asOf).first():{n:0};
   const official=(await selectClass('OFFICIAL',maxSubjects)).results||[];
   const candidates=official.length<maxSubjects?(await selectClass('CANDIDATE',maxSubjects-official.length)).results||[]:[];
   const rows=[...official,...candidates];
@@ -90,7 +101,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    if(complete){const finalization=await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:asOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});resourceReviews.push(...finalization.resourceReviews);}
    else await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
   }
-  return {ok:true,updated,resourceReviews,subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
+  return {ok:true,updated,resourceReviews,...(measurementPlane?{deferredOfficialSubjects:deferredOfficial.n,...(deferredOfficial.n?{captureGap:true,lifecycleStatus:'PENDING'}:{})}:{}),subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,
    unselectedCoverage:'NOT_ASSERTED; SUBJECT_BUDGET_MAY_LEAVE_GAPS',coverageBasis:'CANONICAL_INPUT_STREAM; BROKER_TICK_COMPLETENESS_UNKNOWN'};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_collection_failed'),captureGap:true};}
