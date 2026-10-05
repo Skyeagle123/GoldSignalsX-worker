@@ -3,7 +3,7 @@ name: Test Worker
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "phase/b1-measurement-evidence"]
+    branches: ["main", "phase/b1-measurement-evidence", "phase/b1-m1-producer"]
     paths:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
@@ -64,15 +64,5 @@ jobs:
       - run: node test-risk-sizing.mjs
       - run: node test-risk-budget.mjs
       - run: node test-signals-security.mjs
-      - name: Compare known pre-existing reliability failure
-        shell: bash
-        run: |
-          set +e
-          node test-reliability.mjs > reliability.log 2>&1
-          result=$?
-          set -e
-          cat reliability.log
-          test "$result" -eq 1
-          grep -F 'test-reliability.mjs:86:8' reliability.log
-          grep -F "actual: 'degraded'" reliability.log
-          grep -F "expected: 'healthy'" reliability.log
+      - name: Run Reliability suite
+        run: node test-reliability.mjs
