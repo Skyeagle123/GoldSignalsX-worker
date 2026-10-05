@@ -3,7 +3,7 @@ name: Test Worker
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "phase/b1-measurement-evidence", "phase/b1-m1-producer", "phase/b1-m2-consumer"]
+    branches: ["main", "phase/b1-measurement-evidence", "phase/b1-m1-producer", "phase/b1-m2-consumer", "phase/b1-m3-transport"]
     paths:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
