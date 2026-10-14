@@ -1,0 +1,58 @@
+{
+  "reviewedCandidate": "19a872aea1f9b172e0880491fd1d06f9d180cfa9",
+  "reviewedTree": "1522792450791076479a5771c1b2dbcb9d9bba39",
+  "branch": "phase/b1-independent-measurement",
+  "scope": [
+    "PA-FINAL-01",
+    "PA-FINAL-02",
+    "PA-FINAL-03",
+    "PA-FINAL-04",
+    "PA-FINAL-05",
+    "PA-FINAL-06",
+    "PA-FINAL-07",
+    "PA-FINAL-08"
+  ],
+  "fullAcceptance": {
+    "tests": 627,
+    "pass": 627,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0
+  },
+  "newRegressionTests": 72,
+  "auxiliaryGates": {
+    "News": "PASS",
+    "Reliability": "PASS",
+    "Risk Budget": "PASS",
+    "Risk Sizing": "PASS",
+    "Signals Security": "PASS"
+  },
+  "timing": {
+    "baseline": 6,
+    "off": 6,
+    "on": 6
+  },
+  "syntax": "PASS",
+  "diffCheck": "PASS",
+  "historicalMigrations0001Through0007": "UNCHANGED",
+  "newMigration": "0008_package_a_restore_authority.sql",
+  "schemaAndRollbackFloor": 8,
+  "acceptedTradingAndM1M2M3SourcePreserved": true,
+  "qualification": "LOCAL_EMULATION_AND_PLAN_ONLY",
+  "cloudQualified": false,
+  "productionActive": false,
+  "readyForIndependentReview": true,
+  "originalRecoverySha256": "a3433fd23cef5734ee2661a8a1c962c274454f88a3943b8ca46543eac16d23ca",
+  "evidenceSha256": {
+    "full-acceptance.log": "c6e98e3724e21177e6b37077153eb1620e98b94f512ae5bf8ba249304229d5e8",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "qualification-plan.json": "32837905deb925e9c95798336a973d7e63f21f38fc824e55b4e0e69af35106ec",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "resources.json": "20e1acb35ca70f2a116acc85e7b2bacbac2f20c07271e741064dfdf773dde21e",
+    "resources.log": "eef1c515da5dd56af1b56dcc7b68a4bbbd729a4da4f4227503481190a888baef",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b"
+  }
+}

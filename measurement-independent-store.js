@@ -1,5 +1,5 @@
 import {canonicalSerialize,parseEvidence,serialize,hash,bytes,need,time,identity,LIMITS,DAY,RESPONSE_VERSION,uid} from './measurement-independent-contract.js';
-import {assertion,clearAssertions,requireD1,schemaReady,scopeFence,SQL_CLOCK} from './measurement-d1-adapter.js';
+import {assertion,clearAssertions,requireD1,schemaReady,scopeFence,SQL_CLOCK,jobFence} from './measurement-d1-adapter.js';
 import {reserve,estimateWrite,commitReservationStatements,releaseReservation,settleReservationStatements} from './measurement-reservations.js';
 import {validateMeasurementWire} from './measurement-consumer.js';
 import {projectLifecycle} from './measurement-lifecycle.js';
@@ -76,12 +76,24 @@ export async function reconcileBindings(db,e,{bindings},now){
  return (await db.first('SELECT state FROM pa_ingress WHERE event_id=?',e.eventId)).state;
 }
 export function ingressFence(db,eventId){return assertion(db,`EXISTS(SELECT 1 FROM pa_ingress WHERE event_id=? AND state='PENDING') AND EXISTS(SELECT 1 FROM pa_events WHERE id=? AND state='PENDING' AND expires_at>${SQL_CLOCK})`,eventId,eventId);}
-export async function commitEnvelope(db,wire,{now,archive=null,hook=null}={}){
+export async function commitEnvelope(db,wire,{now,archive=null,hook=null,lease=null}={}){
  requireD1(db);time(now);const e=await validateMeasurementWire(wire,{receivedAt:now});
  const event=await db.first('SELECT * FROM pa_events WHERE id=?',e.eventId);need(event,'pa_transport_registration_required');
  if(event.state==='COMMITTED')return d1Result(db,e,'DUPLICATE',true,{hook});
  const registration=await registerIngress(db,e,now);await hook?.('REGISTERED',e);
- if(archive?.lookupRecord){const historical=await archive.lookupRecord('event:'+e.eventId);if(historical){need(historical.digest===await hash(wire),'pa_archived_event_conflict');await db.batch([db.statement("UPDATE pa_ingress SET state='COMMITTED' WHERE event_id=?",[e.eventId]),db.statement("UPDATE pa_semantic_ingress SET state='COMMITTED' WHERE event_id=?",[e.eventId]),db.statement("UPDATE pa_events SET state='COMMITTED',available_at=COALESCE(available_at,?) WHERE id=?",[historical.available_at,e.eventId])]);return {responseVersion:RESPONSE_VERSION,ingestion:{status:'DUPLICATE',durable:true,eventId:e.eventId,firstDurableAvailability:historical.available_at},projection:{consistency:'NOT_VALIDATED',state:'PENDING',reason:'archived_snapshot_requires_validation'}};}
+ if(archive?.lookupRecord){
+  // Historical durability is not continuing workflow authority. Capture the exact
+  // durable registration and repeat its predicates atomically after archive I/O.
+  const authority=await db.first('SELECT e.replays,e.expires_at,m.epoch,j.owner,j.generation,j.lease_nonce,j.state AS job_state,j.lease_until FROM pa_events e CROSS JOIN pa_meta m LEFT JOIN pa_jobs j ON j.id=? WHERE e.id=?','event:'+e.eventId,e.eventId);
+  const revisions=await db.all('SELECT s.id,s.revision FROM pa_scopes s WHERE id IN(SELECT scope_id FROM pa_affected WHERE event_id=? UNION SELECT scope_id FROM pa_semantic_affected WHERE event_id=?) ORDER BY s.id LIMIT 161',e.eventId,e.eventId);
+  need(revisions.length<=160,'pa_duplicate_dependency_bound');const historical=await archive.lookupRecord('event:'+e.eventId);if(historical){need(historical.digest===await hash(wire),'pa_archived_event_conflict');let reconciliation='UNCHANGED_RECONCILED';
+   try{await db.batch([assertion(db,`EXISTS(SELECT 1 FROM pa_events e,pa_meta m,pa_ingress i,pa_semantic_ingress si WHERE e.id=? AND i.event_id=e.id AND si.event_id=e.id AND e.state='PENDING' AND i.state='PENDING' AND si.state='PENDING' AND e.replays=? AND e.expires_at=? AND e.expires_at>MAX(?,${SQL_CLOCK}) AND m.epoch=?)`,e.eventId,authority.replays,authority.expires_at,now,authority.epoch),
+    assertion(db,`EXISTS(SELECT 1 FROM pa_jobs WHERE id=? AND owner IS ? AND generation=? AND lease_nonce=? AND state=? AND lease_until=? AND (state!='RUNNING' OR lease_until>MAX(?,${SQL_CLOCK})))`,'event:'+e.eventId,authority.owner,authority.generation,authority.lease_nonce,authority.job_state,authority.lease_until,now),
+    assertion(db,"NOT EXISTS(SELECT 1 FROM json_each(?) x LEFT JOIN pa_scopes s ON s.id=json_extract(x.value,'$.id') WHERE s.id IS NULL OR s.revision!=json_extract(x.value,'$.revision'))",serialize(revisions)),...(lease?[jobFence(db,lease,now)]:[]),
+    db.statement("UPDATE pa_ingress SET state='COMMITTED' WHERE event_id=?",[e.eventId]),db.statement("UPDATE pa_semantic_ingress SET state='COMMITTED' WHERE event_id=?",[e.eventId]),db.statement("UPDATE pa_events SET state='COMMITTED',available_at=COALESCE(available_at,?) WHERE id=?",[historical.available_at,e.eventId]),db.statement("UPDATE pa_reservations SET state='SETTLED' WHERE id=? AND state='COMMITTED'",[event.reservation]),clearAssertions(db)]);
+   }catch(error){if(!/pa_fence_failed/.test(error.message))throw error;reconciliation='STALE_PRESERVED';}
+   return {responseVersion:RESPONSE_VERSION,ingestion:{status:'DUPLICATE',durable:true,eventId:e.eventId,firstDurableAvailability:historical.available_at,reconciliation},projection:{consistency:'NOT_VALIDATED',state:'PENDING',reason:'archived_snapshot_requires_validation'}};}
+
   let contradiction=false;const oldSemantic=archive.lookupSemantic?await archive.lookupSemantic(e.semanticKey):null;
   if(oldSemantic&&oldSemantic.digest!==await hash(wire))contradiction=true;
   for(const scope of registration.scopes){const historicalScope=archive.lookupScope?await archive.lookupScope(scope.id):null;if(historicalScope)await db.batch([ingressFence(db,e.eventId),db.statement('UPDATE pa_scopes SET quarantine=MAX(quarantine,?),conflict=MAX(conflict,?),recovery_required=MAX(recovery_required,?),first_available_at=MIN(COALESCE(first_available_at,?),?) WHERE id=?',[historicalScope.quarantine,historicalScope.conflict,historicalScope.recovery_required??0,historicalScope.first_available_at??now,historicalScope.first_available_at??now,scope.id]),clearAssertions(db)]);}

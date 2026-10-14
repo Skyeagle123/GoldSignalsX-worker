@@ -125,7 +125,7 @@ Templates under `deployment/b1-independent/` contain placeholders, no resource I
 
 The dependency-injected qualification harness requires an explicit environment marker, separate exact resource name/ID/bucket-namespace allowlists, expiry/stage authorization and observed identity match before work. It prepares scenario, archive-only restore, rollback and actual 48-hour pause/continuing-arrival/seven-day catch-up protocols. Local emulation never claims cloud qualification. No Package-B execution occurs here. The plan-only CLI does not provision, deploy, call cloud APIs or change credentials.
 
-Rollback controls are distinct: capture OFF while keeping the independent cohort; processing/eviction pause while retaining backlog; version rollback only to schema/archive-compatible artifacts. The rollback floor is schema 0007 with supported archive interpretation. Never purge Queue/DLQ, delete archive, reset semantic/availability clocks, restore an old database without later history reconciliation, or re-enable Trading-D1 measurement as rollback.
+Rollback controls are distinct: capture OFF while keeping the independent cohort; processing/eviction pause while retaining backlog; version rollback only to schema/archive-compatible artifacts. The remediation rollback floor is schema 0008 with supported archive interpretation. Migration 0008 persists the target catalogue boundary used by restore; 0001–0007 remain unchanged. Never purge Queue/DLQ, delete archive, reset semantic/availability clocks, restore an old database without later history reconciliation, or re-enable Trading-D1 measurement as rollback.
 
 ## Validation and quantitative status
 
@@ -136,3 +136,11 @@ Focused development tests exercise delayed/out-of-order responses, stale write f
 The final validation report and recovery bundle are produced only after the complete consolidated acceptance pass succeeds. No publication, manual CI, deployment or Package B/C follows automatically.
 
 Platform contract references checked during development: [D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/), [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), [Queue acknowledgement/retry](https://developers.cloudflare.com/queues/configuration/batching-retries/), [Queue limits](https://developers.cloudflare.com/queues/platform/limits/), and [Worker subrequest limits](https://developers.cloudflare.com/workers/platform/limits/). Actual selected-plan behavior must be qualified in Package B.
+
+## Final review remediation contract
+
+PA-FINAL-01 through PA-FINAL-08 are addressed by the scoped successor described in `B1-PACKAGE-A-REMEDIATION.md`. Historical duplicate durability never authorizes stale workflow reconciliation. Expired rootless catalogue slots are durably invalidated only when their exact source/closure changed. Restore rebuilds sample identities, charges their index overhead, and installs verified cold authority only in its fenced completion transaction.
+
+Coverage is resolved at the pinned availability/revision/catalogue boundary and authenticated in continuation tokens; known gaps take precedence. Every page returns `denominatorScope=PAGE_ONLY` and `queryTotals=null`; clients may aggregate the returned semantic records, but the API does not claim a query total. Correction admission and completion deadlines use the SQL execution clock. Runtime recovery releases expired uncommitted reservations through token/owner fences.
+
+The future qualification driver must return workload counts for all named categories during both outage and catch-up, recovery observations for retries/multipart/corrections/readback/reporting, and decimal-byte resource occupancy/reservation dimensions. Absent categories, non-continuing arrivals, and contradictory resource accounting fail validation. Local emulation remains distinct from cloud qualification.

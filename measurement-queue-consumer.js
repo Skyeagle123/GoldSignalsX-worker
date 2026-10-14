@@ -63,7 +63,8 @@ export async function recoverTransportEvent(db,id,{now,owner=uid(),archive=null,
   // The lease is checked in SQL before beginning recoverable ingress. Individual
   // ingress/commit transactions remain independently idempotent across lease loss.
   await db.batch([jobFence(db,lease,now),clearAssertions(db)]);
-  const result=await commitEnvelope(db,wire,{now,archive,hook});const classification=classifyD1Response(result);
+  const result=await commitEnvelope(db,wire,{now,archive,hook,lease});const classification=classifyD1Response(result);
+  if(result.ingestion?.reconciliation==='STALE_PRESERVED')return result;
   if(classification.retry){await markTransportFailure(db,id,classification.classification,result.ingestion.status,{now,lease});return result;}
   await finishJob(db,lease,now);return result;
  }catch(error){const classification=/transport_|measurement_.*invalid|measurement_.*mismatch/.test(error.message)?'PERMANENT_MALFORMED':'DURABILITY_UNKNOWN';

@@ -3,11 +3,11 @@ import {leaseJob,finishJob,jobFence,assertion,clearAssertions,scopeFence} from '
 import {recoverTransportEvent} from './measurement-queue-consumer.js';
 import {rebuildD1Projection,validateD1Snapshot,readRecord,stageRecord,finishRecord} from './measurement-independent-store.js';
 import {processCorrection} from './measurement-corrections.js';
-import {reserve,estimateWrite,commitReservationStatements,settleReservationStatements} from './measurement-reservations.js';
+import {reserve,estimateWrite,commitReservationStatements,settleReservationStatements,recoverReservations} from './measurement-reservations.js';
 import {foldPostEntry} from './post-entry-evidence.js';
 const classes=['census','official','incidents','catchup','processing','corrections','archive','restore'];
 export async function runRecovery(db,{now,owner=uid(),archive=null,maxJobs=16,handlers={},hook=null}={}){
- time(now);need(maxJobs>=8&&maxJobs<=32,'pa_scheduler_bound');const outcomes=[];const turn=await db.batch([db.statement('UPDATE pa_meta SET scheduler_cursor=(scheduler_cursor+1)%8 RETURNING scheduler_cursor')]),offset=turn[0].results[0].scheduler_cursor,orderedClasses=[...classes.slice(offset),...classes.slice(0,offset)];
+ time(now);need(maxJobs>=8&&maxJobs<=32,'pa_scheduler_bound');const outcomes=[],reservationsReleased=await recoverReservations(db,now,{limit:16});const turn=await db.batch([db.statement('UPDATE pa_meta SET scheduler_cursor=(scheduler_cursor+1)%8 RETURNING scheduler_cursor')]),offset=turn[0].results[0].scheduler_cursor,orderedClasses=[...classes.slice(offset),...classes.slice(0,offset)];
  // Each bounded pass reserves a turn for every class; urgent classes then get spare turns.
  for(let round=0;round<4&&outcomes.length<maxJobs;round++)for(const workClass of orderedClasses){if(outcomes.length>=maxJobs||db.remainingStatements()<300)break;
   const row=await db.first("SELECT * FROM pa_jobs WHERE class=? AND state IN('PENDING','RUNNING') AND next_at<=? AND lease_until<=? ORDER BY deadline,next_at,id LIMIT 1",workClass,now,now);if(!row)continue;
@@ -21,7 +21,7 @@ export async function runRecovery(db,{now,owner=uid(),archive=null,maxJobs=16,ha
    await finishJob(db,lease,now,{state:result?.processing?.status==='BACKLOG_PENDING'||result?.pending?'PENDING':'DONE',nextAt:now+1000});outcomes.push({job:row.id,status:'DONE',result});
   }catch(error){try{await finishJob(db,lease,now,{state:'PENDING',nextAt:now+1000});}catch{}outcomes.push({job:row.id,status:'PENDING',reason:error.message});}
  }
- return {outcomes,bounded:true,maxJobs};
+ return {outcomes,bounded:true,maxJobs,reservationsReleased};
 }
 export async function processCapturedOutcome(db,scopeId,{now,archive=null,lease=null,hook=null}={}){
  const binding=await db.first('SELECT * FROM pa_bindings WHERE evaluation_id=? OR signal_id=? ORDER BY evaluation_id LIMIT 1',scopeId,scopeId);if(!binding)return {status:'NOT_APPLICABLE'};

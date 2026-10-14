@@ -1,0 +1,102 @@
+{
+  "marker": "goldsignalsx-b1-isolated-qualification-v1",
+  "environment": "synthetic-b1-package-a",
+  "resources": {
+    "database": "synthetic-b1-measurement",
+    "bucket": "synthetic-b1-private-archive",
+    "queue": "synthetic-b1-measurement",
+    "dlq": "synthetic-b1-measurement-dlq",
+    "restoreDatabase": "synthetic-b1-empty-restore"
+  },
+  "scenarios": [
+    "rejected-candidate",
+    "eligible-candidate",
+    "official",
+    "confirmation",
+    "tp1",
+    "tp2",
+    "sl",
+    "expiry",
+    "failed-trading-persistence",
+    "post-entry-market",
+    "source-gaps",
+    "ordering",
+    "duplicate",
+    "conflict",
+    "multipart-expiry",
+    "retry",
+    "dlq",
+    "replay",
+    "correction",
+    "correction-after-eviction",
+    "archive-publication",
+    "archive-readback",
+    "eviction",
+    "archive-report",
+    "empty-restore",
+    "corrupt-object",
+    "missing-object",
+    "unsupported-codec",
+    "resource-saturation",
+    "multi-instance",
+    "rollback"
+  ],
+  "outage": {
+    "pauseHours": 48,
+    "continuingArrivals": true,
+    "catchupTargetDays": 7,
+    "requiredWorkload": [
+      "newArrivals",
+      "census",
+      "officials",
+      "candidates",
+      "market",
+      "retries",
+      "multipart",
+      "corrections",
+      "archive",
+      "reporting"
+    ],
+    "requiredRecoveryObservations": [
+      "censusRecovered",
+      "officialRecovered",
+      "candidateRecovered",
+      "marketRecovered",
+      "retriesRecovered",
+      "multipartRecovered",
+      "correctionsRecovered",
+      "archiveVerified",
+      "archiveReadbackVerified",
+      "reportingComplete",
+      "reportingLoadObserved"
+    ],
+    "requiredResourceObservations": [
+      "normalLiveBytes",
+      "normalReservedBytes",
+      "recoveryReserveBytes",
+      "hardChargedBytes",
+      "stagedTransportBytes",
+      "archiveWorkBytes",
+      "reservationBytes",
+      "reservationCount"
+    ],
+    "resourceModel": {
+      "normal": 4000000000,
+      "hard": 5500000000,
+      "reserve": 1500000000,
+      "partitions": {
+        "incidents": 200000000,
+        "catchup": 600000000,
+        "archive": 400000000,
+        "restore": 300000000
+      }
+    }
+  },
+  "archiveOnlyRestore": {
+    "sourceUnavailable": true,
+    "emptyTarget": true,
+    "compareCensusAndResultDigests": true
+  },
+  "execution": "NOT_AUTHORIZED_IN_PACKAGE_A",
+  "cloudCalls": 0
+}
