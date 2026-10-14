@@ -1,0 +1,15 @@
+{
+  "marker": "goldsignalsx-b1-isolated-qualification-v1",
+  "environment": "synthetic-b1-package-a",
+  "resources": {
+    "database": "synthetic-b1-measurement",
+    "bucket": "synthetic-b1-private-archive",
+    "queue": "synthetic-b1-measurement",
+    "dlq": "synthetic-b1-measurement-dlq",
+    "restoreDatabase": "synthetic-b1-empty-restore"
+  },
+  "resourceIds": "PACKAGE_B_EXACT_ALLOWLIST_REQUIRED",
+  "executionEnabled": false,
+  "queueRetentionTargetSeconds": 1209600,
+  "dlqRetentionTargetSeconds": 1209600
+}

@@ -1,0 +1,22 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {seedOfficial,fakeBucket,packageDatabase} from './test-fixtures/b1-package-a.mjs';
+import {createPrivateArchiveAdapter,publishArchive,verifyArchivePackage,verifyRoot,discoverArchiveRoot,archiveReader} from './measurement-archive.js';
+import {hydrateArchive} from './measurement-restore.js';
+import {verifyArchiveParity,evictPublication} from './measurement-independent-retention.js';
+const make=()=>{const b=fakeBucket();return {...b,archive:createPrivateArchiveAdapter(b.bucket,{namespace:'synthetic-b1-test/'})};};
+test('Archive actual readback, catalogue root and empty-target restore preserve identities and availability',async()=>{const x=await seedOfficial(),a=make(),target=await packageDatabase();try{
+ const publication=await publishArchive(x.db,a.archive,x.scopeId,{now:x.at});assert.equal(publication.state,'EVICTION_ELIGIBLE');assert(a.calls.some(c=>c[0]==='get'));
+ const root=await discoverArchiveRoot(a.archive),verified=await verifyArchivePackage(a.archive,publication.manifest_key);assert.equal(root.key,publication.root_key);
+ const result=await hydrateArchive(target.db,a.archive,root.key,{now:x.at+1000,environment:'synthetic-b1-package-a',authorization:{operation:'restore',environment:'synthetic-b1-package-a',expiresAt:x.at+2000}});assert.equal(result.status,'COMPLETE');assert.notEqual(result.sourceEpoch,result.targetEpoch);
+ for(const r of verified.records){const restored=target.raw.prepare('SELECT digest,available_at FROM pa_records WHERE id=?').get(r.id);assert.equal(restored.digest,r.digest);assert.equal(restored.available_at,r.available_at);}
+ assert.deepEqual(target.raw.prepare('PRAGMA foreign_key_check').all(),[]);
+}finally{x.close();target.close();}});
+for(const phase of ['SNAPSHOT_PINNED','OBJECTS_WRITTEN','VERIFIED','CATALOGUED','EVICTION_ELIGIBLE'])test('Archive crash resumes after '+phase,async()=>{const x=await seedOfficial(),a=make();try{
+ await assert.rejects(publishArchive(x.db,a.archive,x.scopeId,{now:x.at,owner:'A',hook:state=>{if(state===phase)throw Error('CRASH');}}),/CRASH/);
+ const p=await publishArchive(x.db,a.archive,x.scopeId,{now:x.at+60001,owner:'B'});assert.equal(p.state,'EVICTION_ELIGIBLE');assert.equal(x.raw.prepare('SELECT COUNT(*) n FROM pa_publications').get().n,1);
+}finally{x.close();}});
+test('Archive corrupt readback prevents verification and eviction',async()=>{const x=await seedOfficial(),a=make();try{a.failures.set('readback',true);await assert.rejects(publishArchive(x.db,a.archive,x.scopeId,{now:x.at}),/pa_archive_digest/);assert.equal(x.raw.prepare('SELECT state FROM pa_publications').get().state,'SNAPSHOT_PINNED');}finally{x.close();}});
+test('Archive source revision changes after verification reject catalogue authority',async()=>{const x=await seedOfficial(),a=make();try{await assert.rejects(publishArchive(x.db,a.archive,x.scopeId,{now:x.at,hook:state=>{if(state==='VERIFIED')x.raw.prepare('UPDATE pa_scopes SET revision=revision+1 WHERE id=?').run(x.scopeId);}}),/pa_fence_failed/);assert.equal(x.raw.prepare('SELECT state FROM pa_publications').get().state,'STALE');}finally{x.close();}});
+test('Eviction requires parity and recoverable root; retains archive availability',async()=>{const x=await seedOfficial(),a=make();try{const p=await publishArchive(x.db,a.archive,x.scopeId,{now:x.at});await assert.rejects(evictPublication(x.db,a.archive,p.id,{now:x.at}),/pa_eviction_not_verified/);await verifyArchiveParity(x.db,a.archive,p.id);x.raw.exec("UPDATE pa_jobs SET state='DONE'");const before=x.raw.prepare('SELECT physical_charged FROM pa_meta').get().physical_charged;const result=await evictPublication(x.db,a.archive,p.id,{now:x.at});assert.equal(result.status,'EVICTED');assert.equal(x.raw.prepare('SELECT physical_charged FROM pa_meta').get().physical_charged,before);const reader=archiveReader(a.archive,{rootKey:p.root_key});assert(await reader.lookupRecord('decision:'+x.evaluationId));}finally{x.close();}});
+test('Missing object with existing receipt blocks eviction',async()=>{const x=await seedOfficial(),a=make();try{const p=await publishArchive(x.db,a.archive,x.scopeId,{now:x.at});await verifyArchiveParity(x.db,a.archive,p.id);a.objects.delete([...a.objects.keys()].find(k=>k.includes('/chunks/')));await assert.rejects(evictPublication(x.db,a.archive,p.id,{now:x.at}),/pa_archive_object_missing/);assert(x.raw.prepare('SELECT COUNT(*) n FROM pa_records').get().n>0);}finally{x.close();}});

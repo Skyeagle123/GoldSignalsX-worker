@@ -51,7 +51,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
   const rows=[...official,...candidates];
   if(measurementPlane)for(const row of official){row.commitCheck=lifecycleCommitCheck(db,row.official_signal_id,row.evaluation_id);commitChecks.push(row.commitCheck);}
   if(measurementPlane)for(const row of candidates){row.commitCheck=lifecycleCommitCheck(db,null,row.evaluation_id,{requireUnquarantinedEvaluation:true});commitChecks.push(row.commitCheck);}
-  let activeGuard=null,racedOfficial=0;
+  let activeGuard=null,racedOfficial=0,racedCandidate=0;
   const originals=new WeakMap();
   // Guard and mutation share one atomic batch. This is per subject, never a
   // global work lock. A revision mismatch raises and rolls back the mutation.
@@ -94,7 +94,7 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const existing=(await db.prepare("SELECT * FROM signal_outcome_evidence WHERE subject_id=? AND event_type IN ('TP1','TP2','SL')").bind(subject.id).all()).results||[];
    for(const record of existing){const event=await decodeStoredOutcome(record);if(event.evidenceType==='BARRIER_OBSERVATION')previous.barriers[`${event.eventType}:${event.source}`]=event;}
    if(latest?.availableAt===asOf){activeGuard=guardFor(row);try{await writer.state(subject.id,row.cohort_id,previous,asOf);updated++;}
-    catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message)))racedOfficial++;else throw error;}
+    catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message))){if(row.kind==='OFFICIAL')racedOfficial++;else racedCandidate++;}else throw error;}
     finally{activeGuard=null;}continue;}
    const observationAsOf=Math.min(asOf,subject.measurementHorizonAt??asOf);
    const folded=foldPostEntry(subject,previous,{ticks,bars,asOf:observationAsOf,availableAt:asOf});
@@ -132,10 +132,10 @@ async function collect(db,{asOf,ticks,bars,maxSubjects,maxWrites},measurementPla
    const complete=(subject.measurementHorizonAt&&asOf>=subject.measurementHorizonAt)||(subject.closedAt&&subject.closedAt<=asOf);
    if(complete){const finalization=await writer.finalize(subject.id,row.kind,{...folded.state,availableAt:asOf,observedAt:asOf,occurredFrom:subject.createdAt,occurredTo:folded.state.processedThrough,marketManifest:manifest},asOf,{blockIds:manifest.references.map(r=>r.blockId)});resourceReviews.push(...finalization.resourceReviews);}
    else await writer.state(subject.id,row.cohort_id,folded.state,asOf);updated++;
-   }catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message)))racedOfficial++;else throw error;}
+   }catch(error){if(/measurement_lifecycle_commit_changed|measurement_quarantine_capability_pending/.test(String(error?.message))){if(row.kind==='OFFICIAL')racedOfficial++;else racedCandidate++;}else throw error;}
    finally{activeGuard=null;}
   }
-  return {ok:true,updated,resourceReviews,...(measurementPlane?{deferredOfficialSubjects:deferredOfficial.n+racedOfficial,...(deferredOfficial.n+racedOfficial?{captureGap:true,lifecycleStatus:'PENDING'}:{})}:{}),subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
+  return {ok:true,updated,resourceReviews,...(measurementPlane?{deferredOfficialSubjects:deferredOfficial.n+racedOfficial,deferredCandidateSubjects:racedCandidate,...(deferredOfficial.n+racedOfficial+racedCandidate?{captureGap:true,lifecycleStatus:'PENDING'}:{})}:{}),subjects:rows.length,subjectBudget:maxSubjects,budgetLimitReached:rows.length===maxSubjects,
    selectedOldestLagMs:rows.length?Math.max(...rows.map(r=>asOf-(r.state_updated_at??r.evaluated_at))):0,
    unselectedCoverage:'NOT_ASSERTED; SUBJECT_BUDGET_MAY_LEAVE_GAPS',coverageBasis:'CANONICAL_INPUT_STREAM; BROKER_TICK_COMPLETENESS_UNKNOWN'};
  }catch(error){return {ok:false,error:String(error?.message||'measurement_collection_failed'),captureGap:true};}

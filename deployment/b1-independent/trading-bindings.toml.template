@@ -1,0 +1,11 @@
+# Merge only in a separately authorized deployment. Existing trading bindings
+# remain owned by the trading configuration. NO Measurement D1/R2 here.
+[[queues.producers]]
+binding = "MEASUREMENT_QUEUE"
+queue = "synthetic-b1-measurement"
+
+[vars]
+B1_MEASUREMENT_PLANE = "independent"
+B1_INDEPENDENT_CAPTURE_ENABLED = "0"
+B1_REAL_QUEUE_HANDOFF_ENABLED = "0"
+B1_POST_ENTRY_EXPORT_ENABLED = "0"

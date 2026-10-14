@@ -1,0 +1,56 @@
+{
+  "marker": "goldsignalsx-b1-isolated-qualification-v1",
+  "environment": "synthetic-b1-package-a",
+  "resources": {
+    "database": "synthetic-b1-measurement",
+    "bucket": "synthetic-b1-private-archive",
+    "queue": "synthetic-b1-measurement",
+    "dlq": "synthetic-b1-measurement-dlq",
+    "restoreDatabase": "synthetic-b1-empty-restore"
+  },
+  "scenarios": [
+    "rejected-candidate",
+    "eligible-candidate",
+    "official",
+    "confirmation",
+    "tp1",
+    "tp2",
+    "sl",
+    "expiry",
+    "failed-trading-persistence",
+    "post-entry-market",
+    "source-gaps",
+    "ordering",
+    "duplicate",
+    "conflict",
+    "multipart-expiry",
+    "retry",
+    "dlq",
+    "replay",
+    "correction",
+    "correction-after-eviction",
+    "archive-publication",
+    "archive-readback",
+    "eviction",
+    "archive-report",
+    "empty-restore",
+    "corrupt-object",
+    "missing-object",
+    "unsupported-codec",
+    "resource-saturation",
+    "multi-instance",
+    "rollback"
+  ],
+  "outage": {
+    "pauseHours": 48,
+    "continuingArrivals": true,
+    "catchupTargetDays": 7
+  },
+  "archiveOnlyRestore": {
+    "sourceUnavailable": true,
+    "emptyTarget": true,
+    "compareCensusAndResultDigests": true
+  },
+  "execution": "NOT_AUTHORIZED_IN_PACKAGE_A",
+  "cloudCalls": 0
+}

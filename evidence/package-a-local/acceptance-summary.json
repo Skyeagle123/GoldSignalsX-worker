@@ -1,0 +1,29 @@
+{
+  "baseline": "f7b351da1a3be7530b36e1edc051ca6029d44794",
+  "branch": "phase/b1-independent-measurement",
+  "worktree": "/workspace/scratch/d18333edbc60/GoldSignalsX-Package-A",
+  "resumeInitialState": "DIRTY",
+  "packageProcessAtInspection": null,
+  "hungProcessTerminated": false,
+  "sessionDisconnect": "UNKNOWN; no remote session inspected",
+  "initialCandidateCommit": false,
+  "finalLocalTests": {
+    "tests": 555,
+    "passed": 555,
+    "failed": 0,
+    "skipped": 0
+  },
+  "syntaxFiles": 37,
+  "otherChecks": [
+    "news",
+    "risk-sizing",
+    "risk-budget",
+    "signals-security",
+    "reliability",
+    "git diff --check",
+    "qualification plan"
+  ],
+  "cloudQualified": false,
+  "productionReady": false,
+  "readyForAstraFinalReview": true
+}

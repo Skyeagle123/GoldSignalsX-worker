@@ -1,0 +1,50 @@
+# TEMPLATE ONLY: not wrangler.toml; cannot deploy without Package-B authorization.
+name = "synthetic-b1-measurement"
+main = "../../measurement-worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+[vars]
+MEASUREMENT_ENVIRONMENT = "synthetic-b1-package-a"
+MEASUREMENT_EXPECTED_D1_ID = "PACKAGE_B_AUTHORIZED_SYNTHETIC_ID_REQUIRED"
+MEASUREMENT_QUEUE_NAME = "synthetic-b1-measurement"
+MEASUREMENT_DLQ_NAME = "synthetic-b1-measurement-dlq"
+MEASUREMENT_ARCHIVE_NAMESPACE = "synthetic-b1-package-a/"
+B1_INDEPENDENT_CAPTURE_ENABLED = "0"
+B1_REAL_QUEUE_HANDOFF_ENABLED = "0"
+B1_MEASUREMENT_CONSUMER_ENABLED = "0"
+B1_POST_ENTRY_EXPORT_ENABLED = "0"
+B1_ARCHIVE_WRITE_ENABLED = "0"
+B1_ARCHIVE_REPORTING_ENABLED = "0"
+B1_ARCHIVE_EVICTION_ENABLED = "0"
+B1_CORRECTION_ADMISSION_ENABLED = "0"
+B1_RESTORE_ENABLED = "0"
+B1_INDEPENDENT_REPORTING_ENABLED = "0"
+
+[[d1_databases]]
+binding = "MEASUREMENT_DB"
+database_name = "synthetic-b1-measurement"
+database_id = "PACKAGE_B_AUTHORIZED_SYNTHETIC_ID_REQUIRED"
+migrations_dir = "../../migrations"
+
+[[r2_buckets]]
+binding = "MEASUREMENT_ARCHIVE"
+bucket_name = "synthetic-b1-private-archive"
+
+[[queues.consumers]]
+queue = "synthetic-b1-measurement"
+dead_letter_queue = "synthetic-b1-measurement-dlq"
+max_batch_size = 32
+max_batch_timeout = 5
+max_retries = 5
+retry_delay = 30
+
+# Reporting token must be supplied separately; no secret value in this template.
+# Queue/DLQ retention qualification target: 1209600 seconds, plan permitting.
+# D1 migrations ADMIN ONLY. No public handler executes migrations.
+
+[[queues.consumers]]
+queue = "synthetic-b1-measurement-dlq"
+max_batch_size = 16
+max_retries = 5
+retry_delay = 60

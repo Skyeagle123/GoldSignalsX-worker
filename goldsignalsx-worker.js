@@ -1,4 +1,5 @@
 import {measurementProducerEnabled,observeM1DecisionCycle,observeM1Fact,deferM1Work} from './measurement-producer.js';
+import {configureIndependentProducer,independentCaptureEnabled,independentCohort,observeIndependentCycle,observeIndependentFact} from './measurement-queue-producer.js';
 import {exposureEvidenceState} from './signal-evidence.js';
 import {maintainMeasurementRetention} from './measurement-retention.js';
 import {measurementWriter} from './signal-evidence-store.js';
@@ -1075,6 +1076,7 @@ export class GoldFeed extends DurableObject {
 
 export default {
   async fetch(req, env, ctx) {
+    if(independentCaptureEnabled(env)){env={...env};try{configureIndependentProducer(env,ctx);}catch{console.error('b1 independent producer unavailable; capture unknown');}}
     const url = new URL(req.url);
 
     // ---------- Path (بدون Regex) ----------
@@ -1097,6 +1099,7 @@ export default {
         const denied=await enforceProtectedReadRequest(req,env,allow,{...corsHeaders,'cache-control':'no-store'});
         if (denied) return denied;
         try {
+          if(independentCohort(env))return jsonNoStore({ok:false,error:'independent_reporting_requires_measurement_worker',legacyCohortSeparate:true},corsHeaders,503);
           const report=await readForwardValidation(createForwardReadCapability(env.GSX_DB),url,path,Date.now());
           return jsonNoStore(report,corsHeaders);
         } catch (error) {
@@ -1546,6 +1549,7 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
+    if(independentCaptureEnabled(env)){env={...env};try{configureIndependentProducer(env,ctx);}catch{console.error('b1 independent producer unavailable; capture unknown');}}
     // Keep price persistence and news refresh off the request path.
     ctx.waitUntil(runScheduledTasksGuarded(env,'cron'));
   }
@@ -1627,6 +1631,7 @@ async function runScheduledTasks(env,source='cron',startedAt=Date.now()) {
 }
 
 async function runB1Collectors(env,journal) {
+  if(independentCohort(env))return {ok:true,skipped:'independent_cohort_no_legacy_fallback'};
   if (!journal||!env.B1_CODE_COMMIT||!env.B1_MEASUREMENT_EFFECTIVE_AT) return {ok:true,skipped:'measurement_provenance_not_configured'};
   const outcomes={};
   try {
@@ -2960,16 +2965,17 @@ async function recordProductionPerformanceEvent(env,signal,event) {
 
 // Observe only persisted lifecycle results; never infer exact barrier ordering.
 function observeM1LifecycleResult(env,signal,event,result){
-  if(!measurementProducerEnabled(env))return;
+  if(!measurementProducerEnabled(env)&&!independentCaptureEnabled(env))return;
   try{
     const type=canonicalPerformanceEvent(event);
     if(!type||type==='created')return; // completed cycle carries Official admission
-    observeM1Fact(env,{kind:'LIFECYCLE_FACT',semanticId:`production:${signal.id}:${type}`,
+    const fact={kind:'LIFECYCLE_FACT',semanticId:`production:${signal.id}:${type}`,
       occurredAt:performanceEventAt(signal,type),observedAt:result?.signal?.updated_at??null,
       payload:{signalId:signal.id,event:type,createdAt:signal.createdAt,timeframe:signal.tf,direction:signal.side,
         occurredAt:performanceEventAt(signal,type),observedPrice:performanceEventPrice(signal,type),level:performanceEventLevel(signal,type),
         trigger:performanceTriggerDetails(signal,type),status:signal.status,closedAt:signal.closedAt??null,
-        performancePersistence:result,orderingQuality:'NOT_ASSERTED',measurementOnly:true,decisionUse:false}});
+        performancePersistence:result,orderingQuality:'NOT_ASSERTED',measurementOnly:true,decisionUse:false}};
+    if(independentCaptureEnabled(env))observeIndependentFact(env,fact);else observeM1Fact(env,fact);
   }catch{}
 }
 
@@ -3757,6 +3763,10 @@ function captureBroadMatrices(candidates,evaluations) {
 
 function finishM1DecisionCycle(env,journal,result,observations,pendingM1){
   const output=finishDecisionCycle(journal,result,observations);
+  if(independentCaptureEnabled(env)){
+    observeIndependentCycle(env,{...journal,capturedAt:journal?.capturedAt??new Date().getTime()},pendingM1);
+    for(const fact of pendingM1)if(fact.kind==='lifecycle')observeM1LifecycleResult(env,fact.signal,fact.event,fact.result);
+  }
   if(measurementProducerEnabled(env)){
     // Capture only this scalar before the legacy collector may stamp the same
     // journal. All copy, serialization and transport run after trading settles.
@@ -3796,7 +3806,7 @@ async function runSignalCycle(env,news,filters=normalizeSignalFilters()) {
   const trackingBars=frames['1m'].bars;
   const measurement=beginDecisionCycle(now,frames,live,news,filters);
   const pendingM1=[];
-  const noteM1=measurementProducerEnabled(env)?fact=>{pendingM1.push(fact);}:null;
+  const noteM1=(measurementProducerEnabled(env)||independentCaptureEnabled(env))?fact=>{pendingM1.push(fact);}:null;
   const currentSignals={};
   const candidates=[];
   const evaluations=new Map();

@@ -1,0 +1,50 @@
+ M .github/workflows/test.yml
+ M goldsignalsx-worker.js
+ M measurement-adapter.js
+ M measurement-collector.js
+?? B1-PACKAGE-A.md
+?? deployment/b1-independent/measurement.toml.template
+?? deployment/b1-independent/qualification.json
+?? deployment/b1-independent/trading-bindings.toml.template
+?? measurement-archive-catalog.js
+?? measurement-archive.js
+?? measurement-corrections.js
+?? measurement-d1-adapter.js
+?? measurement-definition-pack.js
+?? measurement-incidents.js
+?? measurement-independent-contract.js
+?? measurement-independent-retention.js
+?? measurement-independent-store.js
+?? measurement-maintenance.js
+?? measurement-market-envelope.js
+?? measurement-market-store.js
+?? measurement-qualification-harness.js
+?? measurement-qualification.js
+?? measurement-queue-consumer.js
+?? measurement-queue-producer.js
+?? measurement-recovery.js
+?? measurement-reporting.js
+?? measurement-reservations.js
+?? measurement-restore.js
+?? measurement-state-compaction.js
+?? measurement-transport-maintenance.js
+?? measurement-wire-codec.js
+?? measurement-worker.js
+?? migrations/0007_independent_measurement.sql
+?? scripts/measure-b1-package-a.mjs
+?? scripts/qualify-b1-package-a.mjs
+?? test-b1-package-a-adversarial.mjs
+?? test-b1-package-a-allocation.mjs
+?? test-b1-package-a-archive.mjs
+?? test-b1-package-a-census.mjs
+?? test-b1-package-a-isolates.mjs
+?? test-b1-package-a-matrix.mjs
+?? test-b1-package-a-policy.mjs
+?? test-b1-package-a-publication.mjs
+?? test-b1-package-a-qualification.mjs
+?? test-b1-package-a-recovery.mjs
+?? test-b1-package-a-revisions.mjs
+?? test-b1-package-a-trading.mjs
+?? test-b1-package-a-transport.mjs
+?? test-fixtures/b1-package-a-producer.mjs
+?? test-fixtures/b1-package-a.mjs

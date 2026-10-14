@@ -1,0 +1,694 @@
+{"message":"production performance recording failed","signalId":"15m:1790606700000:buy","event":"created","error":"synthetic performance unavailable"}
+{"message":"production performance recording failed","signalId":"15m:1790606700000:buy","event":"created","error":"synthetic performance unavailable"}
+✔ cycle-level exact parity: candidate ordering, winner, confirmations, blocks, Official/KV/performance identities (753.014654ms)
+✔ Official persistence failure/cancellation and performance-storage failure preserve cycle parity (307.65581ms)
+✔ passive Exposure observer cannot change ranking, ownership or clock semantics (0.731661ms)
+✔ old/new engine exact differential: scores, confidence, gates, levels and returns (5131.838927ms)
+✔ receipt/provider/NaN/candle/News/filter boundary parity (132.869324ms)
+✔ observer exceptions do not alter results or clock-read sequence (14.507445ms)
+✔ lifecycle, expiry and backtest semantics unchanged (2.32233ms)
+✔ backtest mechanics exact differential with frozen closed-candle frames (269.748221ms)
+✔ explicit migration: clean and representative existing schema; seven immutable guards (32.118204ms)
+✔ serialization: stable digest inputs; cycles, secrets and bounds fail safely (1.55012ms)
+✔ raw market manifests: exact ordering, deduplication and source revision isolation (14.298427ms)
+✔ mutable state cannot alter immutable payload; corrections are new events (37.841557ms)
+✔ measurement writes fail closed to measurement, with fixed bound (5.372314ms)
+✔ writer rejects decision-use contamination before persisting immutable measurement (4.442301ms)
+✔ real capture wiring persists exact immutable attempt/raw inputs; identical retry and conflict (133.933992ms)
+✔ candidate collector cannot create Official; explicit no-data coverage, bounded cursor and isolated retention (38.273895ms)
+✔ Official evidence and referenced market blocks survive candidate retention (30.490866ms)
+✔ capture budgets and serialization fail to measurement only, without external I/O (31.96017ms)
+✔ Official accumulator is not starved by new research attempts; candidate horizon bounded (88.064194ms)
+✔ later News/MTF/indicator context cannot rewrite frozen attempt or entry (35.821048ms)
+✔ collector chooses due rows using indexed cursor without scanning decision JSON (22.567795ms)
+✔ M1 deterministic transport identity is separate from unchanged semantic identity (10.261305ms)
+✔ M1 exact clocks, null, unavailable, nonfinite values and wire round-trip (2.970377ms)
+✔ M1 deeply immutable copies protect nested arrays and Map/Set membership (2.088485ms)
+✔ M1 version, kind, identity, clock, depth, node and input byte validation (1.067127ms)
+✔ M1 exact wire boundary rejects overflow without dropping a field (2.269352ms)
+✔ M1 OFF does not inspect evidence, call clocks, schedule or send (0.441783ms)
+✔ M1 absent/disabled transport exposes only local nondurable capture gaps (0.475703ms)
+✔ M1 mock success is asynchronous; input mutation cannot alter captured evidence (2.070217ms)
+✔ M1 synchronous transport throw, asynchronous reject and failed status are isolated (3.200646ms)
+✔ M1 hanging transport has bounded diagnostic completion and permanently occupied slots (9.337726ms)
+✔ M1 serialization and oversized envelope failures never reach transport (0.67718ms)
+✔ M1 duplicate/conflicting payload handling includes concurrent delivery (3.139787ms)
+✔ M1 failed mock delivery permits truthful retry; offline memory is bounded (2.497123ms)
+✔ M1 producer scheduler/diagnostic callback failure is isolated (4.621385ms)
+✔ M1 all supported fact classes preserve observations without inventing unavailable fields (6.099348ms)
+✔ M1 extracted preparer preserves exact d95d804b persisted capture records (3496.102781ms)
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1m:1790867340000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"5m:1790867100000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"15m:1790865900000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"30m:1790865000000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"60m:1790863200000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"240m:1790841600000:buy"}
+{"message":"MTF confirmation could not be linked","primarySignalId":"owner","confirmationSignalId":"1d:1790726400000:buy"}
+✔ M1 exact-baseline full-cycle differential including fault-injected producer, lifecycle, News, Exposure, cooldown and Telegram (24906.354866ms)
+{"message":"production performance recording failed","signalId":"30m:1790865000000:buy","event":"created","error":"PERFORMANCE_FAILURE"}
+{"message":"production performance recording failed","signalId":"30m:1790865000000:buy","event":"created","error":"PERFORMANCE_FAILURE"}
+✔ M1 exact-baseline Official KV failure/cancellation and independent performance failure parity (510.523346ms)
+✔ M1 changed runtime modules contain no transport network/platform API or new migration/configuration (2.239929ms)
+✔ M1 trading completion does not wait for producer scheduling or a transport promise (194.895973ms)
+✔ M1 unavailable clock differs from explicit null; accessor properties are never executed (0.916623ms)
+✔ M1 evidence clock conflicts are detectable while preparation time is not identity (0.692643ms)
+✔ M1 retries preserve first capture time without mutating the source journal (618.021988ms)
+✔ M1 local capture diagnostics cannot retain unbounded identifiers (0.256318ms)
+✔ M1 enabled shadow capture does not add reads to the trading Date.now clock sequence (185.822813ms)
+✔ M1-R1 active 5m TP1 keeps all six confirmations with advancing clock and default scheduler (264.29071ms)
+✔ M1-R1 failed or hanging delivery begins only after Official persistence and trading return (340.404257ms)
+✔ M1-R1 concurrent deferred cycles do not await one another circularly (1.183088ms)
+✔ M1-R2 rejects sparse, accessor and lossy evidence before reading getters (6.50078ms)
+✔ M1-R2 dense evidence remains exact; deep, node, byte and wire work rejects safely (1.636517ms)
+✔ M1-R2a public cycle entry rejects original accessors before journal enrichment (779.572689ms)
+✔ M1-R2a public cycle entry rejects unsupported array prototypes without inherited execution (1487.801097ms)
+✔ M1-R2a standard dense and nested arrays preserve exact public-entry wire (1042.978641ms)
+✔ M1-R2b public fact diagnostics never execute rejected identifier accessors (2.325724ms)
+✔ M1-R2a validated original candidates preserve WeakMap evidence and exact envelopes (826.561291ms)
+✔ final Candidate conflict blocks irreversible writes, durable=true (429.244896ms)
+✔ final Candidate conflict blocks irreversible writes, durable=false (312.61607ms)
+✔ final Candidate selected stale lease rejects after suspension, recovered=false (339.663291ms)
+✔ final Candidate selected stale lease rejects after suspension, recovered=true (331.539327ms)
+✔ final Candidate suspension after SQL mutations rolls back transaction (360.508491ms)
+✔ final Candidate latest hook before COMMIT invalidates the native transaction (370.113822ms)
+✔ final stale empty binding discovery cannot publish COMPLETE after new binding and failed conflict lookup (345.242415ms)
+✔ final two selected Candidate batches retain invalid generations through reconciliation; unrelated candidate progresses (275.575146ms)
+✔ final empty-to-one canonical binding invalidates discovery without conflict (333.41647ms)
+✔ final one-to-additional binding invalidates stale rebuild while fresh rebuild completes (323.963901ms)
+✔ final suspension after binding discovery invalidates publication, unchanged set completes (430.93395ms)
+✔ final concurrent rebuilds across dependency change reject stale rebuild (379.608959ms)
+✔ final return exact Astra SL then TP2 after captured COMPLETE read rejects old projection (438.355941ms)
+✔ final return revision change with failed newer publication rejects old COMPLETE (375.166159ms)
+✔ final return durable quarantine after captured read rejects old COMPLETE (301.438303ms)
+✔ final return evaluation suspension after captured read rejects old COMPLETE (382.113869ms)
+✔ final return binding set change after captured read rejects old COMPLETE (312.092302ms)
+✔ final return unchanged dependencies allow healthy COMPLETE (270.297877ms)
+✔ final return newer valid COMPLETE after captured read rejects old active snapshot (243.2589ms)
+✔ final return concurrent rebuild keeps newer authoritative result and rejects older return (258.973238ms)
+✔ final return duplicate consumer never reports CURRENT from stale captured COMPLETE (342.658114ms)
+✔ final return detects current projection conflict even without a lifecycle revision change (389.509737ms)
+✔ final return retains invalid generation after suspension is cleared during final read (353.846031ms)
+✔ final caller validation rejects stale or copied snapshots without retaining generation tokens (358.246181ms)
+✔ M2 fresh separate migration chain, historical migrations unchanged and no trading table (46.580693ms)
+✔ M2 actual M1 cycle and census durable atomic ingestion, duplicate delivery and semantic conflict (978.053635ms)
+✔ M2 census before cycle is explicitly retryable, never claims durable processing (315.084696ms)
+✔ M2 creation/lifecycle permutations rebuild identically, including lifecycle before creation (196.655003ms)
+✔ M2 TP1→SL, direct SL and expiry truthful terminal projections (89.173396ms)
+✔ M2 projection matches unchanged persistence status/closing clock from real local M1 lifecycle fact (36.741503ms)
+✔ M2 incompatible terminal facts stay immutable and make projection unavailable (32.707695ms)
+✔ M2 first receipt/durable availability never backdated by old observation or redelivery (25.502914ms)
+✔ M2 confirmations preserve ownership and link persistence before/after Primary (71.58402ms)
+✔ M2 failed persistence and partial facts do not manufacture authoritative status/levels (43.526442ms)
+✔ M2 Official persistence failure stays explicit, and counterfeit census is rejected (35.492398ms)
+✔ M2 public wire boundary rejects invalid identities, digest/version/namespace and clocks before writes (28.556775ms)
+✔ M2 conflicting fact/digest never overwrites accepted immutable evidence (20.534767ms)
+✔ M2 concurrent identical/conflicting redelivery is protected by atomic receipt constraints (30.84908ms)
+✔ M2 atomic ingestion rolls back evidence and receipt on write failure (326.687873ms)
+✔ M2 measurement-only collector processes subjects with no production_signals table/query (341.773602ms)
+✔ M2 stale/budget-pending projection is explicit and cannot be used as current truth (65.023471ms)
+✔ M2 unavailable clocks remain distinct from null; no reporting writes or trading imports (18.488866ms)
+✔ M2-R1 SL + failed projection defers Official without cursor/outcomes; recovery resumes safely (391.35018ms)
+✔ M2-R1 missing/partial/conflicted Official projection remains pending without cursor writes (368.935477ms)
+✔ M2-R2 identical canonical evidence reconciles cycle/census/Official in either order (690.171599ms)
+✔ M2-R2 cross-kind Entry/levels/direction/timeframe conflicts quarantine both delivery orders (2282.375887ms)
+✔ M2-R2 concurrent cross-kind conflicting delivery has one canonical winner, unusable projection (149.106157ms)
+✔ M2-R3 malformed pins/links/ownership/scalars reject before any receipt or evidence (2110.466678ms)
+✔ M2-R3 exact tags and decoded finite clocks reject ambiguous/Infinity/future/invalid values (86.531589ms)
+✔ M2-R4 five-second persistence delay establishes availability after commit, duplicate preserves fence (17.342003ms)
+✔ M2-R4 failed availability-fence write keeps evidence unavailable until idempotent replay (14.107286ms)
+✔ M2-R5 post-commit receipt read failure is durable/pending, retry remains one immutable fact (13.810176ms)
+✔ M2-R5 lost commit acknowledgement is explicitly unknown and recoverable (13.008412ms)
+✔ M2-R6 4032-subject capacity preserves census + pending gap; replay initializes exactly once (862.012291ms)
+✔ M2-R2 changed census is quarantined before historical writer preflight rejects it (420.021626ms)
+✔ M2-R4 unfenced/old-availability cache cannot become Official collection truth (399.570504ms)
+✔ M2-R5 unavailable receipt lookup is retryable, not a false rejection of an accepted event (19.165775ms)
+✔ M2 residual R1 selected active Official is deferred atomically after SL and failed refresh (418.539764ms)
+✔ M2 residual R1 conflict arriving after selection defers outcomes and cursor (366.66945ms)
+✔ M2 residual R1 mutation guard detects a fact arriving immediately before DB batch (341.434375ms)
+✔ M2 residual R2 stale rebuild cannot overwrite committed quarantine (364.241769ms)
+✔ M2 residual R2 CAS fences conflict appearing after all rebuild reads before publication (404.227251ms)
+✔ M2 residual R2 failed immutable conflict marker leaves durable pending quarantine (392.143716ms)
+✔ M2 residual R2 failed quarantine transaction never claims successful quarantine (369.834528ms)
+✔ M2 residual R2 identical concurrent rebuilds remain deterministic and usable (40.014325ms)
+✔ M2 residual R3 numeric/contradictory/malformed nested links reject without writes (72.648361ms)
+✔ M2 residual R3 full captured links and unavailable/failure states remain exact (111.21019ms)
+✔ M2 residual migration upgrades populated 0005 and fences old caches until rebuild (367.457933ms)
+✔ M2 residual R2 failed quarantine blocks an older rebuild through shared offline capability (73.353978ms)
+✔ M2 residual R2 SQL publication fence independently rejects stale or quarantined COMPLETE (38.19615ms)
+✔ M2 final R1 two dispatched stale batches fail after nondurable intent; recovery before release=false (346.248896ms)
+✔ M2 final R1 two dispatched stale batches fail after nondurable intent; recovery before release=true (337.889235ms)
+✔ M2 final R2 validated contradiction skips failed repeated binding lookup and persists suspension before marker failure (360.80052ms)
+✔ M2 final R2 nondurable suspension prevents duplicate CURRENT, rebuild and collection until deterministic reconciliation (606.390404ms)
+✔ M2 final R1 paused Official dispatch does not block unrelated candidate progress (410.678957ms)
+✔ M2 final R1 copied adapter flags fail closed before Official evidence (318.776466ms)
+✔ M2 final R1 same-subject healthy concurrent collectors complete without a coordination lock (408.150623ms)
+✔ M2 final R1 suspension after SQL mutations rolls back the whole transaction before COMMIT (358.430674ms)
+✔ M2 trusted admission rejects copiedBoolean without subject mutations (400.007371ms)
+✔ M2 trusted admission rejects inheritedFlag without subject mutations (352.808865ms)
+✔ M2 trusted admission rejects spread without subject mutations (389.755035ms)
+✔ M2 trusted admission rejects inheritedAdapter without subject mutations (349.196622ms)
+✔ M2 trusted commit rejects substituted batch, checks and statements (327.273726ms)
+✔ M2 trusted final commit check rolls back base suspension after mutations (387.216091ms)
+✔ M2 trusted final commit check rolls back wrapper suspension after mutations (314.738367ms)
+✔ M2 trusted wrappers share construction-time identity in both directions and databases isolate (36.642015ms)
+✔ M2 trusted pre-initialization wrapper cannot bypass base suspension (398.402302ms)
+✔ M2 trusted SQL trigger suspends before binding failure; different submitted signal=false (486.386026ms)
+✔ M2 trusted SQL trigger suspends before binding failure; different submitted signal=true (438.023656ms)
+✔ M2 trusted concurrent base/wrapper collectors share stale generations and recover without duplicates (394.82645ms)
+✔ M2 trusted paused database does not serialize an independent database (703.664404ms)
+✔ M2 trusted instrumentation and registry views expose no private commit authority (295.253797ms)
+✔ ATR cross-reference actual Worker single-field operand (566.642313ms)
+✔ ATR cross-reference actual Worker single-field primary (169.376016ms)
+✔ ATR cross-reference actual Worker single-field profile (205.404053ms)
+✔ ATR cross-reference actual Worker single-field missingPrimary (235.877533ms)
+✔ ATR cross-reference actual Worker single-field missingProfile (195.765558ms)
+✔ ATR cross-reference actual Worker single-field missingProfileObject (172.129702ms)
+✔ ATR cross-reference actual Worker single-field malformedPrimary (212.787904ms)
+✔ ATR cross-reference actual Worker single-field malformedProfile (161.816045ms)
+✔ ATR cross-reference actual Worker single-field nonfiniteContradiction (255.657191ms)
+✔ ATR cross-reference consistent genuine atr (334.373343ms)
+✔ ATR cross-reference consistent genuine nonfiniteAtr (301.836957ms)
+✔ ATR consistent canonical numeric NaN (132.982717ms)
+✔ ATR consistent canonical numeric Infinity (113.158996ms)
+✔ ATR consistent canonical numeric -Infinity (112.323877ms)
+✔ ATR consistent canonical numeric 0 (112.109341ms)
+✔ MTF cross-reference genuine Engine/M1 single-field frameDirection (179.696311ms)
+✔ MTF cross-reference genuine Engine/M1 single-field copyDirection (71.264879ms)
+✔ MTF cross-reference genuine Engine/M1 single-field detailDirection (84.474627ms)
+✔ MTF cross-reference genuine Engine/M1 single-field confirmationCount (84.158951ms)
+✔ MTF cross-reference genuine Engine/M1 single-field oppositionCount (77.897249ms)
+✔ MTF cross-reference genuine Engine/M1 single-field resultBull (64.981718ms)
+✔ MTF cross-reference genuine Engine/M1 single-field resultBear (82.063246ms)
+✔ MTF cross-reference genuine Engine/M1 single-field resultNeutral (73.186957ms)
+✔ MTF cross-reference genuine Engine/M1 single-field confirmationGate (93.20415ms)
+✔ MTF cross-reference genuine Engine/M1 single-field oppositionGate (62.596707ms)
+✔ MTF cross-reference genuine Engine/M1 single-field gateCount (70.807814ms)
+✔ MTF cross-reference genuine Engine/M1 single-field copyGate (86.702117ms)
+✔ MTF cross-reference genuine Engine/M1 single-field malformedDirection (85.662521ms)
+✔ MTF cross-reference genuine Engine/M1 single-field missingDirection (91.33535ms)
+✔ MTF cross-reference genuine Engine/M1 single-field duplicateIdentity (90.574536ms)
+✔ MTF cross-reference genuine Engine/M1 single-field missingIdentity (93.453418ms)
+✔ MTF cross-reference genuine Engine/M1 single-field missingFrame (97.531441ms)
+✔ MTF cross-reference genuine Engine/M1 single-field reorderedFrames (102.930804ms)
+✔ MTF cross-reference genuine Engine/M1 single-field includedIdentity (91.90423ms)
+✔ MTF cross-reference genuine Engine/M1 single-field malformedStrength (109.695475ms)
+✔ MTF genuine control opposition (523.270319ms)
+✔ MTF genuine control mtf (405.233984ms)
+✔ MTF genuine control shortMtf (416.800396ms)
+✔ MTF genuine control neutralMtf (586.474857ms)
+✔ MTF genuine control excludedMtf (392.615132ms)
+✔ MTF genuine control atr (424.89068ms)
+✔ MTF coherent changed aggregates cannot conceal contradictory frame copies (143.019302ms)
+✔ public M3 rejects contradictory MTF before any M2 persistence (174.124091ms)
+✔ malformed atr census preserves existing canonical evidence without quarantine (297.818257ms)
+✔ malformed mtf census preserves existing canonical evidence without quarantine (138.43024ms)
+✔ actual Worker seven-rejection census unchanged under final cross references (441.025165ms)
+✔ rejection contract genuine Engine/M1 minimum (479.104861ms)
+✔ rejection contract genuine Engine/M1 quality (761.845556ms)
+✔ rejection contract genuine Engine/M1 atr (693.694677ms)
+✔ rejection contract genuine Engine/M1 age (566.874405ms)
+✔ rejection contract genuine Engine/M1 receipt (655.199584ms)
+✔ rejection contract genuine Engine/M1 provider (567.811273ms)
+✔ rejection contract genuine Engine/M1 news (762.550502ms)
+✔ rejection contract genuine Engine/M1 score (522.138548ms)
+✔ rejection contract genuine Engine/M1 candle (696.221578ms)
+✔ rejection contract genuine Engine/M1 mtf (392.342415ms)
+✔ rejection contract genuine Engine/M1 opposition (569.410759ms)
+✔ rejection contract genuine Engine/M1 ny (538.131193ms)
+✔ rejection contract genuine Engine/M1 pivot (685.788915ms)
+✔ rejection contract genuine Engine/M1 priceSource (661.330062ms)
+✔ rejection contract genuine Engine/M1 priceAlignment (628.451639ms)
+✔ rejection contract genuine Engine/M1 nonfiniteAtr (547.07507ms)
+✔ rejection contract genuine Engine/M1 unavailableQuality (514.539836ms)
+✔ genuine fixtures cover every supported failed Engine gate (1.235685ms)
+✔ actual Worker single-element semantic tamper passOperand (507.55869ms)
+✔ actual Worker single-element semantic tamper missingOperands (182.709965ms)
+✔ actual Worker single-element semantic tamper missingAtr (220.999492ms)
+✔ actual Worker single-element semantic tamper indicatorContradiction (244.601684ms)
+✔ actual Worker single-element semantic tamper wrongReason (220.570569ms)
+✔ actual Worker single-element semantic tamper laterEvaluated (218.423918ms)
+✔ actual Worker single-element semantic tamper numericString (213.926877ms)
+✔ actual Worker single-element semantic tamper numericNull (205.304577ms)
+✔ actual Worker single-element semantic tamper numericObject (169.891143ms)
+✔ actual Worker single-element semantic tamper nanContradiction (180.543245ms)
+✔ actual Worker single-element semantic tamper infinityContradiction (175.597646ms)
+✔ actual Worker single-element semantic tamper unsupportedGate (236.607643ms)
+✔ actual Worker single-element semantic tamper order (239.530229ms)
+✔ actual Worker single-element semantic tamper result (193.838425ms)
+✔ actual Worker single-element semantic tamper levels (197.125017ms)
+✔ actual Worker single-element semantic tamper classification (211.533449ms)
+✔ actual Worker single-element semantic tamper official (195.62023ms)
+✔ actual Worker single-element semantic tamper identity (183.608564ms)
+✔ actual Worker 7/7 rejected evaluations preserve original census and clocks exactly once (1323.507102ms)
+✔ supported failed gate minimum-bars rejects passOperand (28.768317ms)
+✔ supported failed gate minimum-bars rejects missingOperands (36.865098ms)
+✔ supported failed gate candle-quality rejects passOperand (59.663564ms)
+✔ supported failed gate candle-quality rejects missingOperands (69.304643ms)
+✔ supported failed gate atr rejects passOperand (74.613533ms)
+✔ supported failed gate atr rejects missingOperands (78.917941ms)
+✔ supported failed gate candle-age rejects passOperand (77.818181ms)
+✔ supported failed gate candle-age rejects missingOperands (82.730211ms)
+✔ supported failed gate receipt-age rejects passOperand (106.874307ms)
+✔ supported failed gate receipt-age rejects missingOperands (68.163658ms)
+✔ supported failed gate provider-age rejects passOperand (86.851491ms)
+✔ supported failed gate provider-age rejects missingOperands (88.9826ms)
+✔ supported failed gate news-calendar rejects passOperand (76.283719ms)
+✔ supported failed gate news-calendar rejects missingOperands (163.848114ms)
+✔ supported failed gate score rejects passOperand (56.714379ms)
+✔ supported failed gate score rejects missingOperands (58.675414ms)
+✔ supported failed gate margin rejects passOperand (60.747294ms)
+✔ supported failed gate margin rejects missingOperands (59.472402ms)
+✔ supported failed gate candle-confirmation rejects passOperand (55.185661ms)
+✔ supported failed gate candle-confirmation rejects missingOperands (58.788221ms)
+✔ supported failed gate mtf-confirmation rejects passOperand (66.888465ms)
+✔ supported failed gate mtf-confirmation rejects missingOperands (60.071176ms)
+✔ supported failed gate mtf-opposition rejects passOperand (99.563861ms)
+✔ supported failed gate mtf-opposition rejects missingOperands (92.305922ms)
+✔ supported failed gate ny-session rejects passOperand (95.162551ms)
+✔ supported failed gate ny-session rejects missingOperands (89.867891ms)
+✔ supported failed gate pivot rejects passOperand (86.664611ms)
+✔ supported failed gate pivot rejects missingOperands (90.381229ms)
+✔ supported failed gate price-source rejects passOperand (87.329653ms)
+✔ supported failed gate price-source rejects missingOperands (86.106136ms)
+✔ supported failed gate price-alignment rejects passOperand (80.06499ms)
+✔ supported failed gate price-alignment rejects missingOperands (85.744142ms)
+✔ malformed Worker ATR through M3 is rejected before public consumer persistence (678.323228ms)
+✔ invalid census with recomputed census/outer digests cannot alter accepted canonical evidence (256.605839ms)
+✔ Worker rejected-evaluation outer digest mismatch fails before persistence (94.328078ms)
+✔ compat: original fixture is byte-preserved but mislabeled rejection remains rejected; finalized census accepted (1557.932941ms)
+✔ compat: rejects contradictory none outcome (393.9333ms)
+✔ compat: rejects contradictory none computed (427.663111ms)
+✔ compat: rejects contradictory none hiddenLevels (392.789525ms)
+✔ compat: rejects contradictory none result (316.102234ms)
+✔ compat: rejects contradictory none gates (332.648327ms)
+✔ compat: rejects contradictory none identity (341.017323ms)
+✔ compat: rejects contradictory none official (357.162603ms)
+✔ compat: actual flat-bar Worker emits seven rejected census entries exactly once without outcome state (2022.390288ms)
+✔ expiry: elapsed incomplete replay cannot revive and accounts once (34.574912ms)
+✔ expiry: elapsed incomplete late cannot revive and accounts once (49.618188ms)
+✔ expiry: elapsed incomplete sweep cannot revive and accounts once (32.655608ms)
+✔ expiry: elapsed incomplete hook cannot revive and accounts once (38.987669ms)
+✔ expiry: complete durable event redelivery still invokes real M2 idempotency (744.405772ms)
+✔ restart: abandoned receive charges released once, late completions harmless (20.808471ms)
+✔ restart: abandoned send charges released once, late completions harmless (13.6569ms)
+✔ restart: crash only releases owned charges across live runtimes (10.32598ms)
+✔ restart: crash during beforeAcknowledgement transition preserves accounting (6.732283ms)
+✔ restart: crash during beforeDlq transition preserves accounting (3.099728ms)
+✔ expiry: sweep during paused replay accounts exactly once (8.522526ms)
+✔ M3 deterministic <=60,000-byte framing preserves every original wire byte (1017.355296ms)
+✔ M3 fragment identity ignores receipt/retry/preparation time; exact-wire mismatch conflicts (3.39222ms)
+✔ M3 reverse delivery completes exactly once (421.316757ms)
+✔ M3 last-first delivery completes exactly once (350.98221ms)
+✔ M3 random delivery completes exactly once (315.226922ms)
+✔ M3 interleaved independent events complete without mixing manifests (413.162444ms)
+✔ M3 incomplete first exposes exact missing ordinals and never calls M2 (9.982674ms)
+✔ M3 incomplete last exposes exact missing ordinals and never calls M2 (9.313746ms)
+✔ M3 incomplete missing-one exposes exact missing ordinals and never calls M2 (121.579858ms)
+✔ M3 incomplete missing-many exposes exact missing ordinals and never calls M2 (47.888778ms)
+✔ M3 incomplete duplicate-subset exposes exact missing ordinals and never calls M2 (128.065662ms)
+✔ M3 identical fragment duplicates do not amplify staging or completion (677.116036ms)
+✔ M3 concurrent final-fragment and duplicate arrivals share one per-event delivery (346.513074ms)
+✔ M3 same ordinal with conflicting bytes is rejected without replacing original (296.992002ms)
+✔ M3 malformed version rejected before allocation/consumer persistence (0.987369ms)
+✔ M3 malformed namespace rejected before allocation/consumer persistence (0.693945ms)
+✔ M3 malformed event rejected before allocation/consumer persistence (0.510845ms)
+✔ M3 malformed ordinal rejected before allocation/consumer persistence (0.77202ms)
+✔ M3 malformed sparse rejected before allocation/consumer persistence (0.563883ms)
+✔ M3 malformed count rejected before allocation/consumer persistence (0.628378ms)
+✔ M3 malformed total rejected before allocation/consumer persistence (0.578574ms)
+✔ M3 malformed length rejected before allocation/consumer persistence (0.516563ms)
+✔ M3 malformed digest rejected before allocation/consumer persistence (5.260449ms)
+✔ M3 malformed identity rejected before allocation/consumer persistence (4.729655ms)
+✔ M3 malformed shape rejected before allocation/consumer persistence (0.60227ms)
+✔ M3 malformed base64 rejected before allocation/consumer persistence (0.407332ms)
+✔ M3 malformed JSON and oversized bounded input preserve truthful DLQ accounting (0.706043ms)
+✔ M3 assembled complete-digest never reaches M2 (1.143268ms)
+✔ M3 assembled payload-digest never reaches M2 (1.127685ms)
+✔ M3 assembled shape never reaches M2 (0.795075ms)
+✔ M3 assembled utf8 never reaches M2 (0.581548ms)
+✔ M3 event, staging, validation and poison DLQ bounds fail explicitly (10.15592ms)
+✔ M3 truthful M2 propagation ACCEPTED//true (1.325738ms)
+✔ M3 truthful M2 propagation DUPLICATE//true (0.850276ms)
+✔ M3 truthful M2 propagation ACCEPTED/PENDING/true (0.959287ms)
+✔ M3 truthful M2 propagation DEPENDENCY_PENDING//false (0.943904ms)
+✔ M3 truthful M2 propagation DURABILITY_UNKNOWN//null (0.801284ms)
+✔ M3 truthful M2 propagation INTEGRITY_CONFLICT/PENDING/false (1.02894ms)
+✔ M3 truthful M2 propagation INTEGRITY_CONFLICT/CONFLICT/true (4.742134ms)
+✔ M3 truthful M2 propagation CONFLICT//true (0.960088ms)
+✔ M3 truthful M2 propagation PENDING//false (1.190038ms)
+✔ M3 truthful M2 propagation REJECTED//false (0.888522ms)
+✔ M3 truthful M2 propagation UNKNOWN//true (1.453607ms)
+✔ M3 retry clocks, limits, DLQ original bytes and controlled replay are deterministic (2.120181ms)
+✔ M3 consumer exception remains retryable, never a false acknowledgement (0.867351ms)
+✔ M3 expired partial cannot complete or replay; expiry accounting remains visible (89.044982ms)
+✔ M3 expired complete retry moves to mock DLQ, explicit replay preserves original clocks (2.06534ms)
+✔ M3 crash partial staging: retained mock store resumes; lost volatile object explicitly loses state (286.873071ms)
+✔ M3 restart preserves retry ledger and exact event identity in retained mock store (1.906876ms)
+✔ M3 crash/restart at afterReassembly cannot let obsolete runtime publish acknowledgement (1.471864ms)
+✔ M3 crash/restart at afterAttemptRecorded cannot let obsolete runtime publish acknowledgement (1.267212ms)
+✔ M3 crash/restart at beforeDlq cannot let obsolete runtime publish acknowledgement (1.388301ms)
+✔ M3 crash/restart at beforeReplay cannot let obsolete runtime publish acknowledgement (1.487306ms)
+✔ M3 unrelated evaluation progresses while another is awaiting its M2 acknowledgement (329.864192ms)
+✔ M3 replay versus normal final delivery uses one event-specific completion (3.043936ms)
+✔ M3 public M2 ingestion, full-event redelivery and replay are immutable/idempotent (2416.934552ms)
+✔ M3 independently represented census survives missing detail; early census dependency remains truthful (947.477493ms)
+✔ M3 conflicting replay preserves M2 quarantine and Candidate fence, durable=true (403.30899ms)
+✔ M3 conflicting replay preserves M2 quarantine and Candidate fence, durable=false (403.692072ms)
+✔ M3 crash after public M2 commit before acknowledgement replays as DUPLICATE (1285.38391ms)
+✔ M3 concurrent Candidate, Official and conflicting evidence retain public M2 semantics (1000.582327ms)
+✔ M3 independent databases and stores progress without cross-capability coupling (1817.865709ms)
+✔ M3 retained mock store rejects copied store admission and aborts bounded admission (0.935502ms)
+✔ M3 UTF-8 boundaries preserve complete original bytes and M1 upper bound rejects oversize (42.206192ms)
+✔ M3 receive admission bounds 65 concurrent arrivals with explicit backpressure (502.069232ms)
+✔ M3 finalized M1 early-rejection packet is completely framed and durably accepted (702.21348ms)
+✔ M3 maximum valid geometry stages actual last fragment without allocating declared total (7.931123ms)
+✔ M3 expiry at last supported pre-consumer hook cannot dispatch expired event (3.548761ms)
+✔ Archive-only synthetic format migration preserves old objects and exact semantic digests (3995.594941ms)
+✔ Archive root checkpoint must precede eviction eligibility and survives root-registration crash (2218.699983ms)
+✔ Report live/mixed/archive pagination preserves semantic records and denominator (4682.275986ms)
+✔ Eviction during report continuation returns explicit unavailability (2720.850264ms)
+✔ Eviction blocks correction independently (2668.021874ms)
+✔ Eviction blocks ingress independently (2087.314365ms)
+✔ Eviction blocks quarantine independently (2130.390293ms)
+✔ Eviction blocks processing independently (2578.349549ms)
+✔ Eviction blocks restorePin independently (2274.73048ms)
+✔ Eviction blocks recoveryPin independently (2624.908878ms)
+✔ Reservation random ownership token prevents reuse ABA after compacted identity (20.646011ms)
+✔ Lease expiry uses SQL execution clock, not captured Worker time (18.760917ms)
+✔ Independent native connections race one reservation through SQL (47.370629ms)
+✔ Partial transport expiry and replay cannot resurrect across runtime loss (908.436939ms)
+✔ Completed envelope with lost acknowledgement reconciles by original identity (1741.073312ms)
+✔ Correction valid captured market inputs create immutable version; earlier asOf excludes it (825.516883ms)
+✔ Market sample identity rejects changed observed price and retains canonical bytes (25.393793ms)
+✔ Modeled outage includes continuing arrivals and explicitly separates cloud throughput (0.557143ms)
+✔ Allocation observation cannot change accounting before separate qualification is installed (30.205236ms)
+✔ Qualified completion releases unused model estimates while retaining unfinished committed and reserved liabilities (30.50933ms)
+✔ A concurrent reservation invalidates an older physical observation before any accounting credit (21.019434ms)
+✔ Logical deletion gives zero automatic physical credit and requires explicit reuse qualification (28.208952ms)
+✔ Renewed settled reservation rotates ownership and late settlement cannot release new future work (18.583456ms)
+✔ Allocation observations from a replaced revision epoch cannot authorize credit (18.384002ms)
+✔ Archive actual readback, catalogue root and empty-target restore preserve identities and availability (3848.534066ms)
+✔ Archive crash resumes after SNAPSHOT_PINNED (1666.603466ms)
+✔ Archive crash resumes after OBJECTS_WRITTEN (1856.479108ms)
+✔ Archive crash resumes after VERIFIED (1680.159662ms)
+✔ Archive crash resumes after CATALOGUED (1846.249117ms)
+✔ Archive crash resumes after EVICTION_ELIGIBLE (1628.086805ms)
+✔ Archive corrupt readback prevents verification and eviction (967.080165ms)
+✔ Archive source revision changes after verification reject catalogue authority (1570.142921ms)
+✔ Eviction requires parity and recoverable root; retains archive availability (2461.796251ms)
+✔ Missing object with existing receipt blocks eviction (1961.947768ms)
+✔ Missing cycle/detail does not erase captured census; later canonical admission never doubles denominator across pages (2661.503951ms)
+✔ Census archive publication/read-through works independently of unreadable optional cycle detail (1587.578541ms)
+✔ Independent SQLite connections reject a lifecycle projection prepared before another isolate terminal fact (1889.876423ms)
+✔ Independent connections stage duplicate final fragments and serialize only durable event ownership (1535.116184ms)
+✔ Correction in isolate A blocks stale verified-archive eviction in isolate B (2853.036109ms)
+✔ Archive-backed duplicate recovery from another connection preserves original availability without hot resurrection (2689.976575ms)
+{"localProfile":"4032-subject-durable-recovery","subjects":4032,"independentConnections":2,"passes":252,"allocatedBytes":1568768,"cloudQualified":false}
+✔ 4,032 durable subject jobs recover fairly across independent connections with bounded invocations (4658.977851ms)
+✔ Provider redelivery retains original publication deadline across delayed first consumption (959.710872ms)
+✔ Complete retry expiry terminates pending ingress truthfully without analytical acceptance (709.272766ms)
+✔ Staging response loss leaves recoverable durable bytes and never acknowledges before the boundary (1556.863248ms)
+✔ Concurrent final fragments in independent adapters register one completion effect (1322.661207ms)
+✔ Canonical archive lookup failure leaves durable ingress barrier against another isolate (1378.130276ms)
+✔ Reservation owner crash and lease identity reuse cannot release newer durable authority (19.564043ms)
+✔ Restore capacity exhaustion rejects before any reconstructed evidence (2387.590249ms)
+✔ Two restore workers preserve original identities and availability in one empty target (2550.955131ms)
+✔ Archived inactive evidence beyond retention restores as historical data without processing reactivation (2459.911996ms)
+✔ Retained shared dependencies cannot be orphan-cleaned by age alone (2307.80043ms)
+✔ Out-of-order market backfill is reconciled through bounded replay rather than invented tick order (927.049322ms)
+✔ D1 deployed invocation statement budget fails before extra SQL, leaving durable recovery ownership (18.562053ms)
+✔ Correction original creation admission boundary 89 days (1712.589714ms)
+✔ Correction original creation admission boundary 90 days (1043.176859ms)
+✔ Correction original creation admission boundary 91 days (780.22051ms)
+✔ Competing corrections against one predecessor explicitly conflict (1001.053424ms)
+✔ Correction missing dependency is truthful and terminates bounded active work (943.921994ms)
+✔ Correction past completion allowance becomes UNREDUCIBLE (883.783729ms)
+✔ Retention OFFICIAL active=true unresolved=false (0.564884ms)
+✔ Retention OFFICIAL active=false unresolved=true (0.138264ms)
+✔ Retention OFFICIAL active=false unresolved=false (0.102722ms)
+✔ Retention CANDIDATE active=false unresolved=false (0.214808ms)
+✔ Resource reserve partition is unavailable to ordinary ingestion (23.142498ms)
+✔ Resource release and recovery are owner fenced and idempotent (18.717803ms)
+✔ Incident admission is bounded and records uncertainty truthfully (19.720495ms)
+✔ Market overlapping exports reuse sample identity and preserve clocks (3.931877ms)
+✔ Market closed bars do not claim tick ordering and gaps remain explicit (1.228364ms)
+✔ Reporting capability cannot write; unknown capture is not zero (1184.790258ms)
+✔ Report continuation pins query, epoch and definition; tampering rejects (810.421151ms)
+✔ All gates default off; mixed capabilities fail closed (0.457185ms)
+✔ Ordinary Measurement requests never migrate or grant maintenance (3.750769ms)
+✔ Synthetic environment allowlist refuses Production-like identity (0.382895ms)
+✔ Rollback plans preserve backlog and reject archive-unaware versions (0.275427ms)
+✔ Identical competing publishers produce one durable publication and explicit lease pending (2506.572423ms)
+✔ Catalogue progress survives separate bounded invocations and never skips publication states (1982.48908ms)
+✔ Market sample catalogue construction checkpoints bounded chunks before authoritative root (397.77506ms)
+✔ Source change after root registration cannot strand recoverable catalogue checkpoint (2524.821742ms)
+✔ Appending a derived result changes archive membership revision without invalidating lifecycle projection (1543.668191ms)
+✔ Archive readback validates unsupported codec beyond a valid object content hash (1715.999905ms)
+✔ Archive readback validates missing dependency beyond a valid object content hash (2097.464985ms)
+✔ Archive readback validates wrong semantic identity beyond a valid object content hash (1900.158902ms)
+✔ Archive readback validates wrong captured byte count beyond a valid object content hash (1428.479086ms)
+✔ Missing retained interpretation metadata fails explicitly with original receipts still present (1592.997954ms)
+✔ Root discovery uses bounded continuation and never selects an uncommitted root (2214.108246ms)
+✔ Qualification refuses mismatched database identity before driver I/O (2.023268ms)
+✔ Qualification refuses mismatched bucket identity before driver I/O (0.28413ms)
+✔ Qualification refuses mismatched queue identity before driver I/O (0.292362ms)
+✔ Qualification refuses mismatched dlq identity before driver I/O (0.174318ms)
+✔ Qualification refuses mismatched restoreDatabase identity before driver I/O (0.208999ms)
+✔ Qualification refuses missing environment consent and mixed bucket namespace (0.195869ms)
+✔ 48-hour local outage harness continues arrivals and catches up without a real sleep/network (60.280175ms)
+✔ Historical migrations and accepted M1/M2/M3 evidence/transport implementations stay byte-identical (75.98851ms)
+✔ Populated accepted M2 schema upgrades additively with receipts, census and foreign keys intact (1099.28327ms)
+✔ D1 assertion abort rolls back all statements in a local remote-style batch (17.993023ms)
+✔ Payload larger than a chosen row is losslessly chunked and decompression is bounded (66.193023ms)
+✔ D1 diagnostics are disabled by default and bounded when explicitly enabled (34.482225ms)
+✔ Native SQL diagnostic calls are opt-in, preserving native adapter identity (14.609346ms)
+✔ Maintenance operations stay independently gated and absent from reporting/request capabilities (13.966386ms)
+✔ Binding evaluation correction invalidates Official mutation authority in another isolate (1241.904896ms)
+✔ Official forensic retention beyond 455 days: active (825.351929ms)
+✔ Official forensic retention beyond 455 days: correction (914.081464ms)
+✔ Official forensic retention beyond 455 days: dependency (891.437423ms)
+✔ Official forensic retention beyond 455 days: closed (937.91251ms)
+✔ Operational compaction is bounded on an empty/restarted database and keeps counters nonnegative (15.668089ms)
+✔ CI retains accepted commands and triggers and automatically discovers all Package-A tests (8.417271ms)
+✔ Candidate commit deferral is never counted as an Official deferral (714.909852ms)
+✔ Provider DLQ poison retains exact bytes, has no census effect and redelivery is idempotent (35.080379ms)
+✔ Provider DLQ oversized poison stays unacknowledged and bounded (22.522562ms)
+✔ Expired partial archived then evicted cannot resurrect in a new isolate (1142.598445ms)
+✔ DLQ replay requires authorization and preserves original event/fragment identity (1482.87293ms)
+✔ Restore does not overwrite newer terminal lifecycle with archived active state (3871.12275ms)
+✔ Stale restore continuation cannot advance after another owner acquires generation (2581.47342ms)
+✔ Correction after live eviction resolves source through verified semantic catalogue (3025.207121ms)
+✔ Admission rejection uses incident reserve without leaking failed normal reservation (22.632734ms)
+✔ Coverage cannot claim a complete interval from an arbitrary nonempty evidence list (879.39043ms)
+✔ Outcome recovery uses archived observed market inputs and fresh cohort fencing (891.968005ms)
+✔ Actual independent Worker flat-bar path keeps all seven rejected evaluations census-only (1124.147275ms)
+✔ D1 delayed response remains historical; protected write rejects new terminal conflict (1727.986069ms)
+✔ D1 unchanged validated state permits freshly fenced idempotent write (944.709297ms)
+✔ D1 snapshot payload cannot be paired with its original digest (848.247796ms)
+✔ D1 fresh SQL fence rejects stale binding authority (938.273638ms)
+✔ D1 fresh SQL fence rejects stale quarantine authority (859.364912ms)
+✔ D1 fresh SQL fence rejects stale conflict authority (765.439272ms)
+✔ D1 fresh SQL fence rejects stale correction authority (969.636547ms)
+✔ D1 fresh SQL fence rejects stale lifecycle authority (912.126358ms)
+✔ D1 fresh SQL fence rejects stale availability authority (964.492714ms)
+✔ D1 fresh SQL fence rejects stale pending authority (1007.068788ms)
+✔ D1 fresh SQL fence rejects stale epoch authority (817.217365ms)
+✔ D1 duplicate durability does not imply projection validation (897.434469ms)
+✔ D1 independent adapter instances share durable fences, not JavaScript registry (902.149933ms)
+✔ D1 out-of-order responses never infer freshness from arrival order (789.266496ms)
+✔ D1 empty binding absence is part of scope revision (681.196002ms)
+✔ D1 numeric revision reuse is rejected by epoch (800.527136ms)
+✔ Independent Queue preparation/export preserves advancing-clock timing 6/6/6 after authoritative work (676.585368ms)
+✔ Capture rollback keeps independent cohort selected with no legacy fallback (0.448132ms)
+✔ Queue acceptance remains handoff-only; failed send preserves unknown acceptance (1141.725953ms)
+✔ Package A durable fragments ack before completion; fresh isolate recovers (993.08727ms)
+✔ Package A SQL reservation race admits only one competing request (21.47066ms)
+✔ incremental tick extrema survive eviction, retries and horizons (10.128799ms)
+✔ sequence continuity/source changes do not fabricate complete coverage (0.723819ms)
+✔ barrier intervals preserve ambiguity and no partial full-bar contamination (0.763758ms)
+✔ TP1 then SL is success when exact covered sequence proves order (0.472488ms)
+✔ consecutive sequence cannot certify an outage or provider-clock gap (0.499247ms)
+✔ new same-receipt-time sequence updates extrema; duplicate retry does not (1.717026ms)
+✔ pre-entry/receipt-straddling barrier cannot be silently discarded to prove later success (0.678862ms)
+✔ active windows update until horizons; no premature finalization (2.380857ms)
+✔ terminal closure and coverage are independent (0.360833ms)
+✔ eviction, retry, gaps and empty observations do not fabricate extrema (0.560868ms)
+✔ every horizon finalizes independently once observations processed (0.815094ms)
+✔ TP1 then SL remains success; TP1 then TP2 extended success (0.830777ms)
+✔ SL before TP1 fails; expiry with/without coverage distinguishes no decision (0.227466ms)
+✔ ambiguous bar order and insertion order cannot establish direction (1.043311ms)
+✔ exact scoped sequence resolves equal timestamps (0.308225ms)
+✔ delayed discovery and TP2 implication preserve occurrence bounds (1.620193ms)
+✔ gap after proven success cannot revoke success; extended absence needs coverage (0.369415ms)
+✔ active unresolved; no division fabricated; availability/horizon respected (0.373452ms)
+✔ F1 full-sized seven-attempt cycle persists exact replayable raw and immutable retry; low budget preserves census (1346.90326ms)
+✔ F2 late overlapping opposite bar downgrades prior SUCCESS and FAILURE; harmless later data preserves proof (5.672808ms)
+✔ F3 coverage proof requires exact same-subject nonfuture at-discovery checkpoint, never later accumulator (0.721756ms)
+✔ F3 SELECT-only record and population summaries reject missing coverage dependency (85.994011ms)
+✔ F4 later retained correction pins older barrier and checkpoint through bounded cleanup; dependencies ultimately expire (72.030288ms)
+✔ F5 append-only correction exposes superseded evidence, pending reduction and stale result without GET writes (81.914445ms)
+✔ F6 cohort validation and cursor binding reject empty/duplicate/malformed cohort; filtering accepted (1.526885ms)
+✔ F6 actual Official/candidate cohort filtering and pagination bind cursors to the cohort (820.838924ms)
+✔ F4 migration and atomic guards preserve unindexed old evidence and reject removal of referenced dependencies (129.886899ms)
+✔ F4 pending correction cycles cannot become undeletable retention graphs (7.649728ms)
+✔ F2 earlier same-source conflicting witness is append-only and a duplicate retry does not recount it (1.006937ms)
+✔ all report paths authenticate before ANY database/capability access (15.544797ms)
+✔ cold and warm missing tables return error WITHOUT schema repair (7.233623ms)
+✔ empty and incompatible schema, invalid inputs; GET remains SELECT-only (36.456561ms)
+✔ read/reducer failures cannot invoke repair or expose raw database details (20.263285ms)
+✔ dedicated reader structurally imports no writer, KV, DO, fetch or schema initializer (1.327951ms)
+✔ pagination stable at fixed as-of; invalid cursors and POST cannot access a writer (32.175798ms)
+✔ incompatible schema version, even empty, returns read-only not-ready error (7.494909ms)
+✔ successful Official evidence is visible when legacy performance row is absent (19.727514ms)
+✔ corrupt projection/reducer failure is read-only and cannot repair itself (15.989505ms)
+✔ lossless codec preserves exact doubles, -0, NaN, null and unavailable distinctions (32.213585ms)
+✔ bounded decompression rejects declared/output bounds, corrupt hash and unsupported codec (7.334933ms)
+✔ definition normalization restores complete exact ledger/gates including zero/disabled states (2.469086ms)
+✔ shared raw identity is independent of research role and slice manifests are exact (8.89681ms)
+✔ census and rich record are immutable, retries idempotent, no full arrays in census (20.923911ms)
+✔ candidate raw expires at 30d, derived at 90d, census remains through day365 (36.663327ms)
+✔ Official pins retain exact dependencies only, including encoded raw after 365 days (23.171391ms)
+✔ durable finalization atomically preserves rich and compact outcomes and removes processing state (24.265516ms)
+✔ finalization failure rolls back all writes and retains processing recovery state (13.696658ms)
+✔ retention is identical for success/failure/no-decision and confirmation/rejection (66.394425ms)
+✔ candidate reporting exposes expired evidence/result with LEVEL C and never writes (18.562314ms)
+✔ Official rich detail hydration restores original exact decision and SELECT-only security (28.839912ms)
+✔ retention and active processing query plans use bounded chronological indexes (5.41646ms)
+✔ compact reporting restores special final numbers and does not decode rich evidence (15.920752ms)
+✔ processing budget retains census/rich evidence while explicitly declining an extra accumulator (99.071944ms)
+✔ late recovery cannot reopen processing after durable finalization (13.706913ms)
+✔ all six profiles preserve distinct witnesses, five windows and resolvable at-discovery coverage (419.994585ms)
+✔ UUID codec is lossless and digest covers original precision/order/unavailable values (10.404916ms)
+✔ coverage integrity rejects dangling/future/cross-subject refs; frozen retry is idempotent (50.696827ms)
+✔ same observation clock with a new sequence produces a new immutable coverage reference (1.361151ms)
+✔ review ceiling alarms without truncating append-only corrections (148.952721ms)
+✔ cleanup sustainably catches up after 48h outage; no census/result/raw/reference orphans (591.028017ms)
+✔ physical outcome retention query uses bucket index; final-result orphan expiry is independent (81.107874ms)
+✔ delayed discovery keeps occurrence horizon and actual availability separate (0.875443ms)
+ℹ tests 555
+ℹ suites 0
+ℹ pass 555
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45635.64053

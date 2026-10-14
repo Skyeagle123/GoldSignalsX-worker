@@ -9,7 +9,7 @@ const copyValue=v=>ArrayBuffer.isView(v)||v instanceof ArrayBuffer?structuredClo
 
 // The sole admitted engine is native, synchronous SQLite. Import is deferred:
 // importing the trading/shared modules does not load any Node or DB capability.
-export async function createOfflineSqliteMeasurementAdapter(database,{calls=[]}={}){
+export async function createOfflineSqliteMeasurementAdapter(database,{calls=null}={}){
  const sqliteModule='node:sqlite';const {DatabaseSync}=await import(sqliteModule);
  if(!(database instanceof DatabaseSync))throw new Error('measurement_native_sqlite_required');
  let root=databases.get(database);

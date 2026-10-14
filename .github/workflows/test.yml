@@ -3,7 +3,7 @@ name: Test Worker
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "phase/b1-measurement-evidence", "phase/b1-m1-producer", "phase/b1-m2-consumer", "phase/b1-m3-transport"]
+    branches: ["main", "phase/b1-measurement-evidence", "phase/b1-m1-producer", "phase/b1-m2-consumer", "phase/b1-m3-transport", "phase/b1-independent-measurement"]
     paths:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
@@ -15,6 +15,8 @@ on:
       - "evidence-codec.js"
       - "outcome-dependencies.js"
       - "scripts/measure-b1.mjs"
+      - "scripts/*b1-package-a*.mjs"
+      - "deployment/b1-independent/**"
       - "signal-measurement.js"
       - "measurement-*.js"
       - "forward-validation*.js"
@@ -35,6 +37,8 @@ on:
       - "evidence-codec.js"
       - "outcome-dependencies.js"
       - "scripts/measure-b1.mjs"
+      - "scripts/*b1-package-a*.mjs"
+      - "deployment/b1-independent/**"
       - "signal-measurement.js"
       - "measurement-*.js"
       - "forward-validation*.js"
