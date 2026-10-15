@@ -35,9 +35,9 @@ export async function evictPublication(db,archive,id,{now,hook=null}={}){
  // No physical space credit. Catalogue detail and immutable bytes now live in archive.
  return {status:'EVICTED',records:ids.length,physicalReclamationCredit:0,rootKey:p.root_key};
 }
-export async function compactIndependentState(db,{now,limit=64,archive=null}={}){
+export async function compactIndependentState(db,{now,limit=64,archive=null,retirementArchive=archive,hook=null}={}){
  need(limit>0&&limit<=64,'pa_cleanup_bound');
- await compactOperationalRows(db,{now,limit:Math.min(limit,16)});
+ const operational=await compactOperationalRows(db,{now,limit:Math.min(limit,16),archive:retirementArchive,hook});
  const expired=await db.all("SELECT id FROM pa_events WHERE state='PARTIAL' AND expires_at<=? LIMIT ?",now,limit);
  for(const r of expired)await db.batch([db.statement("UPDATE pa_events SET state='EXPIRED',reason='transport_expired' WHERE id=? AND state='PARTIAL' AND expires_at<=?",[r.id,now])]);
  const terminal=await db.all("SELECT id FROM pa_events WHERE state IN('EXPIRED','DLQ','CONFLICT') AND terminal_capture_generation<replays LIMIT ?",limit);for(const r of terminal)await captureTransportTerminal(db,r.id,{now});
@@ -49,7 +49,7 @@ export async function compactIndependentState(db,{now,limit=64,archive=null}={})
   db.statement("DELETE FROM pa_scopes WHERE id IN(SELECT id FROM pa_scopes s WHERE archive_root IS NOT NULL AND pending=0 AND corrections=0 AND active=0 AND (processing_eligible=0 OR original_at+7776000000<=?) AND NOT EXISTS(SELECT 1 FROM pa_affected WHERE scope_id=s.id) AND NOT EXISTS(SELECT 1 FROM pa_semantic_affected WHERE scope_id=s.id) AND NOT EXISTS(SELECT 1 FROM pa_publications WHERE scope_id=s.id) AND NOT EXISTS(SELECT 1 FROM pa_records WHERE scope_id=s.id) AND NOT EXISTS(SELECT 1 FROM pa_corrections WHERE scope_id=s.id) AND NOT EXISTS(SELECT 1 FROM pa_pins WHERE scope_id=s.id AND until_at>?) LIMIT ?)",[now,now,limit]),
   db.statement("DELETE FROM pa_reservations WHERE id IN(SELECT id FROM pa_reservations WHERE state IN('SETTLED','RELEASED') AND NOT EXISTS(SELECT 1 FROM pa_events WHERE reservation=pa_reservations.id) AND NOT EXISTS(SELECT 1 FROM pa_publications WHERE reservation=pa_reservations.id) AND NOT EXISTS(SELECT 1 FROM pa_restores WHERE reservation=pa_reservations.id) AND NOT EXISTS(SELECT 1 FROM pa_corrections WHERE reservation=pa_reservations.id) AND NOT EXISTS(SELECT 1 FROM pa_incidents WHERE reservation=pa_reservations.id) LIMIT ?)",[limit]),
   db.statement("DELETE FROM pa_jobs WHERE id IN(SELECT id FROM pa_jobs WHERE state IN('DONE','FAILED') AND NOT EXISTS(SELECT 1 FROM pa_corrections WHERE 'correction:'||id=pa_jobs.id) LIMIT ?)",[limit])]);
- return {expired:expired.length,compacted:deletable.length,physicalReclamationCredit:0};
+ return {expired:expired.length,compacted:deletable.length,operational,physicalReclamationCredit:0};
 }
 export async function planArchiveMaintenance(db,{now,limit=16}={}){need(limit>=1&&limit<=16,'pa_maintenance_bound');const scopes=await db.all("SELECT id,original_at FROM pa_scopes WHERE pending=0 AND corrections=0 AND (original_at+2592000000<=? OR (SELECT COUNT(*) FROM pa_records WHERE scope_id=pa_scopes.id AND ready=1)>=48) AND EXISTS(SELECT 1 FROM pa_records WHERE scope_id=pa_scopes.id AND ready=1) ORDER BY original_at,id LIMIT ?",now,limit);for(const s of scopes)await db.batch([db.statement("INSERT INTO pa_jobs(id,class,scope_id,next_at,deadline) VALUES(?,'archive',?,?,?) ON CONFLICT DO NOTHING",['archive-scope:'+s.id,s.id,now,s.original_at+455*86400000])]);return scopes.length;}
 export async function officialRetentionStatus(db,scopeId,{now}={}){const s=await db.first('SELECT * FROM pa_scopes WHERE id=?',scopeId);need(s?.kind==='OFFICIAL','pa_official_scope');const policy=retention('OFFICIAL',s.original_at,{active:!!s.active,unresolved:!!(s.pending||s.corrections),holdUntil:s.hold_until});return {...policy,archiveClosureRequired:now<=policy.forensicUntil||policy.extended,storage:s.archive_root?'ARCHIVED_OR_MIXED':'LIVE'};}

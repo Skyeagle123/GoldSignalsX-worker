@@ -1,0 +1,79 @@
+{
+  "startingCandidate": "a36aee651a94c4340858207a5273e331db28713d",
+  "startingTree": "3762ca80205434329debd85b4927c8558dcf6750",
+  "startingParent": "19a872aea1f9b172e0880491fd1d06f9d180cfa9",
+  "startingWorktree": "CLEAN",
+  "branch": "phase/b1-independent-measurement",
+  "scope": [
+    "PA-REMED-01",
+    "PA-REMED-02"
+  ],
+  "fullAcceptance": {
+    "tests": 664,
+    "pass": 664,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0
+  },
+  "focusedResidualTests": {
+    "tests": 37,
+    "pass": 37,
+    "fail": 0,
+    "skipped": 0
+  },
+  "originalPAFINALRegressions": 72,
+  "originalPAFINALVerdicts": {
+    "1": "PASS",
+    "2": "PASS",
+    "3": "PASS",
+    "4": "PASS",
+    "5": "PASS",
+    "6": "PASS",
+    "7": "PASS",
+    "8": "PASS"
+  },
+  "timing": {
+    "baseline": 6,
+    "off": 6,
+    "on": 6
+  },
+  "auxiliaryGates": {
+    "News": "PASS",
+    "Reliability": "PASS",
+    "Risk Budget": "PASS",
+    "Risk Sizing": "PASS",
+    "Signals Security": "PASS"
+  },
+  "syntax": "PASS",
+  "diffCheck": "PASS",
+  "historicalMigrations0001Through0008": "UNCHANGED",
+  "newMigration": "0009_package_a_archive_lineage.sql",
+  "schemaAndRollbackFloor": 9,
+  "protectedTradingAndM1M2M3Source": "UNCHANGED",
+  "targetRevisionEpoch": "FRESH_PRESERVED",
+  "archiveOnlyRecovery": "SOURCE_AND_TARGET_D1_CLOSED_PASS",
+  "publicationInvalidations": 72,
+  "retirementRuntimeBatchMaximum": 16,
+  "retirementPhysicalReclamationCredit": 0,
+  "priorReviewCorrection": "Existing compactOperationalRows STALE retirement existed; this successor strengthens eligibility/reference/resource/owner fencing.",
+  "cloudQualified": false,
+  "productionActive": false,
+  "independentReview": "REQUIRED",
+  "previousRecoveryArtifacts": {
+    "GoldSignalsX-Package-A-final-recovery.zip": "a3433fd23cef5734ee2661a8a1c962c274454f88a3943b8ca46543eac16d23ca",
+    "GoldSignalsX-Package-A-remediated-recovery.zip": "f5f75f9e4721c44746a7114e6c6c1892237c8e6c04e57a416b44995a0ecf89be"
+  },
+  "evidenceSha256": {
+    "focused.log": "988131a96c124f8a1ac7264b84a51aa73d1d2084d2ebb0b21e96db802efed770",
+    "full-acceptance.log": "2149f0e084be1c44aa61c950e456990be4810dc68e6b49ce58bab6e827d57628",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "qualification-plan.json": "32837905deb925e9c95798336a973d7e63f21f38fc824e55b4e0e69af35106ec",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "resources.json": "2fa61aa934ca0d3f8ee6adffea8b4fd23d114865cc48eaacca2aea3581461caf",
+    "resources.log": "e3eb4212e9ff7d8c81c2f737e8c3f89fd6dc00652027b55cb536e72523581481",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b"
+  }
+}

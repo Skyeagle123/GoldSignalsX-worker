@@ -1,0 +1,45 @@
+✔ PA-REMED-01 real restore -> two publications -> both D1 unavailable -> authenticated archive-only discovery (371.393005ms)
+✔ PA-REMED-01 repeated restore is idempotent; transition authorization survives actual maintenance (205.957499ms)
+✔ PA-REMED-01 rejects missing transition with otherwise valid individual roots (185.087217ms)
+✔ PA-REMED-01 rejects wrong source transition with otherwise valid individual roots (228.29744ms)
+✔ PA-REMED-01 rejects wrong target transition with otherwise valid individual roots (158.405721ms)
+✔ PA-REMED-01 rejects wrong generation transition with otherwise valid individual roots (169.843052ms)
+✔ PA-REMED-01 rejects corrupt bytes transition with otherwise valid individual roots (173.535835ms)
+✔ PA-REMED-01 arbitrary cross-epoch root without restore authority is rejected (84.570486ms)
+✔ PA-REMED-01 newest corrupt root obeys explicit predecessor fallback policy (244.085417ms)
+✔ PA-REMED-01 format migration directly after restore preserves authenticated lineage (279.762382ms)
+✔ PA-REMED-01 stale restore completion installs no lineage authority (76.877059ms)
+✔ PA-REMED-01 concurrent publishers around the epoch transition cannot borrow stale authority (178.353041ms)
+✔ PA-REMED-01 restored market conflict index and archive authority remain enforced (102.592704ms)
+✔ PA-REMED-02 more than 64 real invalidations retire in bounded runtime batches and admit new work (1872.689746ms)
+✔ PA-REMED-02 retains stale publication required by live lease (47.857575ms)
+✔ PA-REMED-02 retains stale publication required by unchanged resumable (38.102109ms)
+✔ PA-REMED-02 retains stale publication required by restore (51.702867ms)
+✔ PA-REMED-02 retains stale publication required by correction (41.397385ms)
+✔ PA-REMED-02 retains stale publication required by pin (48.221442ms)
+✔ PA-REMED-02 retains stale publication required by incident (41.126414ms)
+✔ PA-REMED-02 retains stale publication required by format (44.834213ms)
+✔ PA-REMED-02 retains stale publication required by registered lineage (68.052489ms)
+✔ PA-REMED-02 eligible retirement settles liability once, audits identity and grants no physical credit (48.984068ms)
+✔ PA-REMED-02 final transaction rejects delayed retirement after owner changes (43.469173ms)
+✔ PA-REMED-02 final transaction rejects delayed retirement after token changes (43.983486ms)
+✔ PA-REMED-02 final transaction rejects delayed retirement after root reference changes (41.759183ms)
+✔ PA-REMED-02 final transaction rejects delayed retirement after correction changes (46.245443ms)
+✔ PA-REMED-02 crash after audit resumes; concurrent maintenance retires/releases once (50.126564ms)
+✔ PA-REMED-02 actual scheduled Worker retires eligible stale publications (50.198492ms)
+✔ PA-REMED-09 populated schema 8 upgrades additively, immutable lineage constraints and rollback floor 9 (57.17286ms)
+✔ PA-REMED-02 retired publisher cannot complete, double-settle or resurrect durable authority (51.964625ms)
+✔ PA-REMED-02 unchanged valid terminal snapshot is resumable, never retired based only on STALE (74.709199ms)
+✔ PA-REMED-02 source publication required by durable restore lineage is not retired even without its local root field (87.696856ms)
+✔ PA-REMED-01 restore refuses an individually verified cross-epoch source whose transition is missing (188.474942ms)
+✔ PA-REMED-02 metadata reference unscoped incident prevents retirement (49.193742ms)
+✔ PA-REMED-02 metadata reference foreign correction dependency prevents retirement (42.720348ms)
+✔ PA-REMED-02 metadata reference changed reservation owner prevents retirement (47.932423ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5763.978221

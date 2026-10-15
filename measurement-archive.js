@@ -2,6 +2,7 @@ import {serialize,canonicalSerialize,parseEvidence,hash,bytes,need,time,identity
 import {assertion,clearAssertions,schemaReady,SQL_CLOCK,leaseJob,jobFence,finishJob} from './measurement-d1-adapter.js';
 import {readRecord,chunkWire} from './measurement-independent-store.js';
 import {catalogueInsert,catalogueLookup,cataloguePage} from './measurement-archive-catalog.js';
+import {publicationLineage,verifyArchiveEdge} from './measurement-archive-lineage.js';
 import {DEFINITION_PACK} from './measurement-definition-pack.js';
 import {decodeWire} from './measurement-wire-codec.js';
 import {reserve,estimateWrite,commitReservationStatements} from './measurement-reservations.js';
@@ -110,7 +111,8 @@ export async function publishArchive(db,archive,scopeId,{now,owner=uid(),hook=nu
       }
       await db.batch([pubFence(db,p,now),closureFence(db,snapshot),db.statement('UPDATE pa_publications SET catalogue_index_root=?,catalogue_offset=?,sample_offset=? WHERE id=?',[indexRoot,p.catalogue_offset+(memberComplete?1:0),memberComplete?0:nextSample,p.id]),clearAssertions(db)]);p=await refresh();await hook?.('CATALOGUE_PROGRESS',p);continue;
      }
-     const root=await archive.write('roots',{format:'measurement-root-v1',generation:p.catalogue_generation,epoch:p.epoch,publication:p.id,manifestKey:p.manifest_key,receiptKey:p.receipt_key,previous:meta.root_key,indexRoot,sourceRevision:p.revision,scopeId:p.scope_id,publishedAt:now});rootKey=root.key;
+     const predecessor=meta.root_key?await verifyRoot(archive,meta.root_key):null,lineage=await publicationLineage(db,archive,predecessor,p.epoch);
+     const root=await archive.write('roots',{format:'measurement-root-v1',...lineage,generation:p.catalogue_generation,epoch:p.epoch,publication:p.id,manifestKey:p.manifest_key,receiptKey:p.receipt_key,previous:meta.root_key,indexRoot,sourceRevision:p.revision,scopeId:p.scope_id,publishedAt:now});rootKey=root.key;
      await db.batch([pubFence(db,p,now),closureFence(db,JSON.parse(p.snapshot)),assertion(db,'EXISTS(SELECT 1 FROM pa_meta WHERE catalogue_generation=? AND root_key IS ?)',p.catalogue_generation,meta.root_key),db.statement('UPDATE pa_meta SET root_key=?',[rootKey]),db.statement('UPDATE pa_publications SET root_key=? WHERE id=?',[rootKey,p.id]),db.statement("INSERT INTO pa_jobs(id,class,event_id,next_at,deadline) VALUES(?,'archive',?,?,?) ON CONFLICT DO NOTHING",['root-checkpoint:'+p.id,p.id,now,now]),clearAssertions(db)]);
      await hook?.('ROOT_REGISTERED',{...p,root_key:rootKey});
     }
@@ -118,7 +120,7 @@ export async function publishArchive(db,archive,scopeId,{now,owner=uid(),hook=nu
     await db.batch([pubFence(db,p,now),closureFence(db,JSON.parse(p.snapshot)),db.statement("UPDATE pa_publications SET state='EVICTION_ELIGIBLE' WHERE id=? AND state='CATALOGUED' AND root_key=?",[p.id,rootKey]),db.statement("UPDATE pa_reservations SET state='SETTLED' WHERE id=? AND state='COMMITTED'",[p.reservation]),clearAssertions(db)]);
    }else throw Error('pa_archive_state');
    p=await refresh();await hook?.(p.state,p);
-  }catch(error){if(/fence_failed|source_changed|catalogue_raced/.test(error.message))await db.batch([db.statement("UPDATE pa_publications SET state='STALE' WHERE id=? AND owner=? AND generation=?",[p.id,p.owner,p.generation])]);throw error;}
+  }catch(error){if(/fence_failed|source_changed|catalogue_raced/.test(error.message))await db.batch([db.statement("UPDATE pa_publications SET state='STALE' WHERE id=? AND owner=? AND generation=? AND lease_nonce=? AND state=?",[p.id,p.owner,p.generation,p.lease_nonce,p.state])]);throw error;}
  }
  return {...p,...(p.state!=='EVICTION_ELIGIBLE'?{pending:true,reason:'publication_step_budget'}:{})};
 }
@@ -158,16 +160,23 @@ export async function readArchiveEntry(archive,entry,{read=key=>archive.read(key
  const parts=[];for(let i=0;i<record.objects.length;i++){need(record.objects[i].ordinal===i,'pa_archive_geometry');parts.push(Uint8Array.from(atob(await read(record.objects[i].key)),c=>c.charCodeAt(0)));}
  const wire=await decodeWire(parts,record);const payload=parseEvidence(wire);if(entry.lookupType==='SAMPLE'){const sample=payload.samples?.[entry.sampleIndex];need(sample&&'sample:'+sample.id===entry.id&&await hash({type:sample.type,value:sample.value,occurredAt:sample.occurredAt})===entry.sampleDigest,'pa_archive_sample_identity');return {...record,id:entry.id,sampleDigest:entry.sampleDigest,wire:serialize(sample),scopeState:entry.scopeState};}return {...record,wire,scopeState:entry.scopeState,sourceSnapshot:manifest.snapshot,sourcePackageKey:entry.packageKey};
 }
+async function rootLineage(archive,root,{ancestor=null}={}){
+ let current=root,roots=1,transitions=0;
+ while(current.previous){need(roots<64,'pa_root_lineage_bound');const parent=await verifyRoot(archive,current.previous);await verifyArchiveEdge(archive,current,parent);transitions+=current.epoch!==parent.epoch?1:0;roots++;current=parent;if(ancestor&&current.key===ancestor)return {roots,transitions};}
+ need(!ancestor||current.key===ancestor,'pa_root_chain');return {roots,transitions};
+}
+export async function verifyArchiveLineage(archive,key){const root=await verifyRoot(archive,key);await rootLineage(archive,root);return root;}
+async function relatedRoots(archive,a,b){if(a.key===b.key)return;const newer=a.generation>b.generation?a:b,older=newer===a?b:a;await rootLineage(archive,newer,{ancestor:older.key});}
 export async function discoverArchiveRoot(archive,{fallback='FAIL_CLOSED',cursor=null,limit=64,continuation=null}={}){
  need(['FAIL_CLOSED','VERIFIED_PREDECESSOR'].includes(fallback),'pa_root_fallback_policy');
  let best=continuation?.bestRoot?await verifyRoot(archive,continuation.bestRoot):null,invalidCount=continuation?.invalidCount??0,scanned=continuation?.scanned??0;
  need(Number.isSafeInteger(invalidCount)&&invalidCount>=0&&Number.isSafeInteger(scanned)&&scanned>=0,'pa_root_discovery_token');
  const listing=await archive.listRoots({cursor:continuation?.cursor??cursor,limit}),invalid=[];
- for(const o of listing.objects){scanned++;try{const root=await verifyRoot(archive,o.key);if(best){need(root.epoch===best.epoch,'pa_root_epoch_ambiguity');need(root.generation!==best.generation||root.key===best.key,'pa_root_generation_conflict');}if(!best||root.generation>best.generation)best=root;}catch(error){if(/epoch_ambiguity|generation_conflict/.test(error.message))throw error;invalidCount++;if(invalid.length<8)invalid.push({key:o.key,error:error.message});}}
+ for(const o of listing.objects){scanned++;try{const root=await verifyRoot(archive,o.key);if(best){need(root.generation!==best.generation||root.key===best.key,'pa_root_generation_conflict');await relatedRoots(archive,root,best);}if(!best||root.generation>best.generation)best=root;}catch(error){if(/root_transition|root_chain|root_lineage|epoch_ambiguity|generation_conflict/.test(error.message))throw error;invalidCount++;if(invalid.length<8)invalid.push({key:o.key,error:error.message});}}
  if(listing.truncated)return {status:'PENDING',reason:'root_discovery_budget',continuation:{cursor:listing.cursor,bestRoot:best?.key??null,invalidCount,scanned},fallback};
  need(best,'pa_root_unavailable');need(fallback==='VERIFIED_PREDECESSOR'||invalidCount===0,'pa_corrupt_root_requires_policy');
- if(best.previous){const previous=await verifyRoot(archive,best.previous);need(previous.generation<best.generation&&previous.epoch===best.epoch,'pa_root_chain');}
- return {...best,status:'COMPLETE',discovery:{invalid,invalidCount,scanned,fallback}};
+ const lineage=await rootLineage(archive,best);
+ return {...best,status:'COMPLETE',discovery:{invalid,invalidCount,scanned,fallback,lineage}};
 }
 export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cachedKey=null,cachedRoot=null;const rootAt=async key=>{if(key!==cachedKey){cachedKey=key;cachedRoot=verifyRoot(archive,key);try{await cachedRoot;}catch(error){cachedKey=null;cachedRoot=null;throw error;}}return cachedRoot;};return Object.freeze({async readRecord(packageKey,id){const verified=await verifyArchivePackage(archive,packageKey);return verified.records.find(r=>r.id===id)??null;},
  async lookupRecord(id,{rootKey:requestedRoot,maxObjects=64}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return null;const root=await rootAt(key);const entry=await catalogueLookup(archive,root.indexRoot,id,{maxObjects});if(!entry)return null;const retained=root.verified.records.find(r=>r.id===(entry.recordId??entry.id));if(retained&&entry.lookupType!=='SAMPLE'){need(retained.digest===entry.digest,'pa_archive_entry');return {...retained,sourceSnapshot:root.verified.snapshot,scopeState:entry.scopeState,sourcePackageKey:entry.packageKey};}return readArchiveEntry(archive,entry);},
@@ -177,6 +186,7 @@ export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cached
  async scopeRecords(scopeId,{rootKey:requestedRoot,factsOnly=true}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return [];const root=await rootAt(key),scope=await catalogueLookup(archive,root.indexRoot,'scope:'+scopeId);if(!scope)return [];
   const records=[];let after='',complete=false;for(let page=0;page<4&&!complete;page++){const result=await cataloguePage(archive,factsOnly?scope.factIndex:scope.scopeIndex,{after,limit:Math.min(129,LIMITS.scopeRecords+1-records.length),maxObjects:64});for(const entry of result.entries)records.push(await readArchiveEntry(archive,entry));need(records.length<=LIMITS.scopeRecords,'pa_archive_scope_bound');need(result.complete||result.next>after,'pa_archive_scope_pending');after=result.next;complete=result.complete;}need(complete,'pa_archive_scope_pending');return records;}});}
 export async function archiveOrphanEligibility(db,key,{archive,rootKey,now}={}){
+ if(key.includes('/transitions/'))return {eligible:false,reason:'authenticated_lineage_retained'};
  if(key.includes('/catalogue/'))return {eligible:false,reason:'catalogue_tree_proof_required'};
  const active=await db.first("SELECT id FROM pa_publications WHERE manifest_key=? OR receipt_key=? OR root_key=? OR state IN('PLANNED','SNAPSHOT_PINNED','OBJECTS_WRITTEN','VERIFIED','CATALOGUED') LIMIT 1",key,key,key);
  if(active)return {eligible:false,reason:'publication_reference_or_pending'};
@@ -186,7 +196,7 @@ export async function archiveOrphanEligibility(db,key,{archive,rootKey,now}={}){
  return {eligible:true,destructiveOperationEnabled:false,proof:'bounded_complete_reference_walk'};
 }
 export async function migrateArchiveFormat(db,archive,oldRoot,{now,owner=uid(),hook=null}={}){
- const source=await verifyRoot(archive,oldRoot),id='format:'+await hash([oldRoot,'measurement-archive-v2']);
+ const source=await verifyRoot(archive,oldRoot),targetEpoch=(await schemaReady(db)).epoch,id='format:'+await hash([oldRoot,'measurement-archive-v2']);
  await db.batch([assertion(db,'(SELECT COUNT(*) FROM pa_format_work)<64 OR EXISTS(SELECT 1 FROM pa_format_work WHERE id=?)',id),db.statement("INSERT INTO pa_format_work(id,old_root,state) VALUES(?,?,'PLANNED') ON CONFLICT DO NOTHING",[id,oldRoot]),db.statement("INSERT INTO pa_jobs(id,class,event_id,next_at,deadline) VALUES(?,'archive',?,?,?) ON CONFLICT DO NOTHING",[id,id,now,now+DAY]),clearAssertions(db)]);
  let work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);if(work.state==='COMPLETE')return work;
  const lease=await leaseJob(db,id,owner,{now});need(lease,'pa_format_lease_pending');
@@ -197,10 +207,11 @@ export async function migrateArchiveFormat(db,archive,oldRoot,{now,owner=uid(),h
   const manifest=await archive.write('packages',{...source.verified.manifest,format:'measurement-archive-v2',pages,supersedes:source.manifestKey});await update('OBJECTS_WRITTEN',',new_manifest=?',[manifest.key]);work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);
  }
  if(work.state==='OBJECTS_WRITTEN'){const target=await verifyArchivePackage(archive,work.new_manifest);need(await hash(target.records.map(r=>[r.id,r.digest,r.available_at]))===await hash(source.verified.records.map(r=>[r.id,r.digest,r.available_at])),'pa_format_semantics_changed');
-  const receipt=await archive.write('receipts',{format:'measurement-verification-v1',publication:id,epoch:source.epoch,sourceRevision:source.sourceRevision,manifestKey:work.new_manifest,membershipDigest:await hash(target.snapshot.membership),expectedCount:target.snapshot.expectedCount,verifiedAt:now,readback:true,supersedes:source.receiptKey});await update('VERIFIED',',new_receipt=?',[receipt.key]);work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);
+  const receipt=await archive.write('receipts',{format:'measurement-verification-v1',publication:id,epoch:targetEpoch,sourceRevision:source.sourceRevision,manifestKey:work.new_manifest,membershipDigest:await hash(target.snapshot.membership),expectedCount:target.snapshot.expectedCount,verifiedAt:now,readback:true,supersedes:source.receiptKey});await update('VERIFIED',',new_receipt=?',[receipt.key]);work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);
  }
  if(work.state==='VERIFIED'){const meta=await db.first('SELECT * FROM pa_meta');need(meta.root_key===oldRoot,'pa_format_catalogue_changed');let indexRoot=source.indexRoot;for(const member of source.verified.snapshot.membership)indexRoot=await catalogueInsert(archive,indexRoot,{...member,packageKey:work.new_manifest,receiptKey:work.new_receipt});
-  const root=await archive.write('roots',{format:'measurement-root-v1',epoch:source.epoch,sourceRevision:source.sourceRevision,scopeId:source.scopeId,generation:meta.catalogue_generation+1,publication:id,manifestKey:work.new_manifest,receiptKey:work.new_receipt,indexRoot,previous:oldRoot,supersedes:oldRoot,publishedAt:now});
+  const lineage=await publicationLineage(db,archive,source,targetEpoch);
+  const root=await archive.write('roots',{format:'measurement-root-v1',...lineage,epoch:targetEpoch,sourceRevision:source.sourceRevision,scopeId:source.scopeId,generation:meta.catalogue_generation+1,publication:id,manifestKey:work.new_manifest,receiptKey:work.new_receipt,indexRoot,previous:oldRoot,supersedes:oldRoot,publishedAt:now});
   await db.batch([jobFence(db,lease,now),assertion(db,'EXISTS(SELECT 1 FROM pa_meta WHERE root_key=? AND catalogue_generation=?)',oldRoot,meta.catalogue_generation),db.statement('UPDATE pa_meta SET root_key=?,catalogue_generation=catalogue_generation+1',[root.key]),db.statement("UPDATE pa_format_work SET state='CATALOGUED',new_root=? WHERE id=?",[root.key,id]),clearAssertions(db)]);work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);
  }
  if(work.state==='CATALOGUED'){const root=JSON.parse(await archive.read(work.new_root));await archive.write('checkpoints',rootCheckpoint(root,work.new_root));await update('COMPLETE');await finishJob(db,lease,now);work=await db.first('SELECT * FROM pa_format_work WHERE id=?',id);}
