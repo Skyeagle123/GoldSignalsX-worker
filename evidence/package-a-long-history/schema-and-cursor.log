@@ -1,0 +1,11 @@
+✔ PA-REMED-01-R1 raw listing cursors cannot bypass authenticated discovery progress (1.815968ms)
+✔ PA-REMED progress schema 9 -> 10 is additive, reference ABA fenced, progress bounded, rollback floor 10 (75.232476ms)
+✔ PA-REMED schema floor prevents scheduled maintenance writes before explicit migration (21.253351ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 224.756419

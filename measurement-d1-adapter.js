@@ -23,7 +23,7 @@ export function createMeasurementD1Adapter(binding,{diagnostics=false,diagnostic
 export function requireD1(db){need(registered.has(db),'pa_adapter_required');}
 export function assertion(db,sql,...values){requireD1(db);return db.statement(`INSERT INTO pa_assertions SELECT CASE WHEN (${sql}) THEN 1 ELSE 0 END`,values);}
 export const clearAssertions=db=>db.statement('DELETE FROM pa_assertions');
-export async function schemaReady(db){requireD1(db);const row=await db.first('SELECT schema_version,epoch FROM pa_meta WHERE singleton=1');need(row?.schema_version===9&&row.epoch,'pa_schema_not_ready');return row;}
+export async function schemaReady(db){requireD1(db);const row=await db.first('SELECT schema_version,epoch FROM pa_meta WHERE singleton=1');need(row?.schema_version===10&&row.epoch,'pa_schema_not_ready');return row;}
 export async function leaseJob(db,id,owner,{now,leaseMs=30000}={}){
  identity(id);identity(owner);time(now);need(Number.isInteger(leaseMs)&&leaseMs>=1&&leaseMs<=60000,'pa_lease_bound');
  const result=await db.batch([db.statement(`UPDATE pa_jobs SET owner=?,generation=generation+1,lease_nonce=lower(hex(randomblob(16))),lease_until=MAX(?,${SQL_CLOCK})+?,state='RUNNING',attempts=MIN(attempts+1,1000000) WHERE id=? AND state IN('PENDING','RUNNING') AND next_at<=MAX(?,${SQL_CLOCK}) AND lease_until<=MAX(?,${SQL_CLOCK}) RETURNING *,(SELECT epoch FROM pa_meta) AS epoch`,[owner,now,leaseMs,id,now,now])]);

@@ -1,0 +1,115 @@
+{
+  "startingCandidate": "ddb9e705b2860faa7aec9c81bae0a9a6300f245f",
+  "startingTree": "59a4ada678fc0af1ba958cb2337be55e22f05a73",
+  "startingParent": "a36aee651a94c4340858207a5273e331db28713d",
+  "startingWorktree": "CLEAN",
+  "branch": "phase/b1-independent-measurement",
+  "scope": [
+    "PA-REMED-01-R1",
+    "PA-REMED-02-R1"
+  ],
+  "fullAcceptance": {
+    "tests": 697,
+    "pass": 697,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0
+  },
+  "newLongHistoryRegressions": 33,
+  "preservedPAFINALRegressions": 72,
+  "preservedPriorResidualRegressions": 37,
+  "focusedEarlierRun": {
+    "tests": 68,
+    "pass": 68,
+    "fail": 0,
+    "note": "31 initial long-history cases plus 37 prior residual cases; final complete acceptance covers all 33 final long-history cases."
+  },
+  "focusedFinalSchemaCursorSupplement": {
+    "tests": 3,
+    "pass": 3,
+    "fail": 0
+  },
+  "lineageObservations": [
+    {
+      "roots": 64,
+      "invocations": 7,
+      "reads": 1186
+    },
+    {
+      "roots": 65,
+      "invocations": 9,
+      "reads": 1212
+    },
+    {
+      "roots": 129,
+      "invocations": 17,
+      "reads": 2396
+    }
+  ],
+  "referenceProofObservation": {
+    "roots": 129,
+    "invocations": 3,
+    "reads": 1177,
+    "physicalReclamationCredit": 0
+  },
+  "archiveOnlyDiscovery": {
+    "sourceD1": "CLOSED",
+    "targetD1": "CLOSED",
+    "longRestoreThenTargetPublications": "PASS",
+    "latestLineageRoots": 131,
+    "authorizedTransitions": 1
+  },
+  "invalidations": 72,
+  "proofBounds": {
+    "archiveSlots": 64,
+    "archiveSlotBytes": 60000,
+    "slotIdleExpiryMilliseconds": 3600000,
+    "retainedPreviousTokens": 1,
+    "defaultTraversalSegmentRoots": 16,
+    "proofInputReadsPerInvocation": 512,
+    "publicationProofBytes": 8192,
+    "publicationRows": 64,
+    "lifetimeLineageDepthLimit": null
+  },
+  "schemaFloor": 10,
+  "rollbackFloor": 10,
+  "newMigration": "0010_package_a_proof_progress.sql",
+  "historicalMigrations0001Through0009": "UNCHANGED",
+  "protectedTradingM1M2M3Source": "UNCHANGED",
+  "targetRevisionEpoch": "FRESH_PRESERVED",
+  "consistency": "VALIDATED_AT_REVISION",
+  "timing": {
+    "baseline": 6,
+    "off": 6,
+    "on": 6
+  },
+  "auxiliaryGates": {
+    "News": "PASS",
+    "Reliability": "PASS_NORMALLY",
+    "Risk Budget": "PASS",
+    "Risk Sizing": "PASS",
+    "Signals Security": "PASS"
+  },
+  "syntax": "PASS",
+  "diffCheck": "PASS",
+  "physicalReclamationCredit": 0,
+  "scheduledProofTurn": "AFTER_EXPIRED_RESERVATION_RECOVERY_BEFORE_JOBS",
+  "cloudQualified": false,
+  "productionActive": false,
+  "publication": "NOT_PUSHED",
+  "independentReview": "REQUIRED",
+  "evidenceSha256": {
+    "focused.log": "7de8daffd10d4f5b365f981c93d58e206a2ec8db8dd9d1ee669d39897ec9f773",
+    "schema-and-cursor.log": "152a0f9af32d02134866cd194049f485ca70ef3e8898211bb23f8514fd818a77",
+    "full-acceptance.log": "ed55aa37c56335346e4586037610af9a8e9b6d9956fd6fcb54f6bb34092e0358",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "qualification-plan.json": "32837905deb925e9c95798336a973d7e63f21f38fc824e55b4e0e69af35106ec",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "resources.json": "2e40248f54dfd366c1042ea229a8f1cb066a5bb3c5c2574218e38037cb154e36",
+    "resources.log": "2b56fc20fa33e65b5faa6245873ed3bde0ff478dedccf9f025d3f2ed08e53f11",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b"
+  }
+}

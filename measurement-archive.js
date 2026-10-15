@@ -3,6 +3,7 @@ import {assertion,clearAssertions,schemaReady,SQL_CLOCK,leaseJob,jobFence,finish
 import {readRecord,chunkWire} from './measurement-independent-store.js';
 import {catalogueInsert,catalogueLookup,cataloguePage} from './measurement-archive-catalog.js';
 import {publicationLineage,verifyArchiveEdge} from './measurement-archive-lineage.js';
+import {archiveProgressStore,emptyFingerprint,fingerprintAdd,sameFingerprint} from './measurement-archive-progress.js';
 import {DEFINITION_PACK} from './measurement-definition-pack.js';
 import {decodeWire} from './measurement-wire-codec.js';
 import {reserve,estimateWrite,commitReservationStatements} from './measurement-reservations.js';
@@ -27,7 +28,7 @@ export function createPrivateArchiveAdapter(bucket,{namespace,operationBudget=nu
   need(await read(key)===wire,'pa_archive_readback');return {key,digest,bytes:bytes(wire)};
  }
  async function listRoots({cursor,limit=64}={}){need(limit>=1&&limit<=64,'pa_root_list_bound');admit();return bucket.list({prefix:namespace+'roots/',cursor,limit});}
- return Object.freeze({namespace,read,write,listRoots,remaining:()=>operationBudget===null?Infinity:operationBudget-operations,metrics:()=>({...metrics,operations})});
+ return Object.freeze({namespace,read,write,listRoots,progress:archiveProgressStore(bucket,namespace,admit,metrics),remaining:()=>operationBudget===null?Infinity:operationBudget-operations,metrics:()=>({...metrics,operations})});
 }
 function pubFence(db,p,now,{revision=true}={}){
  return assertion(db,`EXISTS(SELECT 1 FROM pa_publications p,pa_meta m,pa_scopes s WHERE p.id=? AND p.owner=? AND p.generation=? AND p.lease_nonce=? AND p.lease_until>MAX(?,${SQL_CLOCK}) AND p.state=? AND p.epoch=m.epoch AND s.id=p.scope_id ${revision?'AND s.archive_revision=p.revision AND s.revision=p.input_revision AND s.pending=0 AND s.corrections=0':''})`,p.id,p.owner,p.generation,p.lease_nonce,now,p.state);
@@ -146,7 +147,7 @@ export async function verifyArchivePackage(archive,key,{budget={objects:ARCHIVE_
 }
 const rootCheckpoint=(root,key)=>({format:'measurement-root-commit-v1',rootKey:key,publication:root.publication,epoch:root.epoch,generation:root.generation,sourceRevision:root.sourceRevision,sqlCatalogueAuthorized:true});
 export async function verifyRootCheckpoint(archive,root,key,{read=k=>archive.read(k)}={}){const expected=rootCheckpoint(root,key),digest=await hash(serialize(expected));need(await read(archive.namespace+'checkpoints/'+digest)===serialize(expected),'pa_root_checkpoint');}
-export async function verifyRoot(archive,key,{budget}={}){const root=JSON.parse(await archive.read(key));need(root.format==='measurement-root-v1'&&Number.isSafeInteger(root.generation)&&root.generation>0,'pa_root_format');await verifyRootCheckpoint(archive,root,key);
+export async function verifyRoot(archive,key,{budget}={}){need(typeof key==='string'&&key.startsWith(archive.namespace+'roots/')&&/^[a-f0-9]{64}$/.test(key.slice((archive.namespace+'roots/').length)),'pa_root_namespace');const root=JSON.parse(await archive.read(key));need(root.format==='measurement-root-v1'&&Number.isSafeInteger(root.generation)&&root.generation>0,'pa_root_format');await verifyRootCheckpoint(archive,root,key);
  const receipt=JSON.parse(await archive.read(root.receiptKey));need(receipt.format==='measurement-verification-v1'&&receipt.publication===root.publication&&receipt.manifestKey===root.manifestKey&&receipt.epoch===root.epoch&&receipt.sourceRevision===root.sourceRevision&&receipt.readback===true,'pa_root_receipt');
  const verified=await verifyArchivePackage(archive,root.manifestKey,{budget});need(receipt.membershipDigest===await hash(verified.snapshot.membership),'pa_root_membership');return {...root,key,verified};}
 export async function readArchiveEntry(archive,entry,{read=key=>archive.read(key)}={}){
@@ -160,23 +161,65 @@ export async function readArchiveEntry(archive,entry,{read=key=>archive.read(key
  const parts=[];for(let i=0;i<record.objects.length;i++){need(record.objects[i].ordinal===i,'pa_archive_geometry');parts.push(Uint8Array.from(atob(await read(record.objects[i].key)),c=>c.charCodeAt(0)));}
  const wire=await decodeWire(parts,record);const payload=parseEvidence(wire);if(entry.lookupType==='SAMPLE'){const sample=payload.samples?.[entry.sampleIndex];need(sample&&'sample:'+sample.id===entry.id&&await hash({type:sample.type,value:sample.value,occurredAt:sample.occurredAt})===entry.sampleDigest,'pa_archive_sample_identity');return {...record,id:entry.id,sampleDigest:entry.sampleDigest,wire:serialize(sample),scopeState:entry.scopeState};}return {...record,wire,scopeState:entry.scopeState,sourceSnapshot:manifest.snapshot,sourcePackageKey:entry.packageKey};
 }
-async function rootLineage(archive,root,{ancestor=null}={}){
- let current=root,roots=1,transitions=0;
- while(current.previous){need(roots<64,'pa_root_lineage_bound');const parent=await verifyRoot(archive,current.previous);await verifyArchiveEdge(archive,current,parent);transitions+=current.epoch!==parent.epoch?1:0;roots++;current=parent;if(ancestor&&current.key===ancestor)return {roots,transitions};}
- need(!ancestor||current.key===ancestor,'pa_root_chain');return {roots,transitions};
+const lineageHeader=r=>({key:r.key,epoch:r.epoch,generation:r.generation,previous:r.previous??null,lineageTransition:r.lineageTransition??null});
+const freshWalk=key=>({current:key,child:null,roots:0,transitions:0,fingerprint:emptyFingerprint()});
+function proofReader(archive,maxReads){let reads=0;return {archive:{...archive,async read(key,options){need(reads<maxReads,'pa_lineage_segment_budget');reads++;return archive.read(key,options);}},reads:()=>reads};}
+async function walkSegment(archive,state,{maxRoots=16,knownRoot=null}={}){
+ for(let n=0;state.current&&n<maxRoots;n++){
+  let root;try{root=knownRoot?.key===state.current?knownRoot:await verifyRoot(archive,state.current);if(state.child)await verifyArchiveEdge(archive,state.child,root);}catch(error){if(error.message==='pa_lineage_segment_budget')break;throw error;}
+  state={...state,current:root.previous??null,child:lineageHeader(root),roots:state.roots+1,transitions:state.transitions+(state.child&&state.child.epoch!==root.epoch?1:0),fingerprint:await fingerprintAdd(state.fingerprint,root.key)};
+ }
+ return state;
 }
-export async function verifyArchiveLineage(archive,key){const root=await verifyRoot(archive,key);await rootLineage(archive,root);return root;}
-async function relatedRoots(archive,a,b){if(a.key===b.key)return;const newer=a.generation>b.generation?a:b,older=newer===a?b:a;await rootLineage(archive,newer,{ancestor:older.key});}
+export async function verifyArchiveLineage(archive,key,{continuation=null,maxRoots=16,maxReads=512}={}){
+ need(Number.isInteger(maxRoots)&&maxRoots>=1&&maxRoots<=64&&Number.isInteger(maxReads)&&maxReads>=300&&maxReads<=512,'pa_lineage_segment_bound');
+ const context={format:'measurement-lineage-verification-v2',namespace:archive.namespace,rootKey:key};
+ const loaded=continuation?await archive.progress.load(context,continuation):null;
+ const reader=proofReader(archive,maxReads);let root;if(loaded){root={...JSON.parse(await reader.archive.read(key)),key};await verifyRootCheckpoint(reader.archive,root,key);}else root=await verifyRoot(reader.archive,key);
+ let state=loaded?.state??{phase:'WALK',root:lineageHeader(root),walk:freshWalk(key),complete:false};
+ need(state.root.key===key&&state.root.epoch===root.epoch&&state.root.generation===root.generation,'pa_lineage_scope');
+ if(loaded?.replay&&!state.complete)return {status:'PENDING',reason:'lineage_verification_budget',rootKey:key,continuation:loaded.token,progress:{phase:state.phase,roots:state.walk.roots},complete:false};
+ state.walk=await walkSegment(reader.archive,state.walk,{maxRoots,knownRoot:root.verified?root:null});
+ if(!state.walk.current){
+  if(state.phase==='WALK'){state={...state,phase:'RECHECK',validated:state.walk,walk:freshWalk(key)};}
+  else{need(sameFingerprint(state.walk.fingerprint,state.validated.fingerprint)&&state.walk.transitions===state.validated.transitions,'pa_lineage_changed');state.complete=true;}
+ }
+ // Short histories finish their second pass in the same bounded invocation.
+ if(!state.complete&&state.phase==='RECHECK'&&state.walk.roots===0&&reader.reads()<maxReads/2){state.walk=await walkSegment(reader.archive,state.walk,{maxRoots,knownRoot:root.verified?root:null});if(!state.walk.current){need(sameFingerprint(state.walk.fingerprint,state.validated.fingerprint),'pa_lineage_changed');state.complete=true;}}
+ if(state.complete){try{if(!root.verified)root=await verifyRoot(reader.archive,key);if(loaded&&!loaded.replay)await archive.progress.save(context,state,loaded);return {...root,status:'COMPLETE',lineage:{roots:state.walk.roots,transitions:state.walk.transitions,consistency:'AUTHENTICATED_IMMUTABLE_HISTORY'}};}catch(error){if(error.message!=='pa_lineage_segment_budget')throw error;}}
+ need(archive.progress,'pa_archive_progress_required');const next=await archive.progress.save(context,state,loaded);
+ return {status:'PENDING',reason:'lineage_verification_budget',rootKey:key,continuation:next,progress:{phase:state.phase,roots:state.walk.roots},complete:false};
+}
 export async function discoverArchiveRoot(archive,{fallback='FAIL_CLOSED',cursor=null,limit=64,continuation=null}={}){
- need(['FAIL_CLOSED','VERIFIED_PREDECESSOR'].includes(fallback),'pa_root_fallback_policy');
- let best=continuation?.bestRoot?await verifyRoot(archive,continuation.bestRoot):null,invalidCount=continuation?.invalidCount??0,scanned=continuation?.scanned??0;
- need(Number.isSafeInteger(invalidCount)&&invalidCount>=0&&Number.isSafeInteger(scanned)&&scanned>=0,'pa_root_discovery_token');
- const listing=await archive.listRoots({cursor:continuation?.cursor??cursor,limit}),invalid=[];
- for(const o of listing.objects){scanned++;try{const root=await verifyRoot(archive,o.key);if(best){need(root.generation!==best.generation||root.key===best.key,'pa_root_generation_conflict');await relatedRoots(archive,root,best);}if(!best||root.generation>best.generation)best=root;}catch(error){if(/root_transition|root_chain|root_lineage|epoch_ambiguity|generation_conflict/.test(error.message))throw error;invalidCount++;if(invalid.length<8)invalid.push({key:o.key,error:error.message});}}
- if(listing.truncated)return {status:'PENDING',reason:'root_discovery_budget',continuation:{cursor:listing.cursor,bestRoot:best?.key??null,invalidCount,scanned},fallback};
- need(best,'pa_root_unavailable');need(fallback==='VERIFIED_PREDECESSOR'||invalidCount===0,'pa_corrupt_root_requires_policy');
- const lineage=await rootLineage(archive,best);
- return {...best,status:'COMPLETE',discovery:{invalid,invalidCount,scanned,fallback,lineage}};
+ need(['FAIL_CLOSED','VERIFIED_PREDECESSOR'].includes(fallback)&&Number.isInteger(limit)&&limit>=1&&limit<=64,'pa_root_fallback_policy');need(cursor===null,'pa_root_discovery_raw_cursor');
+ const context={format:'measurement-root-discovery-v2',namespace:archive.namespace,fallback};
+ const loaded=continuation?await archive.progress.load(context,continuation):null;
+ let state=loaded?.state??{phase:'LIST',cursor,queue:[],fingerprint:emptyFingerprint(),invalidCount:0,scanned:0,best:null,complete:false};
+ const reader=proofReader(archive,512),a=reader.archive;
+ if(loaded?.replay&&!state.complete)return {status:'PENDING',reason:'root_discovery_budget',continuation:loaded.token,fallback,progress:{phase:state.phase,scanned:state.scanned,roots:state.walk?.roots??0},complete:false};
+ if(state.complete){const root=await verifyRoot(a,state.best.key);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:state.invalidCount,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}
+ if(state.phase==='LIST'||state.phase==='CONFIRM'){
+  if(!state.queue.length){const page=await archive.listRoots({cursor:state.cursor,limit});state.queue=page.objects.map(o=>o.key);state.cursor=page.cursor;state.truncated=page.truncated;}
+  for(let n=0;state.queue.length&&n<16;n++){
+   let r;try{r=await verifyRoot(a,state.queue[0]);}catch(error){if(error.message==='pa_lineage_segment_budget')break;state.invalidCount++;if(fallback==='FAIL_CLOSED')throw Error('pa_corrupt_root_requires_policy:'+error.message);}
+   if(r){state.fingerprint=await fingerprintAdd(state.fingerprint,r.key);if(!state.best||r.generation>state.best.generation)state.best=lineageHeader(r);else need(r.generation!==state.best.generation||r.key===state.best.key,'pa_root_generation_conflict');}
+   state.scanned++;state.queue.shift();
+  }
+  if(!state.queue.length&&!state.truncated){
+   need(state.best,'pa_root_unavailable');
+   if(state.phase==='CONFIRM'){need(sameFingerprint(state.fingerprint,state.listFingerprint)&&state.invalidCount===state.listInvalidCount,'pa_root_discovery_changed');state.complete=true;}
+   else state={...state,phase:'LINEAGE',listFingerprint:state.fingerprint,listInvalidCount:state.invalidCount,walk:freshWalk(state.best.key)};
+  }
+ }
+ if(state.phase==='LINEAGE'){
+  state.walk=await walkSegment(a,state.walk);
+  if(!state.walk.current){need(sameFingerprint(state.walk.fingerprint,state.listFingerprint),'pa_root_chain');state={...state,phase:'CONFIRM',cursor:null,queue:[],fingerprint:emptyFingerprint(),invalidCount:0,truncated:true};}
+ }
+ if(state.complete){try{const root=await verifyRoot(a,state.best.key);if(loaded)await archive.progress.save(context,state,loaded);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:state.invalidCount,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}catch(error){if(error.message!=='pa_lineage_segment_budget')throw error;}}
+ // Preserve original single-call behavior for small archives without exceeding
+ // the invocation's read budget. Larger histories return an authenticated slot.
+ if(!state.complete&&state.phase==='CONFIRM'&&state.listFingerprint.count<=8&&reader.reads()<256){const page=await archive.listRoots({limit:64});need(!page.truncated,'pa_root_discovery_changed');let fp=emptyFingerprint(),invalid=0;for(const o of page.objects){try{const r=await verifyRoot(a,o.key);fp=await fingerprintAdd(fp,r.key);}catch(error){if(fallback==='FAIL_CLOSED'||error.message==='pa_lineage_segment_budget')throw error;invalid++;}}need(sameFingerprint(fp,state.listFingerprint)&&invalid===state.listInvalidCount,'pa_root_discovery_changed');const root=await verifyRoot(a,state.best.key);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:invalid,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}
+ need(archive.progress,'pa_archive_progress_required');const next=await archive.progress.save(context,state,loaded);return {status:'PENDING',reason:'root_discovery_budget',continuation:next,fallback,progress:{phase:state.phase,scanned:state.scanned,roots:state.walk?.roots??0},complete:false};
 }
 export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cachedKey=null,cachedRoot=null;const rootAt=async key=>{if(key!==cachedKey){cachedKey=key;cachedRoot=verifyRoot(archive,key);try{await cachedRoot;}catch(error){cachedKey=null;cachedRoot=null;throw error;}}return cachedRoot;};return Object.freeze({async readRecord(packageKey,id){const verified=await verifyArchivePackage(archive,packageKey);return verified.records.find(r=>r.id===id)??null;},
  async lookupRecord(id,{rootKey:requestedRoot,maxObjects=64}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return null;const root=await rootAt(key);const entry=await catalogueLookup(archive,root.indexRoot,id,{maxObjects});if(!entry)return null;const retained=root.verified.records.find(r=>r.id===(entry.recordId??entry.id));if(retained&&entry.lookupType!=='SAMPLE'){need(retained.digest===entry.digest,'pa_archive_entry');return {...retained,sourceSnapshot:root.verified.snapshot,scopeState:entry.scopeState,sourcePackageKey:entry.packageKey};}return readArchiveEntry(archive,entry);},
@@ -186,6 +229,7 @@ export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cached
  async scopeRecords(scopeId,{rootKey:requestedRoot,factsOnly=true}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return [];const root=await rootAt(key),scope=await catalogueLookup(archive,root.indexRoot,'scope:'+scopeId);if(!scope)return [];
   const records=[];let after='',complete=false;for(let page=0;page<4&&!complete;page++){const result=await cataloguePage(archive,factsOnly?scope.factIndex:scope.scopeIndex,{after,limit:Math.min(129,LIMITS.scopeRecords+1-records.length),maxObjects:64});for(const entry of result.entries)records.push(await readArchiveEntry(archive,entry));need(records.length<=LIMITS.scopeRecords,'pa_archive_scope_bound');need(result.complete||result.next>after,'pa_archive_scope_pending');after=result.next;complete=result.complete;}need(complete,'pa_archive_scope_pending');return records;}});}
 export async function archiveOrphanEligibility(db,key,{archive,rootKey,now}={}){
+ if(key.includes('/progress/'))return {eligible:false,reason:'bounded_operational_progress_slot'};
  if(key.includes('/transitions/'))return {eligible:false,reason:'authenticated_lineage_retained'};
  if(key.includes('/catalogue/'))return {eligible:false,reason:'catalogue_tree_proof_required'};
  const active=await db.first("SELECT id FROM pa_publications WHERE manifest_key=? OR receipt_key=? OR root_key=? OR state IN('PLANNED','SNAPSHOT_PINNED','OBJECTS_WRITTEN','VERIFIED','CATALOGUED') LIMIT 1",key,key,key);

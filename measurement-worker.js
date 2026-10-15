@@ -38,7 +38,7 @@ export default {
    }else ordinary.push(m);}
   if(ordinary.length)await consumeQueueBatch(db,{messages:ordinary},{now:Date.now(),archive:reader,onIncident:input=>recordIncident(db,input,{now:Date.now()})});
  },
- async scheduled(_controller,env,ctx){if(!enabled(env,'B1_MEASUREMENT_CONSUMER_ENABLED'))return;const {db,archive,reader}=compose(env);await environmentReady(db,env);
-  ctx.waitUntil((async()=>{if(enabled(env,'B1_ARCHIVE_WRITE_ENABLED'))await planArchiveMaintenance(db,{now:Date.now()});await runRecovery(db,{now:Date.now(),archive:reader,handlers:{archive:async({row,now,lease})=>{need(enabled(env,'B1_ARCHIVE_WRITE_ENABLED'),'pa_archive_off');if(row.id.startsWith('root-checkpoint:'))return recoverRootCheckpoint(db,archive,row.event_id,{now,lease});return publishArchive(db,archive,row.scope_id,{now,domain:row.event_id==='CENSUS'?'CENSUS':'EVIDENCE'});}}});await compactIndependentState(db,{now:Date.now(),archive:enabled(env,'B1_ARCHIVE_EVICTION_ENABLED')?archive:null,retirementArchive:enabled(env,'B1_ARCHIVE_WRITE_ENABLED')?archive:null});})());
+ async scheduled(_controller,env,ctx){if(!enabled(env,'B1_MEASUREMENT_CONSUMER_ENABLED'))return;const {db,archive,reader}=compose(env);await schemaReady(db);await environmentReady(db,env);
+  ctx.waitUntil((async()=>{if(enabled(env,'B1_ARCHIVE_WRITE_ENABLED'))await planArchiveMaintenance(db,{now:Date.now()});await runRecovery(db,{now:Date.now(),archive:reader,beforeJobs:()=>compactIndependentState(db,{now:Date.now(),archive:enabled(env,'B1_ARCHIVE_EVICTION_ENABLED')?archive:null,retirementArchive:enabled(env,'B1_ARCHIVE_WRITE_ENABLED')?archive:null}),handlers:{archive:async({row,now,lease})=>{need(enabled(env,'B1_ARCHIVE_WRITE_ENABLED'),'pa_archive_off');if(row.id.startsWith('root-checkpoint:'))return recoverRootCheckpoint(db,archive,row.event_id,{now,lease});return publishArchive(db,archive,row.scope_id,{now,domain:row.event_id==='CENSUS'?'CENSUS':'EVIDENCE'});}}});})());
  }
 };

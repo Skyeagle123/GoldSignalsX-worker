@@ -16,7 +16,7 @@ export function createMeasurementMaintenance(db,{archive,env,authorization,clock
   async evict(publicationId){const now=await authorized('evict','B1_ARCHIVE_EVICTION_ENABLED');return evictPublication(db,archive,identity(publicationId),{now});},
   async correct(input){const now=await authorized('correction','B1_CORRECTION_ADMISSION_ENABLED');return admitCorrection(db,input,{now,archive:reader});},
   async processCorrection(id){const now=await authorized('correction','B1_CORRECTION_ADMISSION_ENABLED');return processCorrection(db,identity(id),{now,archive:reader});},
-  async restore(rootKey,options={}){const now=await authorized('restore','B1_RESTORE_ENABLED');return hydrateArchive(db,archive,rootKey,{ids:options.ids??null,now,environment,authorization:{operation:'restore',environment,expiresAt:authorization.expiresAt}});},
+  async restore(rootKey,options={}){const now=await authorized('restore','B1_RESTORE_ENABLED');return hydrateArchive(db,archive,rootKey,{ids:options.ids??null,lineageContinuation:options.lineageContinuation??null,now,environment,authorization:{operation:'restore',environment,expiresAt:authorization.expiresAt}});},
   async replay(id){const now=await authorized('replay','B1_MEASUREMENT_CONSUMER_ENABLED');return authorizeReplay(db,identity(id),{now,environment,authorization:{operation:'replay',environment,expiresAt:authorization.expiresAt}});}
  });
 }

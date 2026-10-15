@@ -1,0 +1,5151 @@
+{
+  "version": "measurement-package-a-resource-v1",
+  "node": "v24.19.0",
+  "classification": "MEASURED_LOCALLY",
+  "profiles": [
+    {
+      "name": "representative",
+      "originalCycleBytes": 697952,
+      "totalPreparedWireBytes": 933065,
+      "sidecarAndDuplicationBytes": 235113,
+      "fragmentCount": 17,
+      "maxFragmentEnvelopeBytes": 56561,
+      "stagedBytes": 940131,
+      "duplicates": 100,
+      "duplicateAdditionalBytes": 0,
+      "ingestion": {
+        "status": "ACCEPTED",
+        "durable": true,
+        "eventId": "m1:19f5f0ba4d350aa27b07bc76e1dcf784635d90c1b2ab47bd73dbed2083227c37",
+        "payloadDigest": "1df7f20e373fb838a707f25107f9bbf3ed8d7980921410693d95f190ff46e854",
+        "firstDurableAvailability": 1792128075611
+      },
+      "logicalRecordPayloadBytes": 1379444,
+      "encodedChunkBytes": 1839328,
+      "sql": {
+        "statements": 2081,
+        "reads": 400,
+        "batches": 253,
+        "rowsRead": 372,
+        "rowsWritten": 1652,
+        "diagnosticCalls": 0
+      },
+      "physicalBefore": {
+        "pageSize": 4096,
+        "pageCount": 167,
+        "allocatedBytes": 684032,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "physicalAfter": {
+        "pageSize": 4096,
+        "pageCount": 876,
+        "allocatedBytes": 3588096,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "reservations": {
+        "model": {
+          "normal": 4000000000,
+          "hard": 5500000000,
+          "reserve": 1500000000,
+          "partitions": {
+            "incidents": 200000000,
+            "catchup": 600000000,
+            "archive": 400000000,
+            "restore": 300000000
+          }
+        },
+        "meta": {
+          "physical_charged": 86600192,
+          "physical_observed": null,
+          "resource_revision": 4,
+          "deletion_generation": 0,
+          "epoch": "3b1e3764ecff9df6a736156d4e8d2e5d"
+        },
+        "pools": [
+          {
+            "pool": "normal",
+            "state": "SETTLED",
+            "bytes": 86600192,
+            "count": 1
+          }
+        ],
+        "physicalReclamationCredit": 0,
+        "cloudQualification": "REQUIRED"
+      },
+      "wallMs": 1414.705791,
+      "cpuMs": 1494.118,
+      "heapDeltaBytes": 50394360,
+      "rssDeltaBytes": 79310848
+    },
+    {
+      "name": "heavy",
+      "originalCycleBytes": 854180,
+      "totalPreparedWireBytes": 1101450,
+      "sidecarAndDuplicationBytes": 247270,
+      "fragmentCount": 21,
+      "maxFragmentEnvelopeBytes": 56561,
+      "stagedBytes": 1150679,
+      "duplicates": 100,
+      "duplicateAdditionalBytes": 0,
+      "ingestion": {
+        "status": "ACCEPTED",
+        "durable": true,
+        "eventId": "m1:76a9da3706beae3f4e5641cfc57dacf06dbcc6e3086f734977ff8fdd2d10f284",
+        "payloadDigest": "8eeae315c3cd369c1c2f0e1c426bc8e00f8cf082b1b4730b7da621844843595e",
+        "firstDurableAvailability": 1792128077271
+      },
+      "logicalRecordPayloadBytes": 1691900,
+      "encodedChunkBytes": 2255908,
+      "sql": {
+        "statements": 2141,
+        "reads": 412,
+        "batches": 257,
+        "rowsRead": 388,
+        "rowsWritten": 1696,
+        "diagnosticCalls": 0
+      },
+      "physicalBefore": {
+        "pageSize": 4096,
+        "pageCount": 167,
+        "allocatedBytes": 684032,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "physicalAfter": {
+        "pageSize": 4096,
+        "pageCount": 1036,
+        "allocatedBytes": 4243456,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "reservations": {
+        "model": {
+          "normal": 4000000000,
+          "hard": 5500000000,
+          "reserve": 1500000000,
+          "partitions": {
+            "incidents": 200000000,
+            "catchup": 600000000,
+            "archive": 400000000,
+            "restore": 300000000
+          }
+        },
+        "meta": {
+          "physical_charged": 105438080,
+          "physical_observed": null,
+          "resource_revision": 4,
+          "deletion_generation": 0,
+          "epoch": "2076b20cf99a952c2273a0dbc575e0ff"
+        },
+        "pools": [
+          {
+            "pool": "normal",
+            "state": "SETTLED",
+            "bytes": 105438080,
+            "count": 1
+          }
+        ],
+        "physicalReclamationCredit": 0,
+        "cloudQualification": "REQUIRED"
+      },
+      "wallMs": 1354.8669810000001,
+      "cpuMs": 1451.485,
+      "heapDeltaBytes": -22896384,
+      "rssDeltaBytes": 12824576
+    },
+    {
+      "name": "activeOfficial",
+      "originalCycleBytes": 788992,
+      "totalPreparedWireBytes": 979942,
+      "sidecarAndDuplicationBytes": 190950,
+      "fragmentCount": 19,
+      "maxFragmentEnvelopeBytes": 56561,
+      "stagedBytes": 1062641,
+      "duplicates": 100,
+      "duplicateAdditionalBytes": 0,
+      "ingestion": {
+        "status": "ACCEPTED",
+        "durable": true,
+        "eventId": "m1:47c0a4f77f0cbcb6bf90074a32eeb0322c95e1cec6d4a389ca333a2ee8aeecea",
+        "payloadDigest": "17b5c007ef3aec3cc3e869d768a964ac8f4acefa60da9a609ea8fd065ba5aca1",
+        "firstDurableAvailability": 1792128078817
+      },
+      "logicalRecordPayloadBytes": 1563305,
+      "encodedChunkBytes": 2084448,
+      "sql": {
+        "statements": 2076,
+        "reads": 403,
+        "batches": 246,
+        "rowsRead": 380,
+        "rowsWritten": 1620,
+        "diagnosticCalls": 0
+      },
+      "physicalBefore": {
+        "pageSize": 4096,
+        "pageCount": 167,
+        "allocatedBytes": 684032,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "physicalAfter": {
+        "pageSize": 4096,
+        "pageCount": 971,
+        "allocatedBytes": 3977216,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "reservations": {
+        "model": {
+          "normal": 4000000000,
+          "hard": 5500000000,
+          "reserve": 1500000000,
+          "partitions": {
+            "incidents": 200000000,
+            "catchup": 600000000,
+            "archive": 400000000,
+            "restore": 300000000
+          }
+        },
+        "meta": {
+          "physical_charged": 97260032,
+          "physical_observed": null,
+          "resource_revision": 4,
+          "deletion_generation": 0,
+          "epoch": "fd8da2753efbf4789f6d2900a79c7b9d"
+        },
+        "pools": [
+          {
+            "pool": "normal",
+            "state": "SETTLED",
+            "bytes": 97260032,
+            "count": 1
+          }
+        ],
+        "physicalReclamationCredit": 0,
+        "cloudQualification": "REQUIRED"
+      },
+      "wallMs": 1223.6882579999992,
+      "cpuMs": 1264.213,
+      "heapDeltaBytes": 51251568,
+      "rssDeltaBytes": 24887296
+    },
+    {
+      "name": "earlyRejected",
+      "originalCycleBytes": 182986,
+      "totalPreparedWireBytes": 198714,
+      "sidecarAndDuplicationBytes": 15728,
+      "fragmentCount": 5,
+      "maxFragmentEnvelopeBytes": 56559,
+      "stagedBytes": 246779,
+      "duplicates": 100,
+      "duplicateAdditionalBytes": 0,
+      "ingestion": {
+        "status": "ACCEPTED",
+        "durable": true,
+        "eventId": "m1:9f83a44930eaaa0328dc403eb764885c2d7ab40b7136dd59fa5da01766dc4cac",
+        "payloadDigest": "1a2ef5f25de8b8cebef2bd5b46211ec573002ccae44617dda83417ab669a2f59",
+        "firstDurableAvailability": 1792128080100
+      },
+      "logicalRecordPayloadBytes": 360234,
+      "encodedChunkBytes": 480340,
+      "sql": {
+        "statements": 1595,
+        "reads": 337,
+        "batches": 159,
+        "rowsRead": 324,
+        "rowsWritten": 1044,
+        "diagnosticCalls": 0
+      },
+      "physicalBefore": {
+        "pageSize": 4096,
+        "pageCount": 167,
+        "allocatedBytes": 684032,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "physicalAfter": {
+        "pageSize": 4096,
+        "pageCount": 352,
+        "allocatedBytes": 1441792,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "reservations": {
+        "model": {
+          "normal": 4000000000,
+          "hard": 5500000000,
+          "reserve": 1500000000,
+          "partitions": {
+            "incidents": 200000000,
+            "catchup": 600000000,
+            "archive": 400000000,
+            "restore": 300000000
+          }
+        },
+        "meta": {
+          "physical_charged": 25643456,
+          "physical_observed": null,
+          "resource_revision": 4,
+          "deletion_generation": 0,
+          "epoch": "fe9bcda2a972bb9611e537a33bfef377"
+        },
+        "pools": [
+          {
+            "pool": "normal",
+            "state": "SETTLED",
+            "bytes": 25643456,
+            "count": 1
+          }
+        ],
+        "physicalReclamationCredit": 0,
+        "cloudQualification": "REQUIRED"
+      },
+      "wallMs": 705.7131399999998,
+      "cpuMs": 706.962,
+      "heapDeltaBytes": 33211280,
+      "rssDeltaBytes": 7856128
+    }
+  ],
+  "market": {
+    "samples": 2000,
+    "packetCount": 14,
+    "wireBytes": 663152,
+    "maxPacketBytes": 48073
+  },
+  "staging": {
+    "maximumTestedConcurrentPartialEvents": 16,
+    "attempted": 16,
+    "rejection": null,
+    "stagedBytes": 904960,
+    "reservations": {
+      "model": {
+        "normal": 4000000000,
+        "hard": 5500000000,
+        "reserve": 1500000000,
+        "partitions": {
+          "incidents": 200000000,
+          "catchup": 600000000,
+          "archive": 400000000,
+          "restore": 300000000
+        }
+      },
+      "meta": {
+        "physical_charged": 1385729120,
+        "physical_observed": null,
+        "resource_revision": 48,
+        "deletion_generation": 0,
+        "epoch": "86387726b8ec6e903bdcb1174ba858e7"
+      },
+      "pools": [
+        {
+          "pool": "normal",
+          "state": "COMMITTED",
+          "bytes": 1385729120,
+          "count": 16
+        }
+      ],
+      "physicalReclamationCredit": 0,
+      "cloudQualification": "REQUIRED"
+    },
+    "physical": {
+      "pageSize": 4096,
+      "pageCount": 395,
+      "allocatedBytes": 1617920,
+      "freePages": 0,
+      "indexes": [
+        {
+          "name": "measurement_candidate_attempts",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_candidate_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_collection_due",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_cycle_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_cycle",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decisions_cohort_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_final_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_ingress_available",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_lifecycle_subject",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_links_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_reference_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_official_identity",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_dependency_target",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcomes_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_pin_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_rich_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_state_cursor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_binding_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_correction_predecessor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_event_work",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_job_schedule",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_publication_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_record_order",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_record_report",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_record_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_reservation_expiry",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_sample_record",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_decision_cycle_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_blocks_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_references_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_cohorts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_collector_guards_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_definitions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_final_results_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_levels_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_rich_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_subjects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_3",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_chunks_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_cohort_state_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_corrections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_coverage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_dependencies_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_effects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_events_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_format_work_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_fragments_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_incidents_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_jobs_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_market_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pool_use_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_processing_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_projections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_publications_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_reservations_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_restores_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_samples_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_scopes_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_decision_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_measurement_state_1",
+          "bytes": 4096
+        }
+      ]
+    }
+  },
+  "archiveAndRestore": {
+    "objectCount": 360,
+    "archiveBytes": 2913394,
+    "adapterMetrics": {
+      "reads": 1105,
+      "writes": 371,
+      "bytesRead": 12980223,
+      "bytesWritten": 2927584,
+      "operations": 1476
+    },
+    "correctionAmplificationBytes": 1833,
+    "incidentRows": 1,
+    "physicalBefore": {
+      "pageSize": 4096,
+      "pageCount": 896,
+      "allocatedBytes": 3670016,
+      "freePages": 0,
+      "indexes": [
+        {
+          "name": "measurement_candidate_attempts",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_candidate_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_collection_due",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_cycle_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_cycle",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decisions_cohort_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_final_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_ingress_available",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_lifecycle_subject",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_links_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_reference_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_official_identity",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_dependency_target",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcomes_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_pin_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_rich_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_state_cursor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_binding_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_correction_predecessor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_event_work",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_job_schedule",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_publication_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_record_order",
+          "bytes": 12288
+        },
+        {
+          "name": "pa_record_report",
+          "bytes": 12288
+        },
+        {
+          "name": "pa_record_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_reservation_expiry",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_sample_record",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_decision_cycle_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_blocks_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_references_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_cohorts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_collector_guards_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_definitions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_final_results_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_levels_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_rich_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_subjects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_3",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_chunks_1",
+          "bytes": 12288
+        },
+        {
+          "name": "sqlite_autoindex_pa_cohort_state_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_corrections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_coverage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_dependencies_1",
+          "bytes": 12288
+        },
+        {
+          "name": "sqlite_autoindex_pa_effects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_events_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_format_work_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_fragments_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_incidents_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_jobs_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_market_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pool_use_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_processing_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_projections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_publications_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_reservations_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_restores_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_samples_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_scopes_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_decision_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_measurement_state_1",
+          "bytes": 4096
+        }
+      ]
+    },
+    "physicalAfter": {
+      "pageSize": 4096,
+      "pageCount": 916,
+      "allocatedBytes": 3751936,
+      "freePages": 9,
+      "indexes": [
+        {
+          "name": "measurement_candidate_attempts",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_candidate_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_collection_due",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_cycle_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_cycle",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decision_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_decisions_cohort_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_final_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_ingress_available",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_lifecycle_subject",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_links_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_reference_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_market_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_official_identity",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_dependency_target",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_record_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcome_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_outcomes_subject_time",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_pin_block",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_rich_retention",
+          "bytes": 4096
+        },
+        {
+          "name": "measurement_state_cursor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_binding_signal",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_correction_predecessor",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_event_work",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_job_schedule",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_publication_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_record_order",
+          "bytes": 12288
+        },
+        {
+          "name": "pa_record_report",
+          "bytes": 12288
+        },
+        {
+          "name": "pa_record_scope",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_reservation_expiry",
+          "bytes": 4096
+        },
+        {
+          "name": "pa_sample_record",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_decision_cycle_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_blocks_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_market_evidence_references_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_cohorts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_collector_guards_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_definitions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_final_results_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_levels_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_official_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_outcome_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_rich_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_measurement_subjects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_archive_lineage_3",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_bindings_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_chunks_1",
+          "bytes": 12288
+        },
+        {
+          "name": "sqlite_autoindex_pa_cohort_state_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_corrections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_coverage_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_dependencies_1",
+          "bytes": 12288
+        },
+        {
+          "name": "sqlite_autoindex_pa_effects_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_events_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_format_work_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_fragments_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_incidents_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_jobs_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_market_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pins_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_pool_use_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_processing_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_projections_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_publications_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_records_2",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_reservations_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_restores_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_samples_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_scopes_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_affected_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_pa_semantic_ingress_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_decision_evidence_1",
+          "bytes": 4096
+        },
+        {
+          "name": "sqlite_autoindex_signal_measurement_state_1",
+          "bytes": 4096
+        }
+      ]
+    },
+    "restore": {
+      "status": "COMPLETE",
+      "id": "restore:dee9aaadcd540e1513bbc35afebb080faf2227a8f8b93ee62c06e30594fe8f24",
+      "records": 50,
+      "sourceEpoch": "f0b4b083db3d0c7be920950c5c4e7430",
+      "targetEpoch": "3c3d7219f450d833f24eebc8359b567d",
+      "restorationStartedAt": 1790953800001,
+      "restoredAt": 1790953800001,
+      "availability": "ORIGINAL_PRESERVED",
+      "digest": "40daecfc0be679f61d4bfa5b17b6aa72fb07f7b125bcae2b5a1c246bcde8304a",
+      "physicalBefore": {
+        "pageSize": 4096,
+        "pageCount": 167,
+        "allocatedBytes": 684032,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      },
+      "physicalAfter": {
+        "pageSize": 4096,
+        "pageCount": 658,
+        "allocatedBytes": 2695168,
+        "freePages": 0,
+        "indexes": [
+          {
+            "name": "measurement_candidate_attempts",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_candidate_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_collection_due",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_cycle_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_cycle",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decision_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_decisions_cohort_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_final_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_ingress_available",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_lifecycle_subject",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_links_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_reference_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_market_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_official_identity",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_dependency_target",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_record_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcome_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_outcomes_subject_time",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_pin_block",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_rich_retention",
+            "bytes": 4096
+          },
+          {
+            "name": "measurement_state_cursor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_binding_signal",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_correction_predecessor",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_event_work",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_job_schedule",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_publication_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_record_order",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_report",
+            "bytes": 12288
+          },
+          {
+            "name": "pa_record_scope",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_reservation_expiry",
+            "bytes": 4096
+          },
+          {
+            "name": "pa_sample_record",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_decision_cycle_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_blocks_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_market_evidence_references_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_cohorts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_collector_guards_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_conflicts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_decision_quarantine_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_definitions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_final_results_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_receipts_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_ingress_recovery_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_legacy_outcome_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_facts_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_projection_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_lifecycle_revisions_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_levels_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_official_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_outcome_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_rich_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_measurement_subjects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_archive_lineage_3",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_bindings_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_chunks_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_cohort_state_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_corrections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_coverage_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_dependencies_1",
+            "bytes": 12288
+          },
+          {
+            "name": "sqlite_autoindex_pa_effects_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_events_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_format_work_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_fragments_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_incidents_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_jobs_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_market_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pins_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_pool_use_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_processing_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_projections_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_publications_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_records_2",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_reservations_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_restores_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_samples_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_scopes_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_affected_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_pa_semantic_ingress_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_decision_evidence_1",
+            "bytes": 4096
+          },
+          {
+            "name": "sqlite_autoindex_signal_measurement_state_1",
+            "bytes": 4096
+          }
+        ]
+      }
+    },
+    "report": {
+      "complete": true,
+      "pages": 13,
+      "records": 51,
+      "objects": 329,
+      "decodedAndWireTraversalBytes": 6498902
+    }
+  },
+  "producer": {
+    "counts": {
+      "baseline": 6,
+      "off": 6,
+      "on": 6
+    },
+    "profiles": {
+      "baseline": {
+        "returnWallMs": 44.72590400000263,
+        "returnCpuMs": 51.664,
+        "totalWallMs": 44.93493800000215,
+        "totalCpuMs": 51.786,
+        "heapDeltaBytes": 5501744,
+        "rssDeltaBytes": 262144,
+        "queueMessages": 0,
+        "queueBytes": 0,
+        "producerMetrics": null,
+        "trace": [
+          "TELEGRAM",
+          "EXPOSURE",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TRADING_COMPLETE"
+        ],
+        "production": {
+          "signal_id": "review-owner",
+          "status": "tp1",
+          "tp1_at": 1790867400000
+        }
+      },
+      "off": {
+        "returnWallMs": 39.528308000000834,
+        "returnCpuMs": 42.502,
+        "totalWallMs": 39.68222899999819,
+        "totalCpuMs": 42.984,
+        "heapDeltaBytes": 4586720,
+        "rssDeltaBytes": 0,
+        "queueMessages": 0,
+        "queueBytes": 0,
+        "producerMetrics": null,
+        "trace": [
+          "TELEGRAM",
+          "EXPOSURE",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TRADING_COMPLETE"
+        ],
+        "production": {
+          "signal_id": "review-owner",
+          "status": "tp1",
+          "tp1_at": 1790867400000
+        }
+      },
+      "on": {
+        "returnWallMs": 34.915939000002254,
+        "returnCpuMs": 40.367,
+        "totalWallMs": 271.97331100000156,
+        "totalCpuMs": 322.36,
+        "heapDeltaBytes": -40353880,
+        "rssDeltaBytes": -2863104,
+        "queueMessages": 23,
+        "queueBytes": 642741,
+        "producerMetrics": {
+          "scheduled": 2,
+          "accepted": 15,
+          "unknown": 0,
+          "failed": 0,
+          "peakTasks": 2,
+          "pending": 0
+        },
+        "trace": [
+          "TELEGRAM",
+          "EXPOSURE",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TELEGRAM",
+          "TRADING_COMPLETE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE",
+          "QUEUE"
+        ],
+        "production": {
+          "signal_id": "review-owner",
+          "status": "tp1",
+          "tp1_at": 1790867400000
+        }
+      }
+    },
+    "localOnly": true,
+    "cloudCpuMemoryQualification": "REQUIRED"
+  },
+  "modeledOutage": {
+    "classification": "MODEL_NOT_MEASURED_CLOUD",
+    "backlog": 2880,
+    "hours": 48,
+    "withinSevenDays": true,
+    "continuingArrivals": true,
+    "modelOnly": true,
+    "realCloudQualification": "REQUIRED",
+    "rawCycleBacklogBytes": 2010101760,
+    "preparedWireBacklogBytes": 2687227200
+  },
+  "requiresPackageB": [
+    "D1 physical amplification/reuse",
+    "real Queue and DLQ retention/throughput",
+    "R2 latency and immutable readback behavior",
+    "Worker CPU/memory",
+    "48-hour real pause and 7-day catch-up",
+    "monthly cost",
+    "4.0/5.5 GB physical cloud occupancy"
+  ],
+  "productionResourceAcceptance": false
+}

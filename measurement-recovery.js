@@ -6,8 +6,8 @@ import {processCorrection} from './measurement-corrections.js';
 import {reserve,estimateWrite,commitReservationStatements,settleReservationStatements,recoverReservations} from './measurement-reservations.js';
 import {foldPostEntry} from './post-entry-evidence.js';
 const classes=['census','official','incidents','catchup','processing','corrections','archive','restore'];
-export async function runRecovery(db,{now,owner=uid(),archive=null,maxJobs=16,handlers={},hook=null}={}){
- time(now);need(maxJobs>=8&&maxJobs<=32,'pa_scheduler_bound');const outcomes=[],reservationsReleased=await recoverReservations(db,now,{limit:16});const turn=await db.batch([db.statement('UPDATE pa_meta SET scheduler_cursor=(scheduler_cursor+1)%8 RETURNING scheduler_cursor')]),offset=turn[0].results[0].scheduler_cursor,orderedClasses=[...classes.slice(offset),...classes.slice(0,offset)];
+export async function runRecovery(db,{now,owner=uid(),archive=null,maxJobs=16,handlers={},hook=null,beforeJobs=null}={}){
+ time(now);need(maxJobs>=8&&maxJobs<=32,'pa_scheduler_bound');const outcomes=[],reservationsReleased=await recoverReservations(db,now,{limit:16});await beforeJobs?.();const turn=await db.batch([db.statement('UPDATE pa_meta SET scheduler_cursor=(scheduler_cursor+1)%8 RETURNING scheduler_cursor')]),offset=turn[0].results[0].scheduler_cursor,orderedClasses=[...classes.slice(offset),...classes.slice(0,offset)];
  // Each bounded pass reserves a turn for every class; urgent classes then get spare turns.
  for(let round=0;round<4&&outcomes.length<maxJobs;round++)for(const workClass of orderedClasses){if(outcomes.length>=maxJobs||db.remainingStatements()<300)break;
   const row=await db.first("SELECT * FROM pa_jobs WHERE class=? AND state IN('PENDING','RUNNING') AND next_at<=? AND lease_until<=? ORDER BY deadline,next_at,id LIMIT 1",workClass,now,now);if(!row)continue;

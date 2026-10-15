@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs/promises';
 import {createMeasurementD1Adapter} from '../measurement-d1-adapter.js';
@@ -11,9 +12,9 @@ export async function packageDatabase({file=':memory:',migrations=true,delay=nul
  }};
  return {raw,binding,db:createMeasurementD1Adapter(binding),close:()=>raw.close()};
 }
-export function fakeBucket(){const objects=new Map(),calls=[],failures=new Map();const bucket={
- async put(key,wire,options){calls.push(['put',key]);if(failures.get('put'))throw Error('fake_put_failure');if(objects.has(key)&&options?.onlyIf?.etagDoesNotMatch==='*')return null;objects.set(key,typeof wire==='string'?wire:new TextDecoder().decode(wire));return {key};},
- async get(key){calls.push(['get',key]);if(failures.get('get'))throw Error('fake_get_failure');if(!objects.has(key))return null;let wire=objects.get(key);if(failures.get('readback'))wire+='corrupt';return {key,size:new TextEncoder().encode(wire).length,async arrayBuffer(){return new TextEncoder().encode(wire).buffer;}};},
+export function fakeBucket(){const etag=wire=>createHash('sha256').update(wire).digest('hex');const objects=new Map(),calls=[],failures=new Map();const bucket={
+ async put(key,wire,options){calls.push(['put',key]);if(failures.get('put'))throw Error('fake_put_failure');if(objects.has(key)&&options?.onlyIf?.etagDoesNotMatch==='*')return null;if(options?.onlyIf?.etagMatches&&(!objects.has(key)||etag(objects.get(key))!==options.onlyIf.etagMatches))return null;objects.set(key,typeof wire==='string'?wire:new TextDecoder().decode(wire));return {key,etag:etag(objects.get(key))};},
+ async get(key){calls.push(['get',key]);if(failures.get('get'))throw Error('fake_get_failure');if(!objects.has(key))return null;let wire=objects.get(key);if(failures.get('readback'))wire+='corrupt';return {key,etag:etag(wire),size:new TextEncoder().encode(wire).length,async arrayBuffer(){return new TextEncoder().encode(wire).buffer;}};},
  async list({prefix='',cursor,limit=64}={}){const keys=[...objects.keys()].filter(k=>k.startsWith(prefix)).sort();const start=cursor?keys.indexOf(cursor)+1:0,selected=keys.slice(start,start+limit);return {objects:selected.map(key=>({key})),truncated:start+limit<keys.length,cursor:selected.at(-1)};}};return {bucket,objects,calls,failures};}
 export const gate=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 export async function deliver(db,packet,now,options={}){const {fragmentMeasurementPacket}=await import('../measurement-transport-fragment.js'),{stageQueueFragment,recoverTransportEvent}=await import('../measurement-queue-consumer.js');for(const wire of await fragmentMeasurementPacket(packet))await stageQueueFragment(db,wire,{now});return recoverTransportEvent(db,packet.envelope.eventId,{now,...options});}
