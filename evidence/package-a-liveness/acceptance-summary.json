@@ -1,0 +1,155 @@
+{
+  "startingCandidate": "b57ceb5980bcd01afd68a3ba23344237c8009494",
+  "startingTree": "c50aa6bde8d90ccefb82a657168cd723c882c265",
+  "startingParent": "ddb9e705b2860faa7aec9c81bae0a9a6300f245f",
+  "startingWorktree": "CLEAN",
+  "branch": "phase/b1-independent-measurement",
+  "scope": [
+    "PA-LH-REVIEW-01",
+    "PA-LH-REVIEW-02"
+  ],
+  "fullAcceptance": {
+    "tests": 730,
+    "pass": 730,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0
+  },
+  "durationMs": 181260.697995,
+  "newLivenessRegressions": 33,
+  "preservedAcceptedTests": 697,
+  "preservedPAFINAL": 72,
+  "preservedPriorResidual": 37,
+  "preservedLongHistory": 33,
+  "focused": {
+    "tests": 32,
+    "pass": 32,
+    "fail": 0
+  },
+  "finalPendingSupplement": {
+    "tests": 1,
+    "pass": 1
+  },
+  "responseContractSupplement": {
+    "tests": 1,
+    "pass": 1
+  },
+  "validationNote": "An initial full run had one old empty-compaction response-shape assertion failure; its exact expected new status/backlog fields were added, then the entire suite passed. No expected-failure workaround.",
+  "observations": {
+    "LIVENESS_DISCOVERY": [
+      {
+        "roots": 8,
+        "records": 1,
+        "payloadBytes": 0,
+        "invocations": 1,
+        "partialPackages": 0
+      },
+      {
+        "roots": 8,
+        "records": 90,
+        "payloadBytes": 0,
+        "invocations": 5,
+        "partialPackages": 4
+      },
+      {
+        "roots": 8,
+        "records": 90,
+        "payloadBytes": 43000,
+        "invocations": 13,
+        "partialPackages": 12
+      },
+      {
+        "roots": 2,
+        "records": 90,
+        "payloadBytes": 43000,
+        "invocations": 4,
+        "partialPackages": 3
+      }
+    ],
+    "LIVENESS_RETIREMENT": [
+      {
+        "length": 129,
+        "retiredAt": 3,
+        "observed": [
+          56,
+          112
+        ]
+      },
+      {
+        "length": 640,
+        "retiredAt": 12,
+        "observed": [
+          56,
+          112,
+          168,
+          224,
+          280,
+          336,
+          392,
+          448,
+          504,
+          560,
+          616
+        ]
+      }
+    ]
+  },
+  "consistency": "VALIDATED_AT_REVISION",
+  "targetRevisionEpoch": "FRESH_PRESERVED",
+  "schemaFloor": 11,
+  "rollbackFloor": 11,
+  "newMigration": "0011_package_a_incremental_references.sql",
+  "historicalMigrations0001Through0010": "UNCHANGED",
+  "protectedTradingM1M2M3Source": "UNCHANGED",
+  "proofBounds": {
+    "proofReadsPerInvocation": 512,
+    "atomicRootAndTransitionReadsMaximum": 276,
+    "archiveSlots": 64,
+    "archiveSlotBytes": 60000,
+    "publicationProofBytes": 8192,
+    "candidateTipCache": 8,
+    "currentRegisteredRootRows": 4353,
+    "lifetimeLineageDepthLimit": null
+  },
+  "registryAdmission": {
+    "modelBytesPerNewKey": 81920,
+    "includesReservedLiability": true,
+    "hardCeilingBytes": 5500000000,
+    "archiveRecoveryPartitionBytes": 400000000,
+    "deletionPhysicalCredit": 0
+  },
+  "timing": {
+    "baseline": 6,
+    "off": 6,
+    "on": 6
+  },
+  "auxiliaryGates": {
+    "News": "PASS",
+    "Reliability": "PASS_NORMALLY",
+    "Risk Budget": "PASS",
+    "Risk Sizing": "PASS",
+    "Signals Security": "PASS"
+  },
+  "syntax": "PASS",
+  "diffCheck": "PASS",
+  "cloudCalls": 0,
+  "productionAccess": false,
+  "push": "NOT_PERFORMED",
+  "independentReview": "REQUIRED",
+  "evidenceSha256": {
+    "checks.log": "c6ec26507f1895ea2975d7084666a69518935618c9b9f771bffa06884ae02782",
+    "contract-supplement.log": "345a19b48ff945aa5b23cb3a48eb44a3aab730c55f6c0a11f90ae49b520c4b54",
+    "focused.log": "24cb72ec0849d0141857c0226dad94b0ff4e206a4adbb48f0e481397a1e380b2",
+    "full-acceptance.log": "135dd187cc4de96419db9e9d888b3707d5aefc6ba942f968296d6360d9bc7bab",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "pending-supplement.log": "f0224f5486367ef72534f7135975e04359aa93b4b94ad8a33d8c439ebc74f424",
+    "qualification-plan.json": "32837905deb925e9c95798336a973d7e63f21f38fc824e55b4e0e69af35106ec",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "resources.json": "24d7f5448eac6f9411bc2890c9fa17207adeebc531a31171e490818e9759c00d",
+    "resources.log": "434beef98288d03f41deeac78aabfd5f527a549eef6a01235a71a8e33fc6011b",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b"
+  }
+}

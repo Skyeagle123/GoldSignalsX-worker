@@ -1,0 +1,46 @@
+LIVENESS_DISCOVERY {"roots":8,"records":1,"payloadBytes":0,"invocations":1,"partialPackages":0}
+✔ PA-LH-REVIEW-01 discovery 8 roots x 1 records x 0 extra bytes completes (376.726716ms)
+LIVENESS_DISCOVERY {"roots":8,"records":90,"payloadBytes":0,"invocations":5,"partialPackages":4}
+✔ PA-LH-REVIEW-01 discovery 8 roots x 90 records x 0 extra bytes completes (1265.129826ms)
+LIVENESS_DISCOVERY {"roots":8,"records":90,"payloadBytes":43000,"invocations":13,"partialPackages":12}
+✔ PA-LH-REVIEW-01 discovery 8 roots x 90 records x 43000 extra bytes completes (15630.589146ms)
+LIVENESS_DISCOVERY {"roots":2,"records":90,"payloadBytes":43000,"invocations":4,"partialPackages":3}
+✔ PA-LH-REVIEW-01 discovery 2 roots x 90 records x 43000 extra bytes completes (3242.593397ms)
+✔ PA-LH-REVIEW-01 mid-package exhaustion saves last complete confirmation unit, not a skipped record (634.716598ms)
+✔ PA-LH-REVIEW-01 confirmation replay and adapter restart preserve exact frontier (1261.713333ms)
+✔ PA-LH-REVIEW-01 confirmation token tampering rejects (133.71974ms)
+✔ PA-LH-REVIEW-01 confirmation persisted tampering rejects (120.160081ms)
+✔ PA-LH-REVIEW-01 partial confirmation detects changed package (478.684907ms)
+✔ PA-LH-REVIEW-01 partial confirmation detects changed earlier-record (513.476654ms)
+✔ PA-LH-REVIEW-01 two discovery Workers cannot skip large confirmation work (696.061068ms)
+✔ PA-LH-REVIEW-01 actual large restore, fresh epoch, target publish and archive-only discovery (1424.868028ms)
+LIVENESS_RETIREMENT {"length":129,"retiredAt":3,"observed":[56,112]}
+✔ PA-LH-REVIEW-02 actual scheduled continuing publication preserves 129-root progress (4676.570495ms)
+LIVENESS_RETIREMENT {"length":640,"retiredAt":12,"observed":[56,112,168,224,280,336,392,448,504,560,616]}
+✔ PA-LH-REVIEW-02 actual scheduled continuing publication preserves 640-root progress (21792.730877ms)
+✔ PA-LH-REVIEW-02 real publishArchive registration adds only the new authenticated suffix (4993.718504ms)
+✔ PA-LH-REVIEW-02 new direct dependency blocks retirement (5977.711718ms)
+✔ PA-LH-REVIEW-02 new superseded-package dependency blocks retirement (6005.580946ms)
+✔ PA-LH-REVIEW-02 candidate state change invalidates old authority (3952.3828ms)
+✔ PA-LH-REVIEW-02 candidate revision change invalidates old authority (4712.103397ms)
+✔ PA-LH-REVIEW-02 candidate owner change invalidates old authority (4627.046752ms)
+✔ PA-LH-REVIEW-02 candidate reservation change invalidates old authority (4709.975534ms)
+✔ PA-LH-REVIEW-02 candidate epoch change invalidates old authority (3636.438147ms)
+✔ PA-LH-REVIEW-02 crash after incremental progress resumes with new references (4231.461424ms)
+✔ PA-LH-REVIEW-02 new publication racing final fence preserves proof but cannot delete (4400.335135ms)
+✔ PA-LH-REVIEW-02 two maintenance Workers settle once after incremental new publication (4467.007644ms)
+✔ PA-LH-REVIEW-02 overload preserves a growing frontier and exposes bounded PENDING backlog (6190.368114ms)
+✔ PA-LH-REVIEW-02 unauthenticated new epoch edge blocks incremental retirement (4780.627422ms)
+✔ PA-LH-REVIEW-02 long history and 72 invalidations recover capacity during continuing publication (18368.046827ms)
+✔ PA-LH schema 0010 -> 0011 preserves populated state, bounds registry and rejects ABA reuse (82.19403ms)
+✔ PA-LH reference registry admission respects archive reserve/hard ceiling and cleanup gives no credit (27.517723ms)
+✔ PA-LH registry hard capacity, uniqueness, immutable identity and monotonic sequence survive cleanup (50.262696ms)
+✔ PA-LH-REVIEW-02 modified durable proof cannot skip history or settle liability (3476.064077ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 137062.802157

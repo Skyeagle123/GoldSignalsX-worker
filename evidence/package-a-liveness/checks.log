@@ -1,0 +1,4 @@
+Syntax PASS: 39 modules/tests
+Migrations 0001-0010 byte-identical: PASS
+Protected trading/M1-M3 source unchanged: PASS
+git diff --check: PASS

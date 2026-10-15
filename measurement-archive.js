@@ -198,6 +198,11 @@ export async function discoverArchiveRoot(archive,{fallback='FAIL_CLOSED',cursor
  const reader=proofReader(archive,512),a=reader.archive;
  if(loaded?.replay&&!state.complete)return {status:'PENDING',reason:'root_discovery_budget',continuation:loaded.token,fallback,progress:{phase:state.phase,scanned:state.scanned,roots:state.walk?.roots??0},complete:false};
  if(state.complete){const root=await verifyRoot(a,state.best.key);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:state.invalidCount,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}
+ // All phases, including small histories, use the same resumable frontier.
+ // A package is one atomic verification unit (<=275 reads); interrupted units
+ // are retried, never counted or skipped. At most three phase turns per call.
+ for(let turn=0;turn<3&&!state.complete&&reader.reads()<512;turn++){
+  const phase=state.phase;
  if(state.phase==='LIST'||state.phase==='CONFIRM'){
   if(!state.queue.length){const page=await archive.listRoots({cursor:state.cursor,limit});state.queue=page.objects.map(o=>o.key);state.cursor=page.cursor;state.truncated=page.truncated;}
   for(let n=0;state.queue.length&&n<16;n++){
@@ -215,10 +220,9 @@ export async function discoverArchiveRoot(archive,{fallback='FAIL_CLOSED',cursor
   state.walk=await walkSegment(a,state.walk);
   if(!state.walk.current){need(sameFingerprint(state.walk.fingerprint,state.listFingerprint),'pa_root_chain');state={...state,phase:'CONFIRM',cursor:null,queue:[],fingerprint:emptyFingerprint(),invalidCount:0,truncated:true};}
  }
+  if(state.phase===phase)break;
+ }
  if(state.complete){try{const root=await verifyRoot(a,state.best.key);if(loaded)await archive.progress.save(context,state,loaded);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:state.invalidCount,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}catch(error){if(error.message!=='pa_lineage_segment_budget')throw error;}}
- // Preserve original single-call behavior for small archives without exceeding
- // the invocation's read budget. Larger histories return an authenticated slot.
- if(!state.complete&&state.phase==='CONFIRM'&&state.listFingerprint.count<=8&&reader.reads()<256){const page=await archive.listRoots({limit:64});need(!page.truncated,'pa_root_discovery_changed');let fp=emptyFingerprint(),invalid=0;for(const o of page.objects){try{const r=await verifyRoot(a,o.key);fp=await fingerprintAdd(fp,r.key);}catch(error){if(fallback==='FAIL_CLOSED'||error.message==='pa_lineage_segment_budget')throw error;invalid++;}}need(sameFingerprint(fp,state.listFingerprint)&&invalid===state.listInvalidCount,'pa_root_discovery_changed');const root=await verifyRoot(a,state.best.key);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:invalid,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}
  need(archive.progress,'pa_archive_progress_required');const next=await archive.progress.save(context,state,loaded);return {status:'PENDING',reason:'root_discovery_budget',continuation:next,fallback,progress:{phase:state.phase,scanned:state.scanned,roots:state.walk?.roots??0},complete:false};
 }
 export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cachedKey=null,cachedRoot=null;const rootAt=async key=>{if(key!==cachedKey){cachedKey=key;cachedRoot=verifyRoot(archive,key);try{await cachedRoot;}catch(error){cachedKey=null;cachedRoot=null;throw error;}}return cachedRoot;};return Object.freeze({async readRecord(packageKey,id){const verified=await verifyArchivePackage(archive,packageKey);return verified.records.find(r=>r.id===id)??null;},

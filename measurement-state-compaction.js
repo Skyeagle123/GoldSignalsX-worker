@@ -3,6 +3,7 @@ import {appendIndependentRecord} from './measurement-independent-store.js';
 import {serialize,hash,need,LIMITS} from './measurement-independent-contract.js';
 import {assertion,clearAssertions,SQL_CLOCK} from './measurement-d1-adapter.js';
 import {verifyRoot} from './measurement-archive.js';
+import {verifyArchiveEdge} from './measurement-archive-lineage.js';
 import {settleReservationStatements} from './measurement-reservations.js';
 export async function compactOperationalRows(db,{now,limit=16,archive=null,hook=null}={}){
  need(Number.isSafeInteger(limit)&&limit>=1&&limit<=32,'pa_operational_cleanup_bound');let count=0;const publications=await retireStalePublications(db,{now,limit,archive,hook});count+=publications.retired;
@@ -20,13 +21,6 @@ export async function compactOperationalRows(db,{now,limit=16,archive=null,hook=
  return {captured:count,effectsCaptured:effects.length,publications};
 }
 
-const registeredRoots=`SELECT root_key FROM pa_meta WHERE root_key IS NOT NULL
- UNION SELECT archive_root FROM pa_scopes WHERE archive_root IS NOT NULL
- UNION SELECT root_key FROM pa_publications WHERE root_key IS NOT NULL
- UNION SELECT root_key FROM pa_restores WHERE root_key IS NOT NULL
- UNION SELECT source_root FROM pa_archive_lineage
- UNION SELECT old_root FROM pa_format_work WHERE old_root IS NOT NULL
- UNION SELECT new_root FROM pa_format_work WHERE new_root IS NOT NULL`;
 const scopes=`(s.id=p.scope_id OR s.id IN(SELECT json_extract(value,'$.id') FROM json_each(json_extract(p.snapshot,'$.dependencyScopes'))))`;
 // Repeat this entire eligibility predicate inside the deletion transaction.
 // Expiry alone is insufficient: a valid unchanged publication is resumable.
@@ -44,47 +38,65 @@ const retirementEligible=`p.state='STALE' AND p.root_key IS NULL AND p.lease_unt
  AND NOT EXISTS(SELECT 1 FROM pa_publications other WHERE other.id!=p.id AND (other.reservation=p.reservation OR other.manifest_key=p.manifest_key OR other.receipt_key=p.receipt_key OR instr(COALESCE(other.snapshot,''),p.id)>0))`;
 const eligibleFrom=`FROM pa_publications p CROSS JOIN pa_meta m CROSS JOIN (SELECT MAX(?,${SQL_CLOCK}) AS at) clock WHERE ${retirementEligible}`;
 const candidateIdentity=p=>Object.fromEntries(Object.entries(p).filter(([k])=>!['retirement_proof','retirement_proof_generation'].includes(k)));
-function candidateFence(db,p,context,now){return assertion(db,`EXISTS(SELECT 1 ${eligibleFrom} AND p.id=? AND p.owner=? AND p.generation=? AND p.lease_nonce=? AND p.lease_until=? AND p.snapshot IS ? AND p.manifest_key IS ? AND p.receipt_key IS ? AND p.reservation=? AND p.scope_id=? AND p.revision=? AND p.input_revision=? AND p.retirement_proof_generation=? AND m.epoch=? AND m.archive_reference_revision=? AND m.catalogue_generation=?)`,now,p.id,p.owner,p.generation,p.lease_nonce,p.lease_until,p.snapshot,p.manifest_key,p.receipt_key,p.reservation,p.scope_id,p.revision,p.input_revision,p.retirement_proof_generation,context.epoch,context.referenceRevision,context.catalogueGeneration);}
+function candidateFence(db,p,context,now,boundary=null){return assertion(db,`EXISTS(SELECT 1 ${eligibleFrom} AND p.id=? AND p.owner=? AND p.generation=? AND p.lease_nonce=? AND p.lease_until=? AND p.snapshot IS ? AND p.manifest_key IS ? AND p.receipt_key IS ? AND p.reservation=? AND p.scope_id=? AND p.revision=? AND p.input_revision=? AND p.retirement_proof_generation=? AND m.epoch=? ${boundary?'AND m.archive_reference_revision=? AND m.catalogue_generation=? AND m.reference_sequence=?':''})`,now,p.id,p.owner,p.generation,p.lease_nonce,p.lease_until,p.snapshot,p.manifest_key,p.receipt_key,p.reservation,p.scope_id,p.revision,p.input_revision,p.retirement_proof_generation,context.epoch,...(boundary?[boundary.referenceRevision,boundary.catalogueGeneration,boundary.sequence]:[]));}
 export async function retireStalePublications(db,{now,limit=16,archive=null,hook=null}={}){
  need(Number.isInteger(limit)&&limit>=1&&limit<=32,'pa_publication_retirement_bound');
  // Discard obsolete operational cursors in bounded batches, never evidence or
  // reservation liability. Each update tests the current durable boundary.
- await db.batch([db.statement(`UPDATE pa_publications SET retirement_proof=NULL,retirement_proof_generation=retirement_proof_generation+1 WHERE id IN(SELECT p.id FROM pa_publications p CROSS JOIN pa_meta m WHERE p.retirement_proof IS NOT NULL AND (p.state!='STALE' OR p.epoch!=m.epoch OR json_extract(p.retirement_proof,'$.context.referenceRevision')!=m.archive_reference_revision OR json_extract(p.retirement_proof,'$.context.catalogueGeneration')!=m.catalogue_generation) LIMIT ?)`,[limit])]);
+ await db.batch([db.statement(`UPDATE pa_publications SET retirement_proof=NULL,retirement_proof_generation=retirement_proof_generation+1 WHERE id IN(SELECT p.id FROM pa_publications p CROSS JOIN pa_meta m WHERE p.retirement_proof IS NOT NULL AND (p.state!='STALE' OR p.epoch!=m.epoch OR json_extract(p.retirement_proof,'$.context.format')!='measurement-retirement-proof-v2') LIMIT ?)`,[limit])]);
  const cursor=(await db.first('SELECT retirement_cursor FROM pa_meta')).retirement_cursor;
- const candidates=await db.all(`SELECT p.* ${eligibleFrom} ORDER BY CASE WHEN p.retirement_proof IS NULL THEN 1 ELSE 0 END,(p.id>?) DESC,p.id LIMIT ?`,now,cursor,limit);let retired=0,blocked=0,referenceReads=0;
+ const candidates=await db.all(`SELECT p.* ${eligibleFrom} ORDER BY CASE WHEN p.retirement_proof IS NULL THEN 1 ELSE 0 END,(p.id>?) DESC,p.id LIMIT ?`,now,cursor,limit);let retired=0,blocked=0,referenceReads=0,pending=0,referenceBacklog=0,attempted=0;
  const proofArchive=archive?{...archive,async read(key,options){need(referenceReads<512,'pa_retirement_reference_bound');referenceReads++;return archive.read(key,options);}}:null;
  for(const p of candidates){
   if(db.remainingStatements()<150||referenceReads>=512)break;
-  await db.batch([db.statement('UPDATE pa_meta SET retirement_cursor=?',[p.id])]);
-  const meta=await db.first('SELECT epoch,catalogue_generation,archive_reference_revision FROM pa_meta');
+  attempted++;await db.batch([db.statement('UPDATE pa_meta SET retirement_cursor=?',[p.id])]);
+  const meta=await db.first('SELECT epoch,catalogue_generation,archive_reference_revision,reference_sequence FROM pa_meta');
   const reservation=await db.first('SELECT r.*,m.epoch FROM pa_reservations r CROSS JOIN pa_meta m WHERE r.id=?',p.reservation);
   if(!reservation||reservation.owner!==p.id||reservation.generation!==1||reservation.class!=='archive'||!['COMMITTED','SETTLED'].includes(reservation.state)){blocked++;continue;}
-  const context={format:'measurement-retirement-proof-v1',candidate:await hash(candidateIdentity(p)),epoch:meta.epoch,referenceRevision:meta.archive_reference_revision,catalogueGeneration:meta.catalogue_generation,reservation:await hash([reservation.id,reservation.token,reservation.owner,reservation.generation,reservation.epoch,reservation.state,reservation.class]),namespace:archive?.namespace??null};
+  const context={format:'measurement-retirement-proof-v2',candidate:await hash(candidateIdentity(p)),epoch:meta.epoch,reservation:await hash([reservation.id,reservation.token,reservation.owner,reservation.generation,reservation.epoch,reservation.state,reservation.class]),namespace:archive?.namespace??null};
+  const boundary={referenceRevision:meta.archive_reference_revision,catalogueGeneration:meta.catalogue_generation,sequence:meta.reference_sequence};
   const contextDigest=await hash(context);let proof=p.retirement_proof?JSON.parse(p.retirement_proof):null;
-  if(!proof||proof.contextDigest!==contextDigest)proof={contextDigest,context,afterRoot:'',current:null,roots:0,complete:false};
+  if(proof){const {progressDigest,...payload}=proof;need(progressDigest===await hash(payload),'pa_retirement_progress_integrity');}
+  if(!proof||proof.contextDigest!==contextDigest)proof={contextDigest,context,afterSequence:0,current:null,roots:0,anchors:[],complete:false};
+  // An exact immutable prefix remains an absence proof for this candidate.
+  // New registrations are obligations with increasing identities, not a reason
+  // to discard the prefix. No generation number alone proves ancestry.
+  proof.complete=false;proof.boundary=boundary;
   let referenced=false,unavailable=false;
+  const header=r=>({key:r.key,epoch:r.epoch,generation:r.generation,previous:r.previous??null,lineageTransition:r.lineageTransition??null});
+  const finishReference=()=>{
+   if(proof.tip)proof.anchors=[proof.tip,...proof.anchors.filter(a=>a.key!==proof.tip.key&&a.key!==proof.matchedAnchor)].sort((a,b)=>b.generation-a.generation).slice(0,8);
+   proof.afterSequence=proof.reference.sequence;proof.lastReference=proof.reference;proof.current=null;proof.child=null;proof.tip=null;proof.matchedAnchor=null;
+  };
   try{while(!proof.complete&&referenceReads<512&&db.remainingStatements()>150){
-   if(!proof.current){const next=await db.first(`SELECT root_key FROM (${registeredRoots}) WHERE root_key>? ORDER BY root_key LIMIT 1`,proof.afterRoot);if(!next){proof.complete=true;break;}proof.afterRoot=next.root_key;proof.current=next.root_key;}
+   if(!proof.current){const next=await db.first('SELECT sequence,root_key FROM pa_archive_reference_work WHERE sequence>? AND sequence<=? ORDER BY sequence LIMIT 1',proof.afterSequence,boundary.sequence);
+    if(!next){proof.afterSequence=boundary.sequence;proof.complete=true;break;}
+    proof.reference={sequence:next.sequence,key:next.root_key};proof.current=next.root_key;proof.child=null;proof.tip=null;
+   }
    if(!proofArchive){unavailable=true;break;}
-   let root;try{root=await verifyRoot(proofArchive,proof.current);}catch(error){if(error.message==='pa_retirement_reference_bound')break;throw error;}
-   if(root.publication===p.id||root.manifestKey===p.manifest_key||root.receiptKey===p.receipt_key){referenced=true;break;}
-   // Strictly descending generations prevent cycles without a growing visited set.
-   if(proof.childGeneration!=null)need(root.generation<proof.childGeneration,'pa_retirement_chain');
-   proof.roots++;proof.current=root.previous??null;proof.childGeneration=proof.current?root.generation:null;
+   const anchor=proof.anchors.find(a=>a.key===proof.current);
+   if(anchor){if(proof.child)await verifyArchiveEdge(proofArchive,proof.child,anchor);proof.matchedAnchor=anchor.key;finishReference();continue;}
+   let root;try{root=await verifyRoot(proofArchive,proof.current);if(proof.child)await verifyArchiveEdge(proofArchive,proof.child,root);}catch(error){if(error.message==='pa_retirement_reference_bound')break;throw error;}
+   const dependencies=[p.id,p.manifest_key,p.receipt_key].filter(Boolean);
+   if(root.publication===p.id||root.manifestKey===p.manifest_key||root.receiptKey===p.receipt_key||dependencies.includes(root.supersedes)||dependencies.includes(root.verified.manifest.supersedes)||root.verified.records.some(r=>dependencies.includes(r.id)||(r.dependencies??[]).some(d=>dependencies.includes(d)))){referenced=true;break;}
+   proof.tip??=header(root);proof.roots++;proof.child=header(root);proof.current=root.previous??null;
+   if(!proof.current)finishReference();
   }}catch{unavailable=true;}
   if(referenced||unavailable){if(referenced)await db.batch([db.statement('UPDATE pa_publications SET retirement_proof=NULL,retirement_proof_generation=retirement_proof_generation+1 WHERE id=? AND retirement_proof_generation=?',[p.id,p.retirement_proof_generation])]);blocked++;continue;}
   // The row is the authenticated progress authority. A CAS generation plus exact
-  // candidate and registered-reference boundary rejects stale Workers and ABA.
+  // candidate identity rejects stale Workers and ABA. Saving historical progress
+  // need not freeze registration; the final transaction checks the fresh boundary.
+  {const {progressDigest,...payload}=proof;proof.progressDigest=await hash(payload);}
   try{await db.batch([candidateFence(db,p,context,now),db.statement('UPDATE pa_publications SET retirement_proof=?,retirement_proof_generation=retirement_proof_generation+1 WHERE id=?',[serialize(proof,8192),p.id]),clearAssertions(db)]);p.retirement_proof_generation++;p.retirement_proof=serialize(proof,8192);}catch(error){if(!/pa_fence_failed/.test(error.message))throw error;blocked++;continue;}
   await hook?.('PUBLICATION_PROOF_SAVED',{id:p.id,roots:proof.roots,complete:proof.complete});
-  if(!proof.complete)continue;
+  if(!proof.complete){pending++;referenceBacklog+=(await db.first('SELECT COUNT(*) count FROM pa_archive_reference_work WHERE sequence>?',proof.afterSequence)).count;continue;}
   await hook?.('PUBLICATION_PROOF_COMPLETE',p);
   // Progress fields do not change the immutable audit identity across retries.
   const wire=serialize({version:'measurement-operational-v1',table:'pa_publications',identity:p.id,state:candidateIdentity(p),meaning:'TERMINAL_METADATA_RETIREMENT_CANDIDATE'},LIMITS.eventBytes),recordId='operational:'+await hash(wire);
   try{await appendIndependentRecord(db,{id:recordId,kind:'OPERATIONAL_AUDIT',cohort:'maintenance',wire,createdAt:p.lease_until,category:'INCIDENT'},{now,workClass:'incidents'});}catch(error){if(!/pa_fence_failed/.test(error.message))throw error;blocked++;continue;}
   await hook?.('PUBLICATION_RETIREMENT_PREPARED',p);
   try{const result=await db.batch([
-   candidateFence(db,p,context,now),
+   candidateFence(db,p,context,now,boundary),
    assertion(db,"EXISTS(SELECT 1 FROM pa_publications WHERE id=? AND retirement_proof=? AND json_extract(retirement_proof,'$.complete')=1)",p.id,p.retirement_proof),
    assertion(db,'EXISTS(SELECT 1 FROM pa_records WHERE id=? AND ready=1)',recordId),
    assertion(db,"EXISTS(SELECT 1 FROM pa_reservations WHERE id=? AND class='archive' AND pool=? AND bytes=?)",reservation.id,reservation.pool,reservation.bytes),
@@ -93,5 +105,6 @@ export async function retireStalePublications(db,{now,limit=16,archive=null,hook
    retired+=result.at(-2).results.length;
   }catch(error){if(!/pa_fence_failed/.test(error.message))throw error;blocked++;}
  }
- return {scanned:candidates.length,retired,blocked,bounded:true,physicalReclamationCredit:0};
+ pending+=candidates.length-attempted;
+ return {scanned:attempted,selected:candidates.length,retired,blocked,pending,referenceBacklog,referenceBacklogScope:'PROCESSED_CANDIDATES',referenceReads,status:pending||blocked?'PENDING':'COMPLETE',reason:pending?'reference_proof_backlog':blocked?'reference_or_eligibility_pending':null,bounded:true,physicalReclamationCredit:0};
 }
