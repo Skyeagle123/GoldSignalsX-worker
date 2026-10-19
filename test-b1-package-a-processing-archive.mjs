@@ -1,5 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {gunzipSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
 import {seedOfficial,packageDatabase,fakeBucket} from './test-fixtures/b1-package-a.mjs';
 import {marketPackets,tick} from './test-fixtures/b1-processing-ordering.mjs';
 import {createPrivateArchiveAdapter,archiveReader,publishArchive,verifyArchivePackage} from './measurement-archive.js';
@@ -28,8 +31,19 @@ async function fixture(){
  const p=await publishArchive(x.db,raw,x.scopeId,{now:clock}),verified=await verifyArchivePackage(raw,p.manifest_key);
  return {...x,b,raw,p,verified,clock:()=>clock,advance:()=>clock+=40000};
 }
+// Freeze the reviewed parent's exact geometry independently of future RESULT
+// checkpoint metadata. All other fixtures below still use current production code.
+async function parentControl(){
+ const wire=await readFile(new URL('./test-fixtures/b1-processing-archive-parent-control.json.gz',import.meta.url));
+ assert.equal(createHash('sha256').update(wire).digest('hex'),'f0629e027831226191fa34809aeeae88d65df363aaab448745433e6a15dd17c7');
+ const f=JSON.parse(gunzipSync(wire));assert.equal(f.sourceCandidate,'8e898c8cdabb500c19560b0c44a483bcfaeda0de');
+ const b=fakeBucket();for(const [key,value] of f.objects)b.objects.set(key,value);
+ const raw=createPrivateArchiveAdapter(b.bucket,{namespace:f.namespace}),verified=await verifyArchivePackage(raw,f.manifestKey);let clock=f.clock;
+ assert.equal(verified.snapshot.bindings.length,1);const binding=verified.snapshot.bindings[0];
+ return {b,raw,verified,evaluationId:binding.evaluation_id,scopeId:binding.signal_id,p:{root_key:f.rootKey},clock:()=>clock,advance:()=>clock+=40000,close(){}};
+}
 test('Bounded archive: genuine package and restore-backed outer opportunities share all counters',async()=>{
- const x=await fixture(),target=await packageDatabase({clock:x.clock});
+ const x=await parentControl(),target=await packageDatabase({clock:x.clock});
  try{
   assert.equal(x.verified.records.length,59);assert.equal(x.verified.records.filter(r=>r.kind==='MARKET_EXPORT').length,12);assert.equal(x.verified.objects,81);assert.equal(x.verified.bytes,2225978);
   console.log(JSON.stringify({archiveControl:{records:x.verified.records.length,market:x.verified.records.filter(r=>r.kind==='MARKET_EXPORT').length,objects:x.verified.objects,bytes:x.verified.bytes}}));

@@ -1,0 +1,48 @@
+{
+  "startingCandidate": "8e898c8cdabb500c19560b0c44a483bcfaeda0de",
+  "startingTree": "670b377b63cc1419ac58305c192bc42116d075d2",
+  "branch": "phase/b1-package-a-processing-binding",
+  "migrationFiles": 12,
+  "migrationsByteIdenticalToAccepted": true,
+  "noMigrationAdded": true,
+  "acceptedRegressionFilesUnchanged": 38,
+  "protectedFilesUnchanged": [
+    "measurement-independent-retention.js",
+    "signal-engine.js",
+    "goldsignalsx-worker.js",
+    "measurement-producer.js",
+    "measurement-market-envelope.js",
+    "measurement-lifecycle.js",
+    "forward-validation.js",
+    "post-entry-evidence.js",
+    "quality-measurement.js",
+    "risk-budget.js",
+    "risk-sizing.js",
+    "measurement-processing-budget.js",
+    "measurement-processing-archive.js",
+    "measurement-recovery.js",
+    "measurement-processing-samples.js"
+  ],
+  "preservedWorktrees": [
+    {
+      "path": "/workspace/scratch/c6f879705017/GoldSignalsX-sample-alias-reconciliation",
+      "files": 227,
+      "byteIdentical": true
+    },
+    {
+      "path": "/workspace/scratch/c6f879705017/package-a-publication-recovery/GoldSignalsX-Package-A",
+      "files": 258,
+      "byteIdentical": true
+    }
+  ],
+  "frozenSourceFiles": 164,
+  "frozenSourceUnchanged": true,
+  "syntax": {
+    "files": 113,
+    "failures": []
+  },
+  "localOnly": true,
+  "cloudAccess": false,
+  "pushPerformed": false,
+  "sourceStagedDiffCheck": "PASS"
+}

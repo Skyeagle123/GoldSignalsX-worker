@@ -1,7 +1,7 @@
 import {ProcessingYield} from './measurement-processing-budget.js';
 import {need,hash,serialize,parseEvidence,bytes} from './measurement-independent-contract.js';
 import {SAMPLE_SCAN_VERSION,SAMPLE_ORDER_VERSION,SAMPLE_REDUCER_VERSION,freshSelection,selectSampleBlock,selectedSample,inspectCapturedDelta} from './measurement-processing-samples.js';
-import {emptySampleFold,foldSelectedSample,finalizeSampleMetrics,freshWitnessVerification,verifySampleOutcome} from './measurement-processing-fold.js';
+import {CONTINUITY_VERSION,emptySampleFold,foldSelectedSample,finalizeSampleMetrics,freshWitnessVerification,verifySampleOutcome} from './measurement-processing-fold.js';
 
 function freshState(identity,boundary,marketRevision,now,subject){
  const b=JSON.parse(boundary.boundary);
@@ -15,7 +15,7 @@ export async function advanceSampleScan(db,archive,{previous,previousRow,identit
   const receiptId='result:'+await hash([previous.subjectId,previousRow.revision,previous]);
   const receipt=await db.first('SELECT digest FROM pa_records WHERE id=? AND ready=1',receiptId);
   need(receipt&&receipt.digest===await hash(previousRow.payload),'pa_processing_scan_integrity');
-  if(serialize(s.state.identity)===serialize(identity)&&s.state.boundary===boundary.boundary)state=structuredClone(s.state);
+  if(s.state.fold.continuityVersion===CONTINUITY_VERSION&&serialize(s.state.identity)===serialize(identity)&&s.state.boundary===boundary.boundary)state=structuredClone(s.state);
  }
  if(!state)state=freshState(identity,boundary,marketRevision,now,subject);
  state.previousCheckpoint=previousRow?await hash(previousRow.payload):null;state.generation++;

@@ -1,0 +1,21 @@
+{
+  "initialAggregate": {
+    "command": "node --test test-b1-*.mjs",
+    "passed": 1004,
+    "failed": 1,
+    "skipped": 0,
+    "failure": "Unchanged test-b1-m2-final-fences.mjs:72 expected two paused batches within 100 setImmediate turns; observed one.",
+    "rawLog": "processing-continuity-default-concurrency-development.log",
+    "rawLogSha256": "a10e4754efbd9a3b0638c2f52e89573aa70e8f218da041552f0ea0c6e72fa721"
+  },
+  "isolatedSameTest": {
+    "currentSource": "PASS",
+    "reviewedParent": "PASS"
+  },
+  "finalAggregateCommand": "node --test --test-concurrency=4 test-b1-*.mjs",
+  "testAssertionsChanged": false,
+  "testsExcluded": false,
+  "internalConcurrentWorkerSchedulesChanged": false,
+  "expectedFailureWorkaround": false,
+  "note": "Bound test-file concurrency to reduce unrelated scheduler-pressure sensitivity; all internal multi-worker schedules and assertions remain enabled. Full source remains frozen."
+}

@@ -1,0 +1,5 @@
+{"message":"telegram delivery failed","eventId":"trade:30m:retry:buy:new_signal","signalId":"30m:retry:buy","event":"new_signal","attempts":1,"status":503,"error":"telegram_api_error"}
+{"message":"gold news refresh failed","error":"GDELT 503"}
+{"message":"signal telemetry recording failed","error":"D1 telemetry unavailable"}
+{"message":"production performance recording failed","signalId":"5m:storage-failure","event":"created","error":"D1 unavailable"}
+news intelligence tests passed

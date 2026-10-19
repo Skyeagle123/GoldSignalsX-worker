@@ -3,6 +3,7 @@ import {need,hash,serialize,parseEvidence,LIMITS,bytes} from './measurement-inde
 import {assertion,jobFence,clearAssertions,SQL_CLOCK} from './measurement-d1-adapter.js';
 import {readRecord} from './measurement-independent-store.js';
 import {validateMeasurementWire} from './measurement-consumer.js';
+import {CONTINUITY_VERSION} from './measurement-processing-fold.js';
 const pending=reason=>({status:'PENDING',dependencyState:'DEPENDENCY_PENDING',reason});
 function selectedBinding(context,b){
  const identity=[b.evaluation_id,b.digest,b.signal_id,b.first_event,b.cohort,b.cycle_key];
@@ -119,7 +120,7 @@ export async function marketPrefixCheckpoint(previous,samples,{identity,boundary
 export async function completeEvaluationObligation(db,resolution,lease,{now,hook=null}={}){
  need(resolution.role==='OFFICIAL_EVALUATION'&&lease.id==='projection:'+resolution.binding.evaluation_id&&resolution.subjectId!==resolution.binding.evaluation_id,'pa_processing_lease_scope');
  const row=await db.first('SELECT * FROM pa_processing WHERE scope_id=?',resolution.subjectId);if(!row)return pending('canonical_processing_pending');
- const p=parseEvidence(row.payload),a=p.processingAuthority;if(p.version!=='measurement-result-samples-v2'||p.scanProgress?.version!=='pa-sample-selection-v2'||p.subjectId!==resolution.subjectId||p.evaluationId!==resolution.binding.evaluation_id||p.decisionIdentity!==resolution.record.id||!p.completeForCapturedSnapshot||!a||a.version!=='pa-processing-binding-v1'||a.context.wire!==resolution.context.wire||a.decisionDigest!==resolution.record.digest||a.creation?.id!==resolution.creation.id||a.creation?.digest!==resolution.creation.digest)return pending('canonical_processing_stale');
+ const p=parseEvidence(row.payload),a=p.processingAuthority;if(p.folded?.state?.continuityVersion!==CONTINUITY_VERSION||p.scanProgress?.state?.fold?.continuityVersion!==CONTINUITY_VERSION||p.version!=='measurement-result-samples-v2'||p.scanProgress?.version!=='pa-sample-selection-v2'||p.subjectId!==resolution.subjectId||p.evaluationId!==resolution.binding.evaluation_id||p.decisionIdentity!==resolution.record.id||!p.completeForCapturedSnapshot||!a||a.version!=='pa-processing-binding-v1'||a.context.wire!==resolution.context.wire||a.decisionDigest!==resolution.record.digest||a.creation?.id!==resolution.creation.id||a.creation?.digest!==resolution.creation.digest)return pending('canonical_processing_stale');
  const resultId='result:'+await hash([resolution.subjectId,row.revision,p]),result=await db.first('SELECT id,digest FROM pa_records WHERE id=? AND ready=1',resultId);if(!result)return pending('canonical_result_unavailable');
  need(result.digest===await hash(row.payload),'pa_processing_result_conflict');
  await hook?.('EVALUATION_COMPLETION_PREPARED',{resolution,resultId});
@@ -130,9 +131,11 @@ export async function completeEvaluationObligation(db,resolution,lease,{now,hook
 }
 // A legacy result stays historical evidence. Only its processing obligation is
 // requeued; no old cursor/fold is credited to the sample-selection algorithm.
+// This also covers pre-continuity sample folds that may have lost entry coverage.
 export async function requeueLegacyCanonicalProcessing(db,resolution,lease,{now}={}){
  need(resolution.role==='OFFICIAL_EVALUATION'&&lease.id==='projection:'+resolution.binding.evaluation_id,'pa_processing_lease_scope');
- const row=await db.first('SELECT payload FROM pa_processing WHERE scope_id=?',resolution.subjectId);if(!row||parseEvidence(row.payload).version!=='measurement-result-v1')return;
+ const row=await db.first('SELECT payload FROM pa_processing WHERE scope_id=?',resolution.subjectId);if(!row)return;
+ const p=parseEvidence(row.payload);if(p.version!=='measurement-result-v1'&&!(p.version==='measurement-result-samples-v2'&&p.folded?.state?.continuityVersion!==CONTINUITY_VERSION))return;
  await db.batch([jobFence(db,lease,now),processingContextFence(db,resolution.context),assertion(db,'EXISTS(SELECT 1 FROM pa_processing WHERE scope_id=? AND payload=?)',resolution.subjectId,row.payload),
   db.statement("UPDATE pa_jobs SET state='PENDING',next_at=MIN(next_at,?) WHERE id=? AND class='processing' AND scope_id=? AND state='DONE' AND owner IS NULL AND lease_until=0",[now,'projection:'+resolution.subjectId,resolution.subjectId]),clearAssertions(db)]);
 }

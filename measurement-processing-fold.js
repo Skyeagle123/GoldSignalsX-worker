@@ -1,16 +1,20 @@
 // Versioned pagination adapter. Occurrence comparisons retain the accepted
 // interval/sequence reducer; traversal keys never establish a barrier winner.
 import {need,hash} from './measurement-independent-contract.js';
+import {sampleDigest} from './measurement-market-store.js';
 import {mergeIntervals,covers,emptyQuality} from './quality-measurement.js';
 import {compareOccurrence,reduceOutcome,eventInterval} from './forward-validation.js';
 import {capturedRecord,capturedRecordById,validatedCapturedRecord,freshEnumeration,sampleSelectionKey,compareSampleKeys} from './measurement-processing-samples.js';
 
+export const CONTINUITY_VERSION='pa-continuity-witness-v1';
 const types=['TP1','TP2','SL'];
 const touch=(subject,type,price)=>Number.isFinite(subject[type.toLowerCase()])&&(subject.side==='sell'?(type==='SL'?price>=subject.sl:price<=subject[type.toLowerCase()]):(type==='SL'?price<=subject.sl:price>=subject[type.toLowerCase()]));
 export function sampleObservations(subject,s,end){
  const v=s.value;if(s.type==='TICK'){
-  const m=v.measurement;if(m.provider!=='mt5'||v.ts<subject.createdAt||v.ts>end)return null;
-  if(!Number.isFinite(m.providerTimestamp)||Math.min(m.providerTimestamp,v.ts)<subject.createdAt||Math.max(m.providerTimestamp,v.ts)>end)return {uncertain:types.some(t=>touch(subject,t,v.price)),to:v.ts,observations:[],witnesses:[]};
+  const m=v.measurement;if(m.provider!=='mt5'||v.ts>end)return null;
+  // Continuity uses a predecessor even when its price is analytically ineligible.
+  if(v.ts<subject.createdAt)return {to:v.ts,tick:v,observations:[],witnesses:[]};
+  if(!Number.isFinite(m.providerTimestamp)||Math.min(m.providerTimestamp,v.ts)<subject.createdAt||Math.max(m.providerTimestamp,v.ts)>end)return {uncertain:types.some(t=>touch(subject,t,v.price)),to:v.ts,tick:v,observations:[],witnesses:[]};
   const witness={occurredFrom:Math.min(m.providerTimestamp,v.ts),occurredTo:Math.max(m.providerTimestamp,v.ts),observedAt:v.ts,timeBasis:'PROVIDER_TIME_TO_RECEIPT_BOUND',sourceCompleteness:'UNKNOWN',source:'mt5:received-tick',providerTimestamp:m.providerTimestamp,sessionId:m.sessionId,sequence:m.sequence,sequenceScope:m.sessionId?'mt5-session-sequence':null,priceBasis:m.priceBasis??null,orderingQuality:Number.isSafeInteger(m.sequence)&&m.sessionId?'EXACT_SEQUENCE':'UNKNOWN'};
   return {to:v.ts,tick:v,observations:[{at:v.ts,price:v.price,source:witness.source,occurredFrom:witness.occurredFrom,occurredTo:witness.occurredTo,sessionId:m.sessionId,providerTimestamp:m.providerTimestamp,sequence:m.sequence}],witnesses:types.filter(t=>touch(subject,t,v.price)).map(type=>({...witness,type,price:v.price}))};
  }
@@ -18,15 +22,15 @@ export function sampleObservations(subject,s,end){
  const witness={occurredFrom:v.t,occurredTo:v.t+60000,source:'mt5:closed-1m-bar',priceBasis:'canonical-bar-extrema',orderingQuality:'INTERVAL',sessionId:v.sessionId??null,sequence:null};
  return {to:v.t+60000,interval:{from:v.t,to:v.t+60000},observations:[v.h,v.l].map(price=>({at:v.t+60000,price,source:witness.source,occurredFrom:v.t,occurredTo:v.t+60000})),witnesses:types.flatMap(type=>{const price=subject.side==='sell'?(type==='SL'?v.h:v.l):(type==='SL'?v.l:v.h);return touch(subject,type,price)?[{...witness,type,price}]:[];})};
 }
-export function emptySampleFold(subject){return {subjectId:subject.id,processedThrough:subject.createdAt,covered:[],coverageOverflow:false,boundaryUnknown:false,quality:emptyQuality(subject),global:{mfe:null,mae:null},lastTick:null,minimum:{},minimumEnd:{},counts:{TP1:0,TP2:0,SL:0},outcome:null,barriers:{},gaps:[]};}
+export function emptySampleFold(subject){return {continuityVersion:CONTINUITY_VERSION,subjectId:subject.id,processedThrough:subject.createdAt,covered:[],coverageOverflow:false,boundaryUnknown:false,quality:emptyQuality(subject),global:{mfe:null,mae:null},lastTick:null,minimum:{},minimumEnd:{},counts:{TP1:0,TP2:0,SL:0},outcome:null,barriers:{},gaps:[]};}
 function addCoverage(fold,interval){const rows=mergeIntervals([...fold.covered,interval]);if(rows.length>32)fold.coverageOverflow=true;fold.covered=rows.slice(-32);}
 function extrema(subject,target,o){const move=subject.side==='sell'?subject.entry-o.price:o.price-subject.entry,f=Math.max(0,move),a=Math.max(0,-move);if(target.mfe===null||f>target.mfe){target.mfe=f;target.mfeWitness=o;}if(target.mae===null||a>target.mae){target.mae=a;target.maeWitness=o;}}
 export async function foldSelectedSample(subject,fold,s,key,{asOf,availableAt}){
  const end=Math.min(subject.closedAt??asOf,asOf),part=sampleObservations(subject,s,end);if(!part)return;
  fold.processedThrough=Math.max(fold.processedThrough,part.to);if(part.uncertain)fold.boundaryUnknown=true;
  if(part.tick){const v=part.tick,m=v.measurement,p=fold.lastTick;
-  if(p&&p.measurement.sessionId===m.sessionId&&m.sequence===p.measurement.sequence+1&&v.ts>=p.ts&&v.ts-p.ts<=20000&&m.providerTimestamp>=p.measurement.providerTimestamp&&m.providerTimestamp-p.measurement.providerTimestamp<=20000)addCoverage(fold,{from:Math.max(subject.createdAt,p.ts),to:v.ts});
-  fold.lastTick={ts:v.ts,measurement:{sessionId:m.sessionId,sequence:m.sequence,providerTimestamp:m.providerTimestamp}};
+  if(v.ts>=subject.createdAt&&p&&p.source===m.provider&&p.measurement.sessionId&&p.measurement.sessionId===m.sessionId&&Number.isSafeInteger(p.measurement.sequence)&&m.sequence===p.measurement.sequence+1&&v.ts>=p.ts&&v.ts-p.ts<=20000&&Number.isFinite(p.measurement.providerTimestamp)&&Number.isFinite(m.providerTimestamp)&&m.providerTimestamp>=p.measurement.providerTimestamp&&m.providerTimestamp-p.measurement.providerTimestamp<=20000)addCoverage(fold,{from:Math.max(subject.createdAt,p.ts),to:v.ts});
+  fold.lastTick={id:s.id,digest:await sampleDigest(s),source:m.provider,occurredAt:s.occurredAt,observedAt:s.observedAt,availableAt,key,ts:v.ts,measurement:{sessionId:m.sessionId,sequence:m.sequence,providerTimestamp:m.providerTimestamp}};
  }
  if(part.interval)addCoverage(fold,part.interval);
  const seen=new Set();for(const o of part.observations){const id=o.at+':'+o.price;if(seen.has(id))continue;seen.add(id);extrema(subject,fold.global,o);for(const w of Object.values(fold.quality.windows)){if(o.at<w.from||o.at>Math.min(w.to,end))continue;extrema(subject,w,o);w.lastObservationAt=o.at;w.observedCount++;}}

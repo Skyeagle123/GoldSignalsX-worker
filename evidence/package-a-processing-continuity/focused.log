@@ -1,0 +1,34 @@
+{"continuityControl":{"accepted":{"directionalOutcome":"SUCCESS","extendedOutcome":"UNRESOLVED","terminalLifecycleOutcome":"ACTIVE","reason":"TP1_BEFORE_SL","outcomeReducerVersion":"tp1-first-v1","evidenceAsOf":1790953801000,"firstDirectionalWitness":{"eventId":"ordered-official:barrier:TP1:mt5:received-tick","eventType":"TP1","from":1790953801000,"to":1790953801000},"timeToTp1":{"minMs":1000,"maxMs":1000},"timeToSl":null,"coverage":"COMPLETE"},"candidate":{"directionalOutcome":"SUCCESS","extendedOutcome":"UNRESOLVED","terminalLifecycleOutcome":"ACTIVE","reason":"TP1_BEFORE_SL","outcomeReducerVersion":"tp1-first-v1","evidenceAsOf":1790953801000,"firstDirectionalWitness":{"eventId":"ordered-official:sample-barrier:tick:524f30e9bd95bedd4e5853667e6774e7b4df92c9901ae50a0955e7907f2aee07:TP1","eventType":"TP1","from":1790953801000,"to":1790953801000},"timeToTp1":{"minMs":1000,"maxMs":1000},"timeToSl":null,"coverage":"COMPLETE"},"covered":[{"from":1790953800000,"to":1790953801000}]}}
+✔ Continuity: exact Astra entry-straddling case preserves COMPLETE coverage and TP1 SUCCESS (57.426415ms)
+✔ Continuity: extreme pre-entry price 10000 contributes no analytical price or barrier (44.057343ms)
+✔ Continuity: extreme pre-entry price 1 contributes no analytical price or barrier (41.298496ms)
+✔ Continuity: partition invariance group=2 page=64 decode=8 reverse=false (42.25929ms)
+✔ Continuity: partition invariance group=1 page=64 decode=8 reverse=true (44.292706ms)
+✔ Continuity: partition invariance group=1 page=1 decode=1 reverse=false (48.591236ms)
+✔ Continuity: partition invariance group=2 page=1 decode=1 reverse=true (46.949629ms)
+✔ Continuity: predecessor identity survives serialized selection/invocation boundary without its price (51.466958ms)
+✔ Continuity: only one compact authenticated predecessor retained for a long pre-entry prefix (87.063214ms)
+✔ Continuity: unrelated session cannot bridge entry coverage (43.870492ms)
+✔ Continuity: unrelated source cannot bridge entry coverage (42.716958ms)
+✔ Continuity: invalid cadence relationship remains insufficient (38.120369ms)
+✔ Continuity: invalid sequence relationship remains insufficient (42.939498ms)
+✔ Continuity: invalid provider relationship remains insufficient (39.00515ms)
+✔ Continuity: exact-entry equal-time sequence follows accepted ordering without pre-entry price (72.924385ms)
+✔ Continuity: bar/tick interval at -30000 preserves accepted bar eligibility and ambiguity (49.686338ms)
+✔ Continuity: bar/tick interval at 0 preserves accepted bar eligibility and ambiguity (61.326927ms)
+✔ Continuity: actual scheduled recovery resumes durable predecessor with fresh adapter and separate evaluation completion (1390.981954ms)
+✔ Continuity: crash/response loss before commit preserves exactly-once predecessor recovery (1128.044875ms)
+✔ Continuity: crash/response loss after commit preserves exactly-once predecessor recovery (1008.287874ms)
+✔ Continuity: predecessor archived across hot/cold boundary preserves exact sample identity (375.877641ms)
+✔ Continuity: successor archived across hot/cold boundary preserves exact sample identity (373.424949ms)
+✔ Continuity: old sample checkpoint restarts instead of reinterpreting its missing witness (2.218384ms)
+✔ Continuity: pre-fix canonical result cannot acknowledge evaluation under the current witness contract (1065.815912ms)
+✔ Continuity: tampered persisted predecessor cannot become coverage authority (906.56635ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7231.95326
