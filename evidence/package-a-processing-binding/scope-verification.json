@@ -1,0 +1,24 @@
+{
+  "baseline": "687ee3d5bfb4355bc26b50762b73f7d984ab5cef",
+  "baselineTrackedFiles": 225,
+  "modifiedExistingFiles": [
+    ".github/workflows/test.yml",
+    "measurement-corrections.js",
+    "measurement-independent-store.js",
+    "measurement-recovery.js"
+  ],
+  "unchangedBaselineFiles": 221,
+  "allOriginalTestsUnchanged": true,
+  "migrations0001Through0012": "BYTE_IDENTICAL",
+  "evictionLifecycleReportingRestoreTradingM1M2M3": "BYTE_IDENTICAL",
+  "preservedWorktrees": {
+    "/workspace/scratch/c6f879705017/GoldSignalsX-sample-alias-reconciliation": {
+      "files": 227,
+      "byteIdentity": true
+    },
+    "/workspace/scratch/c6f879705017/package-a-publication-recovery/GoldSignalsX-Package-A": {
+      "files": 258,
+      "byteIdentity": true
+    }
+  }
+}

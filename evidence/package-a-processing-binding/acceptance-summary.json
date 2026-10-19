@@ -1,0 +1,85 @@
+{
+  "baselineSha": "687ee3d5bfb4355bc26b50762b73f7d984ab5cef",
+  "baselineTree": "3e2ba4ffe4eeff30416243e2bbffbe25881bd40e",
+  "branch": "phase/b1-package-a-processing-binding",
+  "finding": "PA-SAMPLE-ALIAS-EXEC-01",
+  "acceptedRuntimeRegression": {
+    "tests": 811,
+    "pass": 811,
+    "fail": 0,
+    "skipped": 0
+  },
+  "fullInvocation": {
+    "command": "node --test test-b1-*.mjs",
+    "tests": 869,
+    "pass": 869,
+    "fail": 0,
+    "skipped": 0,
+    "note": "Includes 58 focused regressions. Two additional restart/backlog regressions were then added and covered by the final complete focused run; no subsequent runtime changes."
+  },
+  "finalFocusedInvocation": {
+    "command": "node --test test-b1-package-a-processing-binding.mjs",
+    "tests": 60,
+    "pass": 60,
+    "fail": 0,
+    "skipped": 0
+  },
+  "uniqueValidatedTests": 871,
+  "combinedDraftIntegration": {
+    "tests": 1,
+    "pass": 1,
+    "location": "DISPOSABLE_COPY_ONLY",
+    "candidateIncludesSampleAliasDraft": false
+  },
+  "genuineProducer": {
+    "eventsCommitted": 14,
+    "censusIdentities": 7,
+    "officialEvaluation": "native-alias-schedule:1:3",
+    "officialSignal": "native-alias-schedule:1:30m:buy",
+    "evaluationLifecycle": null,
+    "canonicalSubject": "SIGNAL",
+    "evaluationObligation": "FRESHLY_FENCED_DONE"
+  },
+  "migrationAdded": null,
+  "schema": "UNCHANGED_11_12_COMPATIBILITY",
+  "M1M2M3": "PASS",
+  "EngineDifferential": "PASS",
+  "FullCycleParity": "PASS",
+  "OfficialPersistence": "PASS",
+  "StoredRecordParity": "PASS",
+  "timing": {
+    "baseline": 6,
+    "producerOff": 6,
+    "producerOn": 6
+  },
+  "News": "PASS",
+  "Reliability": "PASS_NORMALLY",
+  "RiskBudget": "PASS",
+  "RiskSizing": "PASS",
+  "SignalsSecurity": "PASS",
+  "syntaxFiles": 116,
+  "diffCheck": "PASS",
+  "cloudAccess": false,
+  "deployment": false,
+  "productionAccess": false,
+  "packageC": false,
+  "push": "NOT_PERFORMED",
+  "remainingFindings": [],
+  "validationNotes": [
+    "Intermediate development failures were corrected without modifying accepted tests, reducers or eviction fences.",
+    "Saved diagnostic/full development runs are not reported as final passing runs.",
+    "No direct test SQL marks processing jobs DONE; final focused suite enforces this."
+  ],
+  "evidenceSha256": {
+    "checks.json": "6baf9dc202f4c0ce4a7152b2cbc6b2da0d36af1fbd139b812989abe57bab2a30",
+    "full-acceptance.log": "ab7b235345858e38cfc32d23e3296f8216faa51cae0e07e72983397c86378b6c",
+    "focused.log": "ea67431899fe8a6a7be18205729fd1edea94e93b339ce40a563139b1d2dec2e0",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "sample-alias-integration.log": "faba424ed53dbd2fc3a4e7afb19c690444699839724e25a5ba6ae7389db7f70c",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b",
+    "scope-verification.json": "324ad3bbdfde2c1cb01dd162e37b86e2252c626ded092240b0b3af3247bbe163",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae"
+  }
+}
