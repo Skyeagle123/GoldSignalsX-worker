@@ -1,0 +1,163 @@
+✖ Ordering: exact 2400-tick / 16-record old control 5742 and bounded sample result 5900 (116496.840607ms)
+✖ Ordering: TP1 before SL follows sequence despite reversed packet enumeration (81.788263ms)
+✔ Ordering: SL before TP1 follows sequence despite reversed packet enumeration (78.249078ms)
+✔ Ordering: TP2 before SL follows sequence despite reversed packet enumeration (83.52575ms)
+✖ Ordering: fixed sample set is partition invariant at selection page 1 (48.732631ms)
+✖ Ordering: fixed sample set is partition invariant at selection page 7 (47.675482ms)
+✖ Ordering: fixed sample set is partition invariant at selection page 32 (48.03355ms)
+✖ Ordering: fixed sample set is partition invariant at selection page 64 (53.479627ms)
+✔ Ordering: equal-time sequence group 33 spans pages without loss or early finalization (117.515861ms)
+✔ Ordering: equal-time sequence group 65 spans pages without loss or early finalization (220.198285ms)
+✔ Ordering: equal-time sequence group 129 spans pages without loss or early finalization (615.727152ms)
+✖ Ordering: duplicated semantic samples in differently scoped overlapping exports reduce once (165.210071ms)
+✔ Ordering: same semantic identity with contradictory price fails closed (41.1883ms)
+✔ Ordering: equal timestamp across sessions remains ambiguous (46.410812ms)
+✖ Ordering: receipt order does not prove provider-interval first hit (57.688653ms)
+✔ Ordering: mixed closed bar and ticks preserve OHLC ambiguity (95.170794ms)
+✖ Ordering: every quality window sees extrema before finalization (404.460788ms)
+✔ Ordering: gapped/truncated evidence cannot manufacture complete coverage (40.969352ms)
+✔ Ordering: canonical traversal key retains source/session sequence and semantic ID separately from occurrence (1.574467ms)
+✔ Ordering: selection-size bounds reject invalid capacities (0.273591ms)
+✖ Ordering: late earlier sample replays a finite snapshot and versions results (1603.86222ms)
+✖ Ordering: deep backfill replays a finite snapshot and versions results (1165.031438ms)
+✔ Ordering: old record-order checkpoint is never interpreted as sample-selection state (991.78653ms)
+✔ Ordering: crash at SAMPLE_RECORD_ENUMERATED restarts from durable state without double reduction (1559.454156ms)
+✔ Ordering: crash at SAMPLE_SELECTION_COMPLETE restarts from durable state without double reduction (1545.255553ms)
+✔ Ordering: crash at SAMPLE_BEFORE_FOLD restarts from durable state without double reduction (1572.553376ms)
+✔ Ordering: crash at OUTCOME_PREPARED restarts from durable state without double reduction (1470.963704ms)
+✔ Ordering: fresh final completion rejects append after scan (738.58738ms)
+✔ Ordering: fresh final completion rejects correction after scan (820.22599ms)
+✔ Ordering: fresh final completion rejects epoch after scan (796.262396ms)
+✔ Ordering: fresh final completion rejects lease after scan (787.268973ms)
+✔ Ordering: fresh final completion rejects lifecycle after scan (785.496979ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 21
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 132722.098044
+
+✖ failing tests:
+
+test at test-b1-package-a-processing-ordering.mjs:15:1
+✖ Ordering: exact 2400-tick / 16-record old control 5742 and bounded sample result 5900 (116496.840607ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:103:18)
+      at orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:36)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:19:49)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test-b1-package-a-processing-ordering.mjs:27:3
+✖ Ordering: TP1 before SL follows sequence despite reversed packet enumeration (81.788263ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:27:100)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:29:31
+✖ Ordering: fixed sample set is partition invariant at selection page 1 (48.732631ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:30:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:29:31
+✖ Ordering: fixed sample set is partition invariant at selection page 7 (47.675482ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:30:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:29:31
+✖ Ordering: fixed sample set is partition invariant at selection page 32 (48.03355ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:30:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:29:31
+✖ Ordering: fixed sample set is partition invariant at selection page 64 (53.479627ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:30:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:39:1
+✖ Ordering: duplicated semantic samples in differently scoped overlapping exports reduce once (165.210071ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:39:227)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:42:1
+✖ Ordering: receipt order does not prove provider-interval first hit (57.688653ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:110:18)
+      at async orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:30)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:42:331)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:44:1
+✖ Ordering: every quality window sees extrema before finalization (404.460788ms)
+  ReferenceError: readRecord is not defined
+      at nextWitness (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:67:144)
+      at next (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:89:22)
+      at verifySampleOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-processing-fold.js:114:18)
+      at orderedModel (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:30:36)
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:44:217)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:50:59
+✖ Ordering: late earlier sample replays a finite snapshot and versions results (1603.86222ms)
+  Error: pa_tick_provenance
+      at need (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-independent-contract.js:14:46)
+      at prepareMarketEvidence (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-market-envelope.js:7:144)
+      at marketPackets (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:13:56)
+      at x.add (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:49:196)
+      at TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:50:301)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-ordering.mjs:50:59
+✖ Ordering: deep backfill replays a finite snapshot and versions results (1165.031438ms)
+  Error: pa_tick_provenance
+      at need (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-independent-contract.js:14:46)
+      at prepareMarketEvidence (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-market-envelope.js:7:144)
+      at marketPackets (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-processing-ordering.mjs:13:56)
+      at x.add (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:49:196)
+      at TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-ordering.mjs:50:301)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)

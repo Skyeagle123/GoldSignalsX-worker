@@ -1,0 +1,2936 @@
+[
+  {
+    "archiveControl": {
+      "records": 59,
+      "market": 12,
+      "objects": 81,
+      "bytes": 2225978
+    }
+  },
+  {
+    "archiveOuterTrace": [
+      {
+        "status": "PENDING",
+        "reason": "pa_processing_budget_pending",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 16,
+        "archiveOperations": 171,
+        "archiveBytes": 1355756,
+        "catalogueReads": 0,
+        "decodedBytes": 880505,
+        "sqlStatements": 26,
+        "reservedSqlRemaining": 874,
+        "reservedArchiveRemaining": 853,
+        "phase": "ARCHIVE_VERIFY",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 883,
+            "archiveRemaining": 857,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 880,
+            "archiveRemaining": 855,
+            "phase": "ARCHIVE_VERIFY"
+          }
+        ]
+      },
+      {
+        "status": "PENDING",
+        "reason": "canonical_processing_pending",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 57,
+        "archiveOperations": 261,
+        "archiveBytes": 1161970,
+        "catalogueReads": 3,
+        "decodedBytes": 895160,
+        "sqlStatements": 203,
+        "reservedSqlRemaining": 697,
+        "reservedArchiveRemaining": 763,
+        "phase": "SAMPLE_SELECT",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 888,
+            "archiveRemaining": 968,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 880,
+            "archiveRemaining": 963,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 847,
+            "archiveRemaining": 897,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 812,
+            "archiveRemaining": 831,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 779,
+            "archiveRemaining": 765,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 741,
+            "archiveRemaining": 763,
+            "phase": "SAMPLE_SELECT"
+          }
+        ]
+      },
+      {
+        "status": "PENDING",
+        "reason": "canonical_processing_pending",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 17,
+        "archiveOperations": 277,
+        "archiveBytes": 308172,
+        "catalogueReads": 3,
+        "decodedBytes": 272901,
+        "sqlStatements": 229,
+        "reservedSqlRemaining": 671,
+        "reservedArchiveRemaining": 747,
+        "phase": "SAMPLE_SELECT",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 875,
+            "archiveRemaining": 947,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 842,
+            "archiveRemaining": 881,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 807,
+            "archiveRemaining": 815,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 774,
+            "archiveRemaining": 749,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 715,
+            "archiveRemaining": 747,
+            "phase": "SAMPLE_SELECT"
+          }
+        ]
+      },
+      {
+        "status": "PENDING",
+        "reason": "canonical_processing_pending",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 17,
+        "archiveOperations": 311,
+        "archiveBytes": 353063,
+        "catalogueReads": 29,
+        "decodedBytes": 272901,
+        "sqlStatements": 190,
+        "reservedSqlRemaining": 710,
+        "reservedArchiveRemaining": 713,
+        "phase": "SAMPLE_SELECT",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 875,
+            "archiveRemaining": 947,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 842,
+            "archiveRemaining": 881,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 807,
+            "archiveRemaining": 815,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 774,
+            "archiveRemaining": 749,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 754,
+            "archiveRemaining": 713,
+            "phase": "SAMPLE_SELECT"
+          }
+        ]
+      },
+      {
+        "status": "PENDING",
+        "reason": "canonical_processing_pending",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 17,
+        "archiveOperations": 303,
+        "archiveBytes": 365354,
+        "catalogueReads": 25,
+        "decodedBytes": 272788,
+        "sqlStatements": 217,
+        "reservedSqlRemaining": 683,
+        "reservedArchiveRemaining": 721,
+        "phase": "SAMPLE_FOLD",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 875,
+            "archiveRemaining": 947,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 842,
+            "archiveRemaining": 881,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 807,
+            "archiveRemaining": 815,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 774,
+            "archiveRemaining": 749,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 735,
+            "archiveRemaining": 721,
+            "phase": "SAMPLE_FOLD"
+          }
+        ]
+      },
+      {
+        "status": "COMPLETED_AT_REVISION",
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 8,
+        "recordDecodes": 17,
+        "archiveOperations": 277,
+        "archiveBytes": 369612,
+        "catalogueReads": 3,
+        "decodedBytes": 272901,
+        "sqlStatements": 253,
+        "reservedSqlRemaining": 647,
+        "reservedArchiveRemaining": 747,
+        "phase": "SAMPLE_DONE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 875,
+            "archiveRemaining": 947,
+            "phase": "ARCHIVE_VERIFY"
+          },
+          {
+            "sqlRemaining": 842,
+            "archiveRemaining": 881,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 807,
+            "archiveRemaining": 815,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 774,
+            "archiveRemaining": 749,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 715,
+            "archiveRemaining": 747,
+            "phase": "SAMPLE_DONE"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "nonmarketTrace": [
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 66,
+        "archiveBytes": 1099,
+        "catalogueReads": 0,
+        "decodedBytes": 157970,
+        "sqlStatements": 528,
+        "reservedSqlRemaining": 372,
+        "reservedArchiveRemaining": 958,
+        "phase": "LOOKUP_CREATIONS",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 378,
+            "archiveRemaining": 960,
+            "phase": "LOOKUP_CREATIONS"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 69,
+        "archiveBytes": 38903,
+        "catalogueReads": 0,
+        "decodedBytes": 215632,
+        "sqlStatements": 547,
+        "reservedSqlRemaining": 353,
+        "reservedArchiveRemaining": 955,
+        "phase": "LOOKUP_LIFECYCLE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 865,
+            "archiveRemaining": 1023,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 359,
+            "archiveRemaining": 957,
+            "phase": "LOOKUP_LIFECYCLE"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 70,
+        "archiveBytes": 115500,
+        "catalogueReads": 0,
+        "decodedBytes": 215636,
+        "sqlStatements": 571,
+        "reservedSqlRemaining": 329,
+        "reservedArchiveRemaining": 954,
+        "phase": "LOOKUP_CREATIONS",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 822,
+            "archiveRemaining": 1022,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 338,
+            "archiveRemaining": 956,
+            "phase": "LOOKUP_CREATIONS"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 71,
+        "archiveBytes": 113981,
+        "catalogueReads": 0,
+        "decodedBytes": 273290,
+        "sqlStatements": 582,
+        "reservedSqlRemaining": 318,
+        "reservedArchiveRemaining": 953,
+        "phase": "LOOKUP_LIFECYCLE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 777,
+            "archiveRemaining": 1021,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 327,
+            "archiveRemaining": 955,
+            "phase": "LOOKUP_LIFECYCLE"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 29,
+        "archiveOperations": 6,
+        "archiveBytes": 110419,
+        "catalogueReads": 0,
+        "decodedBytes": 166532,
+        "sqlStatements": 245,
+        "reservedSqlRemaining": 655,
+        "reservedArchiveRemaining": 1018,
+        "phase": "SAMPLE_DONE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 726,
+            "archiveRemaining": 1020,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 707,
+            "archiveRemaining": 1018,
+            "phase": "SAMPLE_DONE"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "nonmarketTrace": [
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 66,
+        "archiveBytes": 815,
+        "catalogueReads": 0,
+        "decodedBytes": 128877,
+        "sqlStatements": 528,
+        "reservedSqlRemaining": 372,
+        "reservedArchiveRemaining": 958,
+        "phase": "LOOKUP_CREATIONS",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 378,
+            "archiveRemaining": 960,
+            "phase": "LOOKUP_CREATIONS"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 69,
+        "archiveBytes": 24236,
+        "catalogueReads": 0,
+        "decodedBytes": 215748,
+        "sqlStatements": 547,
+        "reservedSqlRemaining": 353,
+        "reservedArchiveRemaining": 955,
+        "phase": "LOOKUP_LIFECYCLE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 665,
+            "archiveRemaining": 1023,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 359,
+            "archiveRemaining": 957,
+            "phase": "LOOKUP_LIFECYCLE"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 70,
+        "archiveBytes": 129333,
+        "catalogueReads": 0,
+        "decodedBytes": 215776,
+        "sqlStatements": 571,
+        "reservedSqlRemaining": 329,
+        "reservedArchiveRemaining": 954,
+        "phase": "LOOKUP_CREATIONS",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 422,
+            "archiveRemaining": 1022,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 338,
+            "archiveRemaining": 956,
+            "phase": "LOOKUP_CREATIONS"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 5,
+        "archiveBytes": 55823,
+        "catalogueReads": 0,
+        "decodedBytes": 215724,
+        "sqlStatements": 563,
+        "reservedSqlRemaining": 337,
+        "reservedArchiveRemaining": 1019,
+        "phase": "LOOKUP_CREATIONS",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 346,
+            "archiveRemaining": 1021,
+            "phase": "LOOKUP_CREATIONS"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 128,
+        "archiveOperations": 71,
+        "archiveBytes": 135323,
+        "catalogueReads": 0,
+        "decodedBytes": 244221,
+        "sqlStatements": 582,
+        "reservedSqlRemaining": 318,
+        "reservedArchiveRemaining": 953,
+        "phase": "LOOKUP_LIFECYCLE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 677,
+            "archiveRemaining": 1021,
+            "phase": "LOOKUP_CREATIONS"
+          },
+          {
+            "sqlRemaining": 327,
+            "archiveRemaining": 955,
+            "phase": "LOOKUP_LIFECYCLE"
+          }
+        ]
+      },
+      {
+        "version": "pa-processing-budget-v1",
+        "marketDecodes": 0,
+        "recordDecodes": 104,
+        "archiveOperations": 6,
+        "archiveBytes": 131625,
+        "catalogueReads": 0,
+        "decodedBytes": 254606,
+        "sqlStatements": 545,
+        "reservedSqlRemaining": 355,
+        "reservedArchiveRemaining": 1018,
+        "phase": "SAMPLE_DONE",
+        "durableProgressCommitted": true,
+        "checkpoints": [
+          {
+            "sqlRemaining": 426,
+            "archiveRemaining": 1020,
+            "phase": "LOOKUP_LIFECYCLE"
+          },
+          {
+            "sqlRemaining": 407,
+            "archiveRemaining": 1018,
+            "phase": "SAMPLE_DONE"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "archive_crash",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 167,
+      "archiveBytes": 1354265,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 857,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 57,
+      "archiveOperations": 261,
+      "archiveBytes": 1161822,
+      "catalogueReads": 3,
+      "decodedBytes": 895048,
+      "sqlStatements": 203,
+      "reservedSqlRemaining": 697,
+      "reservedArchiveRemaining": 763,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 963,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 847,
+          "archiveRemaining": 897,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 812,
+          "archiveRemaining": 831,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 779,
+          "archiveRemaining": 765,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 741,
+          "archiveRemaining": 763,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 308172,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 229,
+      "reservedSqlRemaining": 671,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 311,
+      "archiveBytes": 352950,
+      "catalogueReads": 29,
+      "decodedBytes": 272901,
+      "sqlStatements": 190,
+      "reservedSqlRemaining": 710,
+      "reservedArchiveRemaining": 713,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 754,
+          "archiveRemaining": 713,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 303,
+      "archiveBytes": 365241,
+      "catalogueReads": 25,
+      "decodedBytes": 272788,
+      "sqlStatements": 217,
+      "reservedSqlRemaining": 683,
+      "reservedArchiveRemaining": 721,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 721,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 369612,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 253,
+      "reservedSqlRemaining": 647,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "archive_crash",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 169,
+      "archiveBytes": 1354802,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 855,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 58,
+      "archiveOperations": 325,
+      "archiveBytes": 1153571,
+      "catalogueReads": 4,
+      "decodedBytes": 925020,
+      "sqlStatements": 208,
+      "reservedSqlRemaining": 692,
+      "reservedArchiveRemaining": 699,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 905,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 899,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 833,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 767,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 701,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 736,
+          "archiveRemaining": 699,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 278,
+      "archiveBytes": 300486,
+      "catalogueReads": 4,
+      "decodedBytes": 272901,
+      "sqlStatements": 229,
+      "reservedSqlRemaining": 671,
+      "reservedArchiveRemaining": 746,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 946,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 880,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 814,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 748,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 746,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 312,
+      "archiveBytes": 345264,
+      "catalogueReads": 30,
+      "decodedBytes": 272901,
+      "sqlStatements": 190,
+      "reservedSqlRemaining": 710,
+      "reservedArchiveRemaining": 712,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 946,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 880,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 814,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 748,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 754,
+          "archiveRemaining": 712,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 304,
+      "archiveBytes": 357555,
+      "catalogueReads": 26,
+      "decodedBytes": 272788,
+      "sqlStatements": 217,
+      "reservedSqlRemaining": 683,
+      "reservedArchiveRemaining": 720,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 946,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 880,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 814,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 748,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 720,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 278,
+      "archiveBytes": 361926,
+      "catalogueReads": 4,
+      "decodedBytes": 272901,
+      "sqlStatements": 253,
+      "reservedSqlRemaining": 647,
+      "reservedArchiveRemaining": 746,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 946,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 880,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 814,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 748,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 746,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 61,
+      "archiveBytes": 1146830,
+      "catalogueReads": 3,
+      "decodedBytes": 684192,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 963,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 61,
+      "archiveBytes": 1146830,
+      "catalogueReads": 3,
+      "decodedBytes": 684192,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 963,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 61,
+      "archiveBytes": 1146682,
+      "catalogueReads": 3,
+      "decodedBytes": 684080,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 963,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 62,
+      "archiveBytes": 1139653,
+      "catalogueReads": 4,
+      "decodedBytes": 684080,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 962,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 61,
+      "archiveBytes": 1146830,
+      "catalogueReads": 3,
+      "decodedBytes": 684192,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 963,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_fence_failed",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 46,
+      "archiveOperations": 62,
+      "archiveBytes": 1139688,
+      "catalogueReads": 4,
+      "decodedBytes": 684192,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 962,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_archive_object_missing",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 3,
+      "archiveOperations": 138,
+      "archiveBytes": 259069,
+      "catalogueReads": 0,
+      "decodedBytes": 89204,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 886,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_archive_digest",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 3,
+      "archiveOperations": 138,
+      "archiveBytes": 299040,
+      "catalogueReads": 0,
+      "decodedBytes": 89204,
+      "sqlStatements": 17,
+      "reservedSqlRemaining": 883,
+      "reservedArchiveRemaining": 886,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 58,
+      "archiveOperations": 324,
+      "archiveBytes": 1165121,
+      "catalogueReads": 3,
+      "decodedBytes": 925020,
+      "sqlStatements": 208,
+      "reservedSqlRemaining": 692,
+      "reservedArchiveRemaining": 700,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 905,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 900,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 834,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 768,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 702,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 736,
+          "archiveRemaining": 700,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 214,
+      "archiveBytes": 303481,
+      "catalogueReads": 3,
+      "decodedBytes": 242817,
+      "sqlStatements": 223,
+      "reservedSqlRemaining": 677,
+      "reservedArchiveRemaining": 810,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 1010,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 847,
+          "archiveRemaining": 944,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 812,
+          "archiveRemaining": 878,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 779,
+          "archiveRemaining": 812,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 721,
+          "archiveRemaining": 810,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 304,
+      "archiveBytes": 345085,
+      "catalogueReads": 26,
+      "decodedBytes": 273013,
+      "sqlStatements": 210,
+      "reservedSqlRemaining": 690,
+      "reservedArchiveRemaining": 720,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 734,
+          "archiveRemaining": 720,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 310,
+      "archiveBytes": 374776,
+      "catalogueReads": 28,
+      "decodedBytes": 272788,
+      "sqlStatements": 189,
+      "reservedSqlRemaining": 711,
+      "reservedArchiveRemaining": 714,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 755,
+          "archiveRemaining": 714,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 297,
+      "archiveBytes": 377917,
+      "catalogueReads": 23,
+      "decodedBytes": 272788,
+      "sqlStatements": 245,
+      "reservedSqlRemaining": 655,
+      "reservedArchiveRemaining": 727,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 727,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 13,
+      "archiveOperations": 277,
+      "archiveBytes": 390092,
+      "catalogueReads": 3,
+      "decodedBytes": 270313,
+      "sqlStatements": 225,
+      "reservedSqlRemaining": 675,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 410572,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 229,
+      "reservedSqlRemaining": 671,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 311,
+      "archiveBytes": 455463,
+      "catalogueReads": 29,
+      "decodedBytes": 272901,
+      "sqlStatements": 190,
+      "reservedSqlRemaining": 710,
+      "reservedArchiveRemaining": 713,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 754,
+          "archiveRemaining": 713,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 303,
+      "archiveBytes": 467754,
+      "catalogueReads": 25,
+      "decodedBytes": 272788,
+      "sqlStatements": 217,
+      "reservedSqlRemaining": 683,
+      "reservedArchiveRemaining": 721,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 721,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 472012,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 253,
+      "reservedSqlRemaining": 647,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 15,
+      "archiveOperations": 108,
+      "archiveBytes": 1358769,
+      "catalogueReads": 0,
+      "decodedBytes": 850645,
+      "sqlStatements": 21,
+      "reservedSqlRemaining": 879,
+      "reservedArchiveRemaining": 916,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 920,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 885,
+          "archiveRemaining": 918,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 57,
+      "archiveOperations": 261,
+      "archiveBytes": 1161958,
+      "catalogueReads": 3,
+      "decodedBytes": 895048,
+      "sqlStatements": 203,
+      "reservedSqlRemaining": 697,
+      "reservedArchiveRemaining": 763,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 963,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 847,
+          "archiveRemaining": 897,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 812,
+          "archiveRemaining": 831,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 779,
+          "archiveRemaining": 765,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 741,
+          "archiveRemaining": 763,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 308172,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 229,
+      "reservedSqlRemaining": 671,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 311,
+      "archiveBytes": 352950,
+      "catalogueReads": 29,
+      "decodedBytes": 272901,
+      "sqlStatements": 190,
+      "reservedSqlRemaining": 710,
+      "reservedArchiveRemaining": 713,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 754,
+          "archiveRemaining": 713,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 303,
+      "archiveBytes": 365241,
+      "catalogueReads": 25,
+      "decodedBytes": 272788,
+      "sqlStatements": 217,
+      "reservedSqlRemaining": 683,
+      "reservedArchiveRemaining": 721,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 721,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 369612,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 253,
+      "reservedSqlRemaining": 647,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 15,
+      "archiveOperations": 108,
+      "archiveBytes": 1358096,
+      "catalogueReads": 0,
+      "decodedBytes": 850533,
+      "sqlStatements": 21,
+      "reservedSqlRemaining": 879,
+      "reservedArchiveRemaining": 916,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 920,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 885,
+          "archiveRemaining": 918,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 57,
+      "archiveOperations": 261,
+      "archiveBytes": 1162106,
+      "catalogueReads": 3,
+      "decodedBytes": 895160,
+      "sqlStatements": 203,
+      "reservedSqlRemaining": 697,
+      "reservedArchiveRemaining": 763,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 963,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 847,
+          "archiveRemaining": 897,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 812,
+          "archiveRemaining": 831,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 779,
+          "archiveRemaining": 765,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 741,
+          "archiveRemaining": 763,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 308172,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 229,
+      "reservedSqlRemaining": 671,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 311,
+      "archiveBytes": 353063,
+      "catalogueReads": 29,
+      "decodedBytes": 272901,
+      "sqlStatements": 190,
+      "reservedSqlRemaining": 710,
+      "reservedArchiveRemaining": 713,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 754,
+          "archiveRemaining": 713,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 303,
+      "archiveBytes": 365354,
+      "catalogueReads": 25,
+      "decodedBytes": 272788,
+      "sqlStatements": 217,
+      "reservedSqlRemaining": 683,
+      "reservedArchiveRemaining": 721,
+      "phase": "SAMPLE_FOLD",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 735,
+          "archiveRemaining": 721,
+          "phase": "SAMPLE_FOLD"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "COMPLETED_AT_REVISION",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 17,
+      "archiveOperations": 277,
+      "archiveBytes": 369612,
+      "catalogueReads": 3,
+      "decodedBytes": 272901,
+      "sqlStatements": 253,
+      "reservedSqlRemaining": 647,
+      "reservedArchiveRemaining": 747,
+      "phase": "SAMPLE_DONE",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 875,
+          "archiveRemaining": 947,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 842,
+          "archiveRemaining": 881,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 807,
+          "archiveRemaining": 815,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 774,
+          "archiveRemaining": 749,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 715,
+          "archiveRemaining": 747,
+          "phase": "SAMPLE_DONE"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_package_progress_integrity",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 1,
+      "archiveOperations": 11,
+      "archiveBytes": 260709,
+      "catalogueReads": 0,
+      "decodedBytes": 29260,
+      "sqlStatements": 12,
+      "reservedSqlRemaining": 888,
+      "reservedArchiveRemaining": 1013,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_package_progress_integrity",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 1,
+      "archiveOperations": 11,
+      "archiveBytes": 260649,
+      "catalogueReads": 0,
+      "decodedBytes": 29260,
+      "sqlStatements": 12,
+      "reservedSqlRemaining": 888,
+      "reservedArchiveRemaining": 1013,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355756,
+      "catalogueReads": 0,
+      "decodedBytes": 880505,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_package_progress_integrity",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 1,
+      "archiveOperations": 11,
+      "archiveBytes": 260687,
+      "catalogueReads": 0,
+      "decodedBytes": 29260,
+      "sqlStatements": 12,
+      "reservedSqlRemaining": 888,
+      "reservedArchiveRemaining": 1013,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 16,
+      "archiveOperations": 171,
+      "archiveBytes": 1355904,
+      "catalogueReads": 0,
+      "decodedBytes": 880617,
+      "sqlStatements": 26,
+      "reservedSqlRemaining": 874,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 883,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 57,
+      "archiveOperations": 261,
+      "archiveBytes": 1161822,
+      "catalogueReads": 3,
+      "decodedBytes": 895048,
+      "sqlStatements": 203,
+      "reservedSqlRemaining": 697,
+      "reservedArchiveRemaining": 763,
+      "phase": "SAMPLE_SELECT",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 888,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 880,
+          "archiveRemaining": 963,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 847,
+          "archiveRemaining": 897,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 812,
+          "archiveRemaining": 831,
+          "phase": "LOOKUP_CREATIONS"
+        },
+        {
+          "sqlRemaining": 779,
+          "archiveRemaining": 765,
+          "phase": "LOOKUP_LIFECYCLE"
+        },
+        {
+          "sqlRemaining": 741,
+          "archiveRemaining": 763,
+          "phase": "SAMPLE_SELECT"
+        }
+      ]
+    }
+  },
+  {
+    "archiveScheduledContinuing": {
+      "fronts": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        10,
+        14,
+        16,
+        20,
+        22
+      ],
+      "initial": 12,
+      "arrivals": 10,
+      "total": 22
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "PENDING",
+      "error": null,
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 8,
+      "recordDecodes": 15,
+      "archiveOperations": 171,
+      "archiveBytes": 1355398,
+      "catalogueReads": 0,
+      "decodedBytes": 850533,
+      "sqlStatements": 22,
+      "reservedSqlRemaining": 878,
+      "reservedArchiveRemaining": 853,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 887,
+          "archiveRemaining": 857,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 884,
+          "archiveRemaining": 855,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "creation_response_lost",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 4,
+      "recordDecodes": 48,
+      "archiveOperations": 129,
+      "archiveBytes": 1190907,
+      "catalogueReads": 4,
+      "decodedBytes": 743424,
+      "sqlStatements": 46,
+      "reservedSqlRemaining": 854,
+      "reservedArchiveRemaining": 895,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": true,
+      "checkpoints": [
+        {
+          "sqlRemaining": 887,
+          "archiveRemaining": 968,
+          "phase": "ARCHIVE_VERIFY"
+        },
+        {
+          "sqlRemaining": 877,
+          "archiveRemaining": 961,
+          "phase": "ARCHIVE_VERIFY"
+        }
+      ]
+    }
+  },
+  {
+    "outerBudgetTrace": {
+      "status": "REJECTED",
+      "error": "pa_archive_object_missing",
+      "version": "pa-processing-budget-v1",
+      "marketDecodes": 0,
+      "recordDecodes": 2,
+      "archiveOperations": 15,
+      "archiveBytes": 265507,
+      "catalogueReads": 3,
+      "decodedBytes": 59232,
+      "sqlStatements": 15,
+      "reservedSqlRemaining": 885,
+      "reservedArchiveRemaining": 1009,
+      "phase": "ARCHIVE_VERIFY",
+      "durableProgressCommitted": false,
+      "checkpoints": []
+    }
+  },
+  {
+    "ordering2400": {
+      "oldMfe": 5742,
+      "newMfe": 5900,
+      "passes": 285,
+      "maxDescriptors": 27,
+      "maxSelectionBytes": 16120,
+      "maxCheckpointBytes": 27169,
+      "maxDecoded": 8
+    }
+  },
+  {
+    "astra12PlusOne": [
+      0,
+      4,
+      12,
+      14,
+      16
+    ]
+  },
+  {
+    "scheduledContinuingFrontiers": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      8,
+      16,
+      24,
+      27,
+      27,
+      27,
+      27,
+      27,
+      27,
+      27,
+      27,
+      27,
+      27,
+      32,
+      40,
+      48,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54,
+      56,
+      64,
+      72,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      80,
+      82,
+      90,
+      98,
+      106,
+      107,
+      107,
+      107,
+      107,
+      107,
+      115,
+      119,
+      119,
+      119,
+      119,
+      119,
+      123,
+      131,
+      139,
+      139,
+      141,
+      146,
+      149,
+      151
+    ],
+    "arrivalsIncluded": 71
+  }
+]

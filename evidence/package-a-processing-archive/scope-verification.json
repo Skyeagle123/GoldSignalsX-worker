@@ -1,0 +1,37 @@
+{
+  "syntaxFiles": 117,
+  "syntax": "PASS",
+  "diffCheck": "PASS for runtime/tests/docs/new acceptance evidence; six original whitespace-only lines retained in two historical raw development logs",
+  "frozenSourceFiles": 162,
+  "frozenSourceUnchanged": true,
+  "parentTrackedUnchangedOutsideSixRuntimeFiles": 234,
+  "migrations": {
+    "migrations/0001_measurement_evidence.sql": "89129f667316cbf500744520d53a04017d62f6a63920a926cd8cc563913ab9b3",
+    "migrations/0002_measurement_storage_tiers.sql": "2ab7e12950427802bd25664cb1826c42ccfa16f6d31e62919000f986e04dccbf",
+    "migrations/0003_measurement_dependency_closure.sql": "84d20cdb2bcff961fbd33f69a4eca3129e815a6b5504bd649e958c489b5db83e",
+    "migrations/0004_measurement_ingress.sql": "f0ef912ee3f3763197540f94deabde3496910ae6a6c7d17bbb061037cbadf744",
+    "migrations/0005_measurement_ingress_recovery.sql": "5e0552906745229fbcd05df5733fd76988df7131aa3c907138e7339457eda4e7",
+    "migrations/0006_measurement_commit_fences.sql": "863cfced7764503ed16c97026dc7fda435e77c972638c097b0fab4c1ebf1c281",
+    "migrations/0007_independent_measurement.sql": "26506724062158f8ad7aca5bb1097ed5c33dc64b4e8cb92642b12707aa9a97fe",
+    "migrations/0008_package_a_restore_authority.sql": "b29a50608b9348e7994a6fd9887729fbc0af2aca420a8fbcb8a5b45ae242dcda",
+    "migrations/0009_package_a_archive_lineage.sql": "3f9c70ab1b1d0721a5e79318b84e11b7d4a57574702904baf2f671cd13b096ad",
+    "migrations/0010_package_a_proof_progress.sql": "9b07f88fd3759f01a3d970eb925ab2adfb3fbcc4738b024d1d15a43db01dc007",
+    "migrations/0011_package_a_incremental_references.sql": "3068ad204d6533943057de7ed4f816e5a81dd5a14fb8b27bc0b388d4fa224afe",
+    "migrations/0012_package_a_eviction_reconciliation.sql": "b09ada5706ed163f4d18dbf4a920728913fe2a58e7eb27928cb402fb9114777f"
+  },
+  "noMigrationAdded": true,
+  "evictionUnchanged": true,
+  "preservedWorktrees": [
+    {
+      "path": "/workspace/scratch/c6f879705017/GoldSignalsX-sample-alias-reconciliation",
+      "files": 227,
+      "byteIdentical": true
+    },
+    {
+      "path": "/workspace/scratch/c6f879705017/package-a-publication-recovery/GoldSignalsX-Package-A",
+      "files": 258,
+      "byteIdentical": true
+    }
+  ],
+  "historicalRawLogWhitespaceWarnings": "evidence/package-a-processing-progress-blocked/development-1.log:74: trailing whitespace.\n+  \nevidence/package-a-processing-progress-blocked/development-1.log:76: trailing whitespace.\n+  \nevidence/package-a-processing-progress-blocked/development-1.log:101: trailing whitespace.\n+  \nevidence/package-a-processing-progress-blocked/development-1.log:103: trailing whitespace.\n+  \nevidence/package-a-processing-progress-blocked/development-2.log:50: trailing whitespace.\n+  \nevidence/package-a-processing-progress-blocked/development-2.log:52: trailing whitespace.\n+  \n"
+}

@@ -21,6 +21,10 @@ export function createMeasurementD1Adapter(binding,{diagnostics=false,diagnostic
  registered.set(api,true);return api;
 }
 export function requireD1(db){need(registered.has(db),'pa_adapter_required');}
+// Processing views retain the exact prepared-statement owner and parent meter.
+// A view carries invocation-local accounting without mutating a shared adapter.
+export function processingAdapter(db,budget){requireD1(db);const guard=()=>need(budget.sqlRemaining()>0,'pa_invocation_statement_budget');const api=Object.freeze({...db,processingBudget:budget,
+ statement(sql,values){guard();return db.statement(sql,values);},first(sql,...values){guard();return db.first(sql,...values);},all(sql,...values){guard();return db.all(sql,...values);},remainingStatements:()=>budget.sqlRemaining()});registered.set(api,true);return api;}
 export function assertion(db,sql,...values){requireD1(db);return db.statement(`INSERT INTO pa_assertions SELECT CASE WHEN (${sql}) THEN 1 ELSE 0 END`,values);}
 export const clearAssertions=db=>db.statement('DELETE FROM pa_assertions');
 export async function schemaReady(db){requireD1(db);const row=await db.first('SELECT schema_version,epoch FROM pa_meta WHERE singleton=1');need((row?.schema_version===11||row?.schema_version===12)&&row.epoch,'pa_schema_not_ready');return row;}

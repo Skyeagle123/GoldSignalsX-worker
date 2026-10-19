@@ -1,0 +1,50 @@
+{
+  "parent": "e29a1f1907d98536c8ef18800f8f9da31366c076",
+  "acceptedPublishedBaseline": "687ee3d5bfb4355bc26b50762b73f7d984ab5cef",
+  "aggregateCommand": "node --test test-b1-*.mjs",
+  "aggregate": {
+    "tests": 980,
+    "pass": 980,
+    "fail": 0,
+    "skipped": 0
+  },
+  "families": {
+    "acceptedRuntime": 811,
+    "processingBinding": 60,
+    "processingProgress": 33,
+    "sampleOrdering": 35,
+    "boundedArchive": 41
+  },
+  "focusedArchive": {
+    "pass": 41,
+    "fail": 0,
+    "skipped": 0
+  },
+  "policies": {
+    "news": "PASS",
+    "reliability": "PASS",
+    "risk-budget": "PASS",
+    "risk-sizing": "PASS",
+    "signals-security": "PASS"
+  },
+  "localOnly": true,
+  "cloudQualified": false,
+  "pushPerformed": false,
+  "remainingFindings": [],
+  "archiveControlProvenance": "Valid reconstructed 59-record/12-market/81-object/2225978-byte package; not byte-identical to the former unexported in-memory bucket. Supported quote-basis annotation and expired operational hold are disclosed in documentation.",
+  "finalEvidenceSha256": {
+    "full-acceptance.log": "b43370a09e27bcfad99270eefea7c285b64dcf60f4e3292d3adef12a4e018a9a",
+    "missing-witness-probe.log": "f50233d968fbfa5e70a4a6717e68783e9578cf322e6428d876572056a9302487",
+    "validated-source-sha256.json": "856524da21d307bc63c2878a6e48affdcbc28836b5685dde694844a5eba4366e",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b",
+    "focused-archive.log": "15ba65e5eb86104a066af4a297dbe79610caaa4fc8cc4046e3802477db3715a5",
+    "resource-and-analytical-traces.json": "c0e781bd55883c1b5a66a98424c294abdf649db60df1d7b3928a4ea78a9b68c8",
+    "scope-verification.json": "f2d51e09c4921a3c9ef8edd00d457d7beb175494f137ac97566378c3ebd840f0",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "changed-files.json": "fe11bf0700d7bbd16d071786af11dafc8340e0bcbbe9068fbe79a2fda50d59cb"
+  },
+  "historicalEvidenceNote": "Two preserved development logs retain six whitespace-only raw output lines. Source/tests/docs/new acceptance evidence pass staged diff --check. Historical log bytes are preserved."
+}

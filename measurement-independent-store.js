@@ -1,3 +1,4 @@
+import {validateDecodedMarket} from './measurement-processing-budget.js';
 import {canonicalSerialize,parseEvidence,serialize,hash,bytes,need,time,identity,LIMITS,DAY,RESPONSE_VERSION,uid} from './measurement-independent-contract.js';
 import {assertion,clearAssertions,requireD1,schemaReady,scopeFence,SQL_CLOCK,jobFence} from './measurement-d1-adapter.js';
 import {reserve,estimateWrite,commitReservationStatements,releaseReservation,settleReservationStatements} from './measurement-reservations.js';
@@ -15,7 +16,8 @@ export async function readRecord(db,id,{archive=null}={}){
  if(r.location==='ARCHIVED'){need(archive,'pa_archive_unavailable');return archive.readRecord(r.archive_key,id);}
  const chunks=await db.all('SELECT ordinal,data FROM pa_chunks WHERE record_id=? ORDER BY ordinal LIMIT 51',id);
  need(chunks.length===r.chunk_count&&chunks.every((c,i)=>c.ordinal===i),'pa_chunks_missing');
- const parts=chunks.map(c=>Uint8Array.from(atob(c.data),x=>x.charCodeAt(0))),wire=await decodeWire(parts,r);const dependencies=(await db.all('SELECT dependency FROM pa_dependencies WHERE owner_id=? ORDER BY dependency LIMIT 129',id)).map(x=>x.dependency);need(dependencies.length<=LIMITS.dependencies,'pa_dependencies_bound');return {...r,wire,dependencies};
+ db.processingBudget?.reserve({records:1,market:1,decodedBytes:r.bytes});db.processingBudget?.record(r);
+ const parts=chunks.map(c=>Uint8Array.from(atob(c.data),x=>x.charCodeAt(0))),wire=await decodeWire(parts,r);const dependencies=(await db.all('SELECT dependency FROM pa_dependencies WHERE owner_id=? ORDER BY dependency LIMIT 129',id)).map(x=>x.dependency);need(dependencies.length<=LIMITS.dependencies,'pa_dependencies_bound');return db.processingBudget?validateDecodedMarket({...r,wire,dependencies},db.processingBudget):{...r,wire,dependencies};
 }
 // Invisible staging records are guarded by durable ingress until commit.
 export async function stageRecord(db,record,{guard=[]}={}){

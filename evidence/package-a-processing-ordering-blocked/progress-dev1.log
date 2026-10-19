@@ -1,0 +1,43 @@
+{"astra12PlusOne":[0,4,12,14,16]}
+✔ Processing progress: exact Astra 12 records plus one append per eight-record opportunity catches up (1864.211106ms)
+{"scheduledContinuingFrontiers":[0,0,0,0,0,0,0,0,0,0,8,16,24,27,27,27,27,27,27,27,27,27,27,32,40,48,54,54,54,54,54,54,54,54,54,54,56,64,72,80,80,80,80,80,80,80,80,80,80,82,90,98,106,107,107,107,107,107,115,119,119,119,119,119,123,131,139,139,141,146,149,151],"arrivalsIncluded":71}
+✔ Processing progress: actual scheduled Worker catches backlog larger than one invocation while Queue arrivals continue (8468.367338ms)
+✔ Processing progress: overload preserves verified finite-snapshot work and truthful backlog (1426.803425ms)
+✔ Processing progress: identical frontier delivery is idempotent; changed semantic content conflicts (995.121101ms)
+✔ Processing progress: same-millisecond late record before frontier restarts rather than skipping (1346.193383ms)
+✔ Processing progress: replayed checkpoint cannot manufacture a fold or cursor (1063.408327ms)
+✔ Processing progress: evaluation correction invalidates prefix (873.207735ms)
+✔ Processing progress: signal correction invalidates prefix (894.247416ms)
+✔ Processing progress: market correction invalidates prefix (901.853449ms)
+✔ Processing progress: lifecycle confirmation restarts incompatible fold (981.305683ms)
+✔ Processing progress: lifecycle tp1 restarts incompatible fold (951.107837ms)
+✔ Processing progress: lifecycle tp2 restarts incompatible fold (962.395896ms)
+✔ Processing progress: lifecycle sl restarts incompatible fold (1090.771798ms)
+✔ Processing progress: lifecycle expired restarts incompatible fold (1019.524269ms)
+✔ Processing progress: append during scan cannot commit stale checkpoint/completion (909.498986ms)
+✔ Processing progress: backfill during scan cannot commit stale checkpoint/completion (947.574452ms)
+✔ Processing progress: correction during scan cannot commit stale checkpoint/completion (899.115709ms)
+✔ Processing progress: quarantine during scan cannot commit stale checkpoint/completion (927.971083ms)
+✔ Processing progress: binding during scan cannot commit stale checkpoint/completion (829.094585ms)
+✔ Processing progress: epoch during scan cannot commit stale checkpoint/completion (928.46758ms)
+✔ Processing progress: lease during scan cannot commit stale checkpoint/completion (854.081389ms)
+✔ Processing progress: lifecycle during scan cannot commit stale checkpoint/completion (811.26666ms)
+✔ Processing progress: prefix market quarantine cannot be silently reused (850.97377ms)
+✔ Processing progress: prefix market conflict cannot be silently reused (927.799017ms)
+✔ Processing progress: prefix market recovery_required cannot be silently reused (803.256959ms)
+✔ Processing progress: epoch invalidates prefix reuse (953.352495ms)
+✔ Processing progress: binding invalidates prefix reuse (887.793133ms)
+✔ Processing progress: deletion invalidates prefix reuse (1016.091124ms)
+✔ Processing progress: archive_boundary invalidates prefix reuse (999.020761ms)
+✔ Processing progress: checkpoint response loss and new adapter resume exact immutable prefix once (1374.093302ms)
+✔ Processing progress: two workers and stale frontier replay have one fenced winner (890.988498ms)
+✔ Processing progress: append after canonical result prevents stale evaluation acknowledgement (892.407968ms)
+✔ Processing progress: compatibility changes only market revision, never pending/conflict or ownership (1.068232ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39701.173403

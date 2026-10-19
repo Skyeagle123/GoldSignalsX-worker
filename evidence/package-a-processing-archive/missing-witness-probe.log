@@ -1,0 +1,12 @@
+{"outerBudgetTrace":{"status":"PENDING","error":null,"version":"pa-processing-budget-v1","marketDecodes":8,"recordDecodes":15,"archiveOperations":171,"archiveBytes":1355546,"catalogueReads":0,"decodedBytes":850645,"sqlStatements":22,"reservedSqlRemaining":878,"reservedArchiveRemaining":853,"phase":"ARCHIVE_VERIFY","durableProgressCommitted":true,"checkpoints":[{"sqlRemaining":887,"archiveRemaining":857,"phase":"ARCHIVE_VERIFY"},{"sqlRemaining":884,"archiveRemaining":855,"phase":"ARCHIVE_VERIFY"}]}}
+{"outerBudgetTrace":{"status":"REJECTED","error":"creation_response_lost","version":"pa-processing-budget-v1","marketDecodes":4,"recordDecodes":48,"archiveOperations":130,"archiveBytes":1192526,"catalogueReads":5,"decodedBytes":743312,"sqlStatements":46,"reservedSqlRemaining":854,"reservedArchiveRemaining":894,"phase":"ARCHIVE_VERIFY","durableProgressCommitted":true,"checkpoints":[{"sqlRemaining":887,"archiveRemaining":968,"phase":"ARCHIVE_VERIFY"},{"sqlRemaining":877,"archiveRemaining":960,"phase":"ARCHIVE_VERIFY"}]}}
+{"outerBudgetTrace":{"status":"REJECTED","error":"pa_archive_object_missing","version":"pa-processing-budget-v1","marketDecodes":0,"recordDecodes":2,"archiveOperations":15,"archiveBytes":265880,"catalogueReads":3,"decodedBytes":59232,"sqlStatements":15,"reservedSqlRemaining":885,"reservedArchiveRemaining":1009,"phase":"ARCHIVE_VERIFY","durableProgressCommitted":false,"checkpoints":[]}}
+✔ Bounded archive: completed lookup proof cannot replace a missing creation witness (4356.875572ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4539.686192

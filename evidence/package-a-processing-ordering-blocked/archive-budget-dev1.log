@@ -1,0 +1,11 @@
+✔ Ordering: archive-only sample selection preserves authenticated identities after live eviction (551.40065ms)
+✔ Ordering: archive outage cannot become empty complete sample input (129.431172ms)
+✔ Ordering: source-unavailable archive restore reconstructs semantic order in fresh epoch (487.328928ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1294.645456

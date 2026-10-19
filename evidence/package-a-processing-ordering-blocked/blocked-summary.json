@@ -1,0 +1,99 @@
+{
+  "status": "STOPPED_ARCHITECTURE_BLOCKER_UNCOMMITTED_NOT_A_CANDIDATE",
+  "startingSha": "e29a1f1907d98536c8ef18800f8f9da31366c076",
+  "startingTree": "e81b0d185a1cccc7745f2f9aa56d99f3a50276bf",
+  "branch": "phase/b1-package-a-processing-binding",
+  "finding": "PA-PROCESSING-EXEC-03",
+  "severity": "HIGH",
+  "stopCondition": "another correctness architecture blocker appears",
+  "blocker": "Pre-resolution archive package verification decodes more than eight market records before bounded sample processing can acquire its authenticated canonical checkpoint context. A bounded verification-only pre-resolution progress contract is required. The sampler budget must not be misrepresented as an invocation-wide bound.",
+  "probe": {
+    "validPublication": "EVICTION_ELIGIBLE",
+    "totalRecords": 59,
+    "marketRecords": 12,
+    "packageObjects": 81,
+    "packageBytes": 2225978,
+    "marketRecordsReadBeforeDispatch": 12,
+    "bindingResolutionReached": true,
+    "canonicalProcessingCheckpoints": 0,
+    "probeStoppedAt": "PROCESSING_BINDING_RESOLVED before outcome processing",
+    "restoredResults": 3,
+    "restoredResultsNote": "The three LIVE RESULT records printed in the probe were restored source result versions; no new outcome was created before the stop hook."
+  },
+  "intermediateValidation": {
+    "priorBinding": {
+      "pass": 60,
+      "fail": 0
+    },
+    "draftProgress": {
+      "pass": 33,
+      "fail": 0
+    },
+    "ordering": {
+      "pass": 35,
+      "fail": 0
+    },
+    "afterBoundedArchiveReaderExtension": {
+      "pass": 3,
+      "fail": 0,
+      "scope": "archive-only selection, archive outage, source-unavailable restore only"
+    },
+    "developmentFailurePreserved": {
+      "orderingDev1": {
+        "pass": 21,
+        "fail": 11,
+        "causes": [
+          "missing readRecord import in resumed witness verification",
+          "invalid negative sequence in new backfill fixture"
+        ]
+      },
+      "fixedBeforeOrderingDev2": true
+    },
+    "notFinalAcceptance": true,
+    "fullRuntimeSuiteAfterCurrentChanges": "NOT_RUN_AFTER_ARCHITECTURE_STOP",
+    "policyParityTimingAfterCurrentChanges": "NOT_RUN_AFTER_ARCHITECTURE_STOP"
+  },
+  "controls": {
+    "actualRuntime2400": {
+      "status": "COMPLETED_AT_REVISION",
+      "invocations": 191,
+      "samples": 2400,
+      "mfe": 5900,
+      "classification": "intermediate actual-runtime probe before later archive integration"
+    },
+    "ordering2400": {
+      "oldMfe": 5742,
+      "newMfe": 5900,
+      "passes": 285,
+      "maxDescriptors": 27,
+      "maxSelectionBytes": 16120,
+      "maxCheckpointBytes": 27169,
+      "maxDecoded": 8,
+      "classification": "local sample algorithm harness, not whole-invocation archive guarantee"
+    },
+    "astra12PlusOne": [
+      0,
+      4,
+      12,
+      14,
+      16
+    ],
+    "scheduledContinuingArrivals": 71,
+    "scheduledFinalSamples": 151
+  },
+  "newCommit": false,
+  "push": false,
+  "cloudAccess": false,
+  "migrationAdded": false,
+  "evictionModified": false,
+  "preservedWorktreesModified": false,
+  "evidenceSha256": {
+    "archive-budget-dev1.log": "a963de43ccf53eab9bb3b41a062330d9e3e35d625e92d1c9016cc378c7761490",
+    "binding-dev1.log": "76ba22e34fb5ca13158b578714d098f77d5f34cdd621dba1af80d39c73bf4013",
+    "ordering-dev1.log": "468e6ab939bd38551d0aa4f8e5dd45e558e8af97262ed1c3eb6b84459c63795c",
+    "ordering-dev2.log": "fc9394bb987a5a77c42431eb5846a30e1085ae7d56d39ae9e9c4986443350fc4",
+    "pre-dispatch-archive-probe.log": "571b32287e0855eebec6f9d1de89ea54fcdbfb7c2dbdbf2ada0ff15df45c751c",
+    "progress-dev1.log": "f1eebeb7d58b178163eb2d20d2149e67e62d2b263f213d77a5721966d84bf6ee",
+    "tp1-probe.log": "58b96ff1ebc48e2c98b2c955f83bdee06d9f1fd554df312ff4ab1a2bf14ebceb"
+  }
+}

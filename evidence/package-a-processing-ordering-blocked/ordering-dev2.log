@@ -1,0 +1,44 @@
+{"ordering2400":{"oldMfe":5742,"newMfe":5900,"passes":285,"maxDescriptors":27,"maxSelectionBytes":16120,"maxCheckpointBytes":27169,"maxDecoded":8}}
+✔ Ordering: exact 2400-tick / 16-record old control 5742 and bounded sample result 5900 (113063.965019ms)
+✔ Ordering: TP1 before SL follows sequence despite reversed packet enumeration (89.686444ms)
+✔ Ordering: SL before TP1 follows sequence despite reversed packet enumeration (70.084796ms)
+✔ Ordering: TP2 before SL follows sequence despite reversed packet enumeration (80.668316ms)
+✔ Ordering: fixed sample set is partition invariant at selection page 1 (168.078619ms)
+✔ Ordering: fixed sample set is partition invariant at selection page 7 (132.060477ms)
+✔ Ordering: fixed sample set is partition invariant at selection page 32 (161.163024ms)
+✔ Ordering: fixed sample set is partition invariant at selection page 64 (150.265208ms)
+✔ Ordering: equal-time sequence group 33 spans pages without loss or early finalization (121.470841ms)
+✔ Ordering: equal-time sequence group 65 spans pages without loss or early finalization (213.707276ms)
+✔ Ordering: equal-time sequence group 129 spans pages without loss or early finalization (586.32742ms)
+✔ Ordering: duplicated semantic samples in differently scoped overlapping exports reduce once (190.645771ms)
+✔ Ordering: same semantic identity with contradictory price fails closed (39.28813ms)
+✔ Ordering: equal timestamp across sessions remains ambiguous (43.167579ms)
+✔ Ordering: receipt order does not prove provider-interval first hit (47.802835ms)
+✔ Ordering: mixed closed bar and ticks preserve OHLC ambiguity (58.133546ms)
+✔ Ordering: every quality window sees extrema before finalization (3057.393157ms)
+✔ Ordering: gapped/truncated evidence cannot manufacture complete coverage (61.152672ms)
+✔ Ordering: canonical traversal key retains source/session sequence and semantic ID separately from occurrence (1.311691ms)
+✔ Ordering: selection-size bounds reject invalid capacities (0.521974ms)
+✔ Ordering: archive-only sample selection preserves authenticated identities after live eviction (452.922057ms)
+✔ Ordering: archive outage cannot become empty complete sample input (120.04839ms)
+✔ Ordering: source-unavailable archive restore reconstructs semantic order in fresh epoch (394.649181ms)
+✔ Ordering: late earlier sample replays a finite snapshot and versions results (2003.189458ms)
+✔ Ordering: deep backfill replays a finite snapshot and versions results (1599.081907ms)
+✔ Ordering: old record-order checkpoint is never interpreted as sample-selection state (898.229291ms)
+✔ Ordering: crash at SAMPLE_RECORD_ENUMERATED restarts from durable state without double reduction (1488.442794ms)
+✔ Ordering: crash at SAMPLE_SELECTION_COMPLETE restarts from durable state without double reduction (1528.538406ms)
+✔ Ordering: crash at SAMPLE_BEFORE_FOLD restarts from durable state without double reduction (1442.841552ms)
+✔ Ordering: crash at OUTCOME_PREPARED restarts from durable state without double reduction (1526.297372ms)
+✔ Ordering: fresh final completion rejects append after scan (741.872232ms)
+✔ Ordering: fresh final completion rejects correction after scan (790.730514ms)
+✔ Ordering: fresh final completion rejects epoch after scan (932.562912ms)
+✔ Ordering: fresh final completion rejects lease after scan (800.990134ms)
+✔ Ordering: fresh final completion rejects lifecycle after scan (845.774411ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 134052.731796

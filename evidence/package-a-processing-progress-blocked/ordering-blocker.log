@@ -1,0 +1,9 @@
+{"reviewedSha":"e29a1f1907d98536c8ef18800f8f9da31366c076","session":"valid-multipart-0","producerGeneratedPackets":16,"samples":2400,"distinctFrom":1,"earliestPacketPosition":13}
+{"reviewedControl":1,"status":"BACKLOG_PENDING","complete":false,"processedThrough":1790953802361,"actualMfe":5742,"expectedMfe":5900}
+{"reviewedControl":2,"status":"COMPLETED_AT_REVISION","complete":true,"processedThrough":1790953802399,"actualMfe":5742,"expectedMfe":5900}
+{"draftControl":1,"status":"BACKLOG_PENDING","records":8,"complete":false}
+{"draftControl":2,"status":"PENDING","reason":"market_sample_reordering"}
+{"draftControl":3,"status":"BACKLOG_PENDING","records":8,"complete":false}
+{"draftControl":4,"status":"PENDING","reason":"market_sample_reordering"}
+{"draftControl":5,"status":"BACKLOG_PENDING","records":8,"complete":false}
+{"draftControl":6,"status":"PENDING","reason":"market_sample_reordering"}

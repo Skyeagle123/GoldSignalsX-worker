@@ -1,0 +1,76 @@
+{
+  "status": "STOPPED_ARCHITECTURE_BLOCKER_UNCOMMITTED",
+  "startingSha": "e29a1f1907d98536c8ef18800f8f9da31366c076",
+  "startingTree": "e81b0d185a1cccc7745f2f9aa56d99f3a50276bf",
+  "branch": "phase/b1-package-a-processing-binding",
+  "authorizedFinding": "PA-PROCESSING-REVIEW-01",
+  "newBlocker": "PA-PROCESSING-EXEC-02",
+  "severity": "HIGH",
+  "stopCondition": "another architecture issue appears; sample-safe append-only reuse cannot be generalized from the accepted record ordering",
+  "draftNotAccepted": true,
+  "newCommit": false,
+  "push": false,
+  "cloudAccess": false,
+  "migrationAdded": false,
+  "evictionModified": false,
+  "originalProcessingTestsModified": false,
+  "intermediateEvidence": {
+    "astra12PlusOne": [
+      8,
+      13,
+      14,
+      15,
+      16,
+      17
+    ],
+    "actualScheduledWorkerFrontiers": [
+      8,
+      16,
+      24,
+      32,
+      40,
+      48,
+      56,
+      64,
+      72,
+      80,
+      88,
+      91
+    ],
+    "scheduledContinuingArrivals": 11,
+    "lastDevelopmentInvocation": {
+      "tests": 33,
+      "pass": 32,
+      "fail": 1,
+      "reason": "new assertion expected a different accepted fail-closed error; corrected afterwards but NOT rerun"
+    },
+    "currentFinalDraftValidation": "NOT_RUN_AFTER_STOP",
+    "completeRuntimeSuite": "NOT_RUN_AFTER_STOP"
+  },
+  "orderingBlocker": {
+    "producer": "accepted prepareMarketEvidence",
+    "ticks": 2400,
+    "packets": 16,
+    "distinctRecordFrom": 1,
+    "earliestPacketSortedPosition": 13,
+    "reviewedFunctionSource": "git show e29a1f1907d98536c8ef18800f8f9da31366c076:measurement-recovery.js loaded in memory; unchanged producer and reducer",
+    "reviewedControl": {
+      "status": "COMPLETED_AT_REVISION",
+      "actualMfe": 5742,
+      "expectedMfe": 5900
+    },
+    "draftControl": [
+      "BACKLOG_PENDING:8",
+      "PENDING:market_sample_reordering",
+      "BACKLOG_PENDING:8",
+      "PENDING:market_sample_reordering",
+      "BACKLOG_PENDING:8",
+      "PENDING:market_sample_reordering"
+    ]
+  },
+  "evidenceSha256": {
+    "development-2.log": "a1b95dc2c6adb438ecb27b92c9ea0fffea33b270908c5ad53e98d80854345553",
+    "ordering-blocker.log": "ae7332c270676bbf1df75bb59c9d4a1a76b6699d2ffab8df099844a1ff30d248",
+    "development-1.log": "dd896691d1ce80debd59108322968af94e5c1fdd68c4921a19a1d852a4f816dd"
+  }
+}

@@ -1,3 +1,4 @@
+import {boundedProcessingArchive} from './measurement-processing-archive.js';
 import {serialize,canonicalSerialize,parseEvidence,hash,bytes,need,time,identity,LIMITS,uid,DAY} from './measurement-independent-contract.js';
 import {assertion,clearAssertions,schemaReady,SQL_CLOCK,leaseJob,jobFence,finishJob} from './measurement-d1-adapter.js';
 import {readRecord,chunkWire} from './measurement-independent-store.js';
@@ -7,18 +8,18 @@ import {archiveProgressStore,emptyFingerprint,fingerprintAdd,sameFingerprint} fr
 import {DEFINITION_PACK} from './measurement-definition-pack.js';
 import {decodeWire} from './measurement-wire-codec.js';
 import {reserve,estimateWrite,commitReservationStatements} from './measurement-reservations.js';
-async function validatedDefinitions(wire,engine){const d=JSON.parse(wire);need(d.version==='measurement-definitions-v1'&&d.engineSemanticsVersion===engine&&d.files&&d.sourceDigests&&Object.keys(d.files).length<=32,'pa_archive_definition_unsupported');
+export async function validatedDefinitions(wire,engine){const d=JSON.parse(wire);need(d.version==='measurement-definitions-v1'&&d.engineSemanticsVersion===engine&&d.files&&d.sourceDigests&&Object.keys(d.files).length<=32,'pa_archive_definition_unsupported');
  for(const file of ['signal-engine.js','evidence-codec.js','forward-validation.js','post-entry-evidence.js','measurement-lifecycle.js','measurement-wire-codec.js','measurement-market-envelope.js'])need(typeof d.files[file]==='string'&&d.sourceDigests[file]===await hash(d.files[file])&&d.sourceDigests[file]===DEFINITION_PACK.sourceDigests[file],'pa_archive_definition_unsupported');return d;}
 export const ARCHIVE_FORMAT='measurement-archive-v1';
 export const ARCHIVE_LIMITS=Object.freeze({objects:256,bytes:16000000,records:128});
 const transitions=['PLANNED','SNAPSHOT_PINNED','OBJECTS_WRITTEN','VERIFIED','CATALOGUED','EVICTION_ELIGIBLE'];
 const prefixPattern=/^synthetic-b1-[a-z0-9-]{1,48}\/$/;
-export function createPrivateArchiveAdapter(bucket,{namespace,operationBudget=null}={}){
+export function createPrivateArchiveAdapter(bucket,{namespace,operationBudget=null,processingMeter=null,parentAdmit=null}={}){
  need(bucket&&typeof bucket.get==='function'&&typeof bucket.put==='function'&&typeof bucket.list==='function'&&prefixPattern.test(namespace),'pa_archive_binding');
- need(operationBudget===null||Number.isSafeInteger(operationBudget)&&operationBudget>=512&&operationBudget<=9000,'pa_archive_operation_budget');let operations=0;const admit=()=>{need(operationBudget===null||operations<operationBudget,'pa_archive_invocation_budget');operations++;};
+ need(operationBudget===null||Number.isSafeInteger(operationBudget)&&operationBudget>=512&&operationBudget<=9000,'pa_archive_operation_budget');let operations=0;const admit=(key='')=>{parentAdmit?.();processingMeter?.operation(key);need(operationBudget===null||operations<operationBudget,'pa_archive_invocation_budget');operations++;};
  const metrics={reads:0,writes:0,bytesRead:0,bytesWritten:0};
  async function read(key,{maxBytes=LIMITS.rowBytes}={}){need(typeof key==='string'&&key.startsWith(namespace)&&!key.includes('..'),'pa_archive_namespace');
-  admit();const object=await bucket.get(key);need(object,'pa_archive_object_missing');need(Number.isSafeInteger(object.size)&&object.size<=maxBytes,'pa_archive_object_bound');
+  admit(key);const object=await bucket.get(key);need(object,'pa_archive_object_missing');need(Number.isSafeInteger(object.size)&&object.size<=maxBytes,'pa_archive_object_bound');processingMeter?.readBytes(object.size);
   const data=new Uint8Array(await object.arrayBuffer());need(data.length===object.size&&data.length<=maxBytes,'pa_archive_short_read');const wire=new TextDecoder('utf-8',{fatal:true}).decode(data);const digest=await hash(wire);
   need(key.endsWith('/'+digest),'pa_archive_digest');metrics.reads++;metrics.bytesRead+=data.length;return wire;
  }
@@ -28,7 +29,7 @@ export function createPrivateArchiveAdapter(bucket,{namespace,operationBudget=nu
   need(await read(key)===wire,'pa_archive_readback');return {key,digest,bytes:bytes(wire)};
  }
  async function listRoots({cursor,limit=64}={}){need(limit>=1&&limit<=64,'pa_root_list_bound');admit();return bucket.list({prefix:namespace+'roots/',cursor,limit});}
- return Object.freeze({namespace,read,write,listRoots,progress:archiveProgressStore(bucket,namespace,admit,metrics),remaining:()=>operationBudget===null?Infinity:operationBudget-operations,metrics:()=>({...metrics,operations})});
+ return Object.freeze({namespace,read,write,listRoots,progress:archiveProgressStore(bucket,namespace,admit,metrics,processingMeter),processingSession:meter=>createPrivateArchiveAdapter(bucket,{namespace,operationBudget,processingMeter:meter,parentAdmit:admit}),remaining:()=>operationBudget===null?Infinity:operationBudget-operations,metrics:()=>({...metrics,operations})});
 }
 function pubFence(db,p,now,{revision=true}={}){
  return assertion(db,`EXISTS(SELECT 1 FROM pa_publications p,pa_meta m,pa_scopes s WHERE p.id=? AND p.owner=? AND p.generation=? AND p.lease_nonce=? AND p.lease_until>MAX(?,${SQL_CLOCK}) AND p.state=? AND p.epoch=m.epoch AND s.id=p.scope_id ${revision?'AND s.archive_revision=p.revision AND s.revision=p.input_revision AND s.pending=0 AND s.corrections=0':''})`,p.id,p.owner,p.generation,p.lease_nonce,now,p.state);
@@ -225,10 +226,14 @@ export async function discoverArchiveRoot(archive,{fallback='FAIL_CLOSED',cursor
  if(state.complete){try{const root=await verifyRoot(a,state.best.key);if(loaded)await archive.progress.save(context,state,loaded);return {...root,status:'COMPLETE',discovery:{invalid:[],invalidCount:state.invalidCount,scanned:state.scanned,fallback,lineage:{roots:state.walk.roots,transitions:state.walk.transitions},consistency:'VALIDATED_ARCHIVE_LISTING'}};}catch(error){if(error.message!=='pa_lineage_segment_budget')throw error;}}
  need(archive.progress,'pa_archive_progress_required');const next=await archive.progress.save(context,state,loaded);return {status:'PENDING',reason:'root_discovery_budget',continuation:next,fallback,progress:{phase:state.phase,scanned:state.scanned,roots:state.walk?.roots??0},complete:false};
 }
-export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cachedKey=null,cachedRoot=null;const rootAt=async key=>{if(key!==cachedKey){cachedKey=key;cachedRoot=verifyRoot(archive,key);try{await cachedRoot;}catch(error){cachedKey=null;cachedRoot=null;throw error;}}return cachedRoot;};return Object.freeze({async readRecord(packageKey,id){const verified=await verifyArchivePackage(archive,packageKey);return verified.records.find(r=>r.id===id)??null;},
+export function archiveReader(archive,{rootKey=null,getRoot=null}={}){let cachedKey=null,cachedRoot=null,processingKey=null,processingHead=null;
+ const rootAt=async key=>{if(key!==cachedKey){cachedKey=key;cachedRoot=verifyRoot(archive,key);try{await cachedRoot;}catch(error){cachedKey=null;cachedRoot=null;throw error;}}return cachedRoot;};
+ return Object.freeze({
+ processingSession:async budget=>boundedProcessingArchive(archive,budget,{rootKey,getRoot}),
+ async readRecord(packageKey,id){const verified=await verifyArchivePackage(archive,packageKey);return verified.records.find(r=>r.id===id)??null;},
  async lookupRecord(id,{rootKey:requestedRoot,maxObjects=64}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return null;const root=await rootAt(key);const entry=await catalogueLookup(archive,root.indexRoot,id,{maxObjects});if(!entry)return null;const retained=root.verified.records.find(r=>r.id===(entry.recordId??entry.id));if(retained&&entry.lookupType!=='SAMPLE'){need(retained.digest===entry.digest,'pa_archive_entry');return {...retained,sourceSnapshot:root.verified.snapshot,scopeState:entry.scopeState,sourcePackageKey:entry.packageKey};}return readArchiveEntry(archive,entry);},
  async lookupSemantic(semanticKey){const key=getRoot?await getRoot():rootKey;if(!key)return null;const root=await rootAt(key),entry=await catalogueLookup(archive,root.indexRoot,'semantic:'+semanticKey);return entry?readArchiveEntry(archive,entry):null;},
- async marketPage(cohort,{after='',limit=8}={}){const key=getRoot?await getRoot():rootKey;if(!key)return {records:[],complete:true,next:after};const root=await rootAt(key),alias=await catalogueLookup(archive,root.indexRoot,'cohort-market:'+cohort);if(!alias)return {records:[],complete:true,next:after};const page=await cataloguePage(archive,alias.marketIndex,{after,limit,maxObjects:64});const records=[];for(const entry of page.entries)records.push({...await readArchiveEntry(archive,entry),marketOrder:entry.order_key});return {...page,records};},
+ async marketPage(cohort,{after='',limit=8,rootKey:requestedRoot}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return {records:[],complete:true,next:after};const root=await rootAt(key),alias=await catalogueLookup(archive,root.indexRoot,'cohort-market:'+cohort);if(!alias)return {records:[],complete:true,next:after};const page=await cataloguePage(archive,alias.marketIndex,{after,limit,maxObjects:64});const records=[];for(const entry of page.entries)records.push({...await readArchiveEntry(archive,entry),marketOrder:entry.order_key});return {...page,records};},
  async lookupScope(scopeId){const key=getRoot?await getRoot():rootKey;if(!key)return null;const root=await rootAt(key),entry=await catalogueLookup(archive,root.indexRoot,'scope:'+scopeId);return entry?.scopeState?{...entry.scopeState,archive_root:key}:null;},
  async scopeRecords(scopeId,{rootKey:requestedRoot,factsOnly=true}={}){const key=requestedRoot??(getRoot?await getRoot():rootKey);if(!key)return [];const root=await rootAt(key),scope=await catalogueLookup(archive,root.indexRoot,'scope:'+scopeId);if(!scope)return [];
   const records=[];let after='',complete=false;for(let page=0;page<4&&!complete;page++){const result=await cataloguePage(archive,factsOnly?scope.factIndex:scope.scopeIndex,{after,limit:Math.min(129,LIMITS.scopeRecords+1-records.length),maxObjects:64});for(const entry of result.entries)records.push(await readArchiveEntry(archive,entry));need(records.length<=LIMITS.scopeRecords,'pa_archive_scope_bound');need(result.complete||result.next>after,'pa_archive_scope_pending');after=result.next;complete=result.complete;}need(complete,'pa_archive_scope_pending');return records;}});}

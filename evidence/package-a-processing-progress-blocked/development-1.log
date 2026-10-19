@@ -1,0 +1,123 @@
+{"astra12PlusOne":[8,13,14,15,16,17]}
+✔ Processing progress: exact Astra 12 records plus one append per eight-record opportunity catches up (1750.136352ms)
+{"scheduledContinuingFrontiers":[8,16,24,32,40,48,56,64,72,80,88,91],"arrivalsIncluded":11}
+✔ Processing progress: actual scheduled Worker catches backlog larger than one invocation while Queue arrivals continue (2158.597644ms)
+✔ Processing progress: overload preserves the verified prefix and truthful backlog (1044.669649ms)
+✖ Processing progress: identical frontier delivery is idempotent; changed semantic content conflicts (806.642905ms)
+✖ Processing progress: same-millisecond late record before frontier restarts rather than skipping (797.999329ms)
+✔ Processing progress: replayed checkpoint cannot manufacture a fold or cursor (838.899718ms)
+✔ Processing progress: evaluation correction invalidates prefix (842.371808ms)
+✖ Processing progress: signal correction invalidates prefix (818.668951ms)
+✔ Processing progress: market correction invalidates prefix (845.712411ms)
+✔ Processing progress: lifecycle confirmation restarts incompatible fold (910.146464ms)
+✔ Processing progress: lifecycle tp1 restarts incompatible fold (862.599051ms)
+✔ Processing progress: lifecycle tp2 restarts incompatible fold (917.348921ms)
+✔ Processing progress: lifecycle sl restarts incompatible fold (882.772113ms)
+✔ Processing progress: lifecycle expired restarts incompatible fold (909.439861ms)
+✔ Processing progress: append during scan cannot commit stale checkpoint/completion (817.505857ms)
+✖ Processing progress: backfill during scan cannot commit stale checkpoint/completion (820.72372ms)
+✔ Processing progress: correction during scan cannot commit stale checkpoint/completion (773.961575ms)
+✔ Processing progress: quarantine during scan cannot commit stale checkpoint/completion (784.529599ms)
+✔ Processing progress: binding during scan cannot commit stale checkpoint/completion (829.127335ms)
+✔ Processing progress: epoch during scan cannot commit stale checkpoint/completion (815.70133ms)
+✔ Processing progress: lease during scan cannot commit stale checkpoint/completion (876.236622ms)
+✔ Processing progress: lifecycle during scan cannot commit stale checkpoint/completion (899.494826ms)
+✔ Processing progress: prefix market quarantine cannot be silently reused (875.030589ms)
+✔ Processing progress: prefix market conflict cannot be silently reused (792.875516ms)
+✔ Processing progress: prefix market recovery_required cannot be silently reused (790.290951ms)
+✔ Processing progress: epoch invalidates prefix reuse (840.67138ms)
+✔ Processing progress: binding invalidates prefix reuse (1026.22268ms)
+✔ Processing progress: deletion invalidates prefix reuse (936.719866ms)
+✔ Processing progress: archive_boundary invalidates prefix reuse (832.952131ms)
+✔ Processing progress: checkpoint response loss and new adapter resume exact immutable prefix once (918.483223ms)
+✔ Processing progress: two workers and stale frontier replay have one fenced winner (900.600921ms)
+✔ Processing progress: append after canonical result prevents stale evaluation acknowledgement (909.15877ms)
+✔ Processing progress: compatibility changes only market revision, never pending/conflict or ownership (1.263289ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 29
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 29980.054167
+
+✖ failing tests:
+
+test at test-b1-package-a-processing-progress.mjs:43:1
+✖ Processing progress: identical frontier delivery is idempotent; changed semantic content conflicts (806.642905ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:43:506)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /pa_processing_market_pending|pa_fence_failed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at test-b1-package-a-processing-progress.mjs:45:1
+✖ Processing progress: same-millisecond late record before frontier restarts rather than skipping (797.999329ms)
+  Error: pa_tick_provenance
+      at need (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-independent-contract.js:14:46)
+      at prepareMarketEvidence (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-market-envelope.js:7:144)
+      at x.packet (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:18:80)
+      at TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:45:203)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at test-b1-package-a-processing-progress.mjs:49:54
+✖ Processing progress: signal correction invalidates prefix (818.668951ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /pa_processing_lifecycle_pending|pa_fence_failed/. Input:
+  
+  'Error: pa_projection_fence'
+  
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:49:491)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: pa_projection_fence
+        at file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-package-a.mjs:10:190
+        at Array.map (<anonymous>)
+        at Object.batch (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-fixtures/b1-package-a.mjs:10:56)
+        at Object.batch (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-d1-adapter.js:19:338)
+        at rebuildD1Projection (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-independent-store.js:150:11)
+        at async processCapturedOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-recovery.js:47:50)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:49:491)
+        at async Test.run (node:internal/test_runner/test:1389:7),
+    expected: /pa_processing_lifecycle_pending|pa_fence_failed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at test-b1-package-a-processing-progress.mjs:53:107
+✖ Processing progress: backfill during scan cannot commit stale checkpoint/completion (820.72372ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /pa_fence_failed/. Input:
+  
+  'Error: pa_tick_provenance'
+  
+      at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:54:2)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: pa_tick_provenance
+        at need (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-independent-contract.js:14:46)
+        at prepareMarketEvidence (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-market-envelope.js:7:144)
+        at x.packet (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:18:80)
+        at hook (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:56:65)
+        at processCapturedOutcome (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/measurement-recovery.js:70:78)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (file:///workspace/scratch/c6f879705017/GoldSignalsX-processing-binding/test-b1-package-a-processing-progress.mjs:54:2)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:960:7),
+    expected: /pa_fence_failed/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
