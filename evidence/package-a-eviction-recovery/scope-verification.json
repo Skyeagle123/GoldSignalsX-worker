@@ -1,0 +1,31 @@
+{
+  "reviewedParent": "0865e06cb003b451918daddd6817b1f35dc018e8",
+  "reviewedTree": "c4ce1d51a5241abfbd19c4ae626f05cd882e1b8f",
+  "existingFilesChanged": [
+    "B1-PACKAGE-A-EVICTION-RECONCILIATION.md",
+    "measurement-eviction-reconciliation.js"
+  ],
+  "newTestFile": "test-b1-package-a-eviction-recovery.mjs",
+  "historicalMigrations0001Through0012": "BYTE_IDENTICAL",
+  "acceptedArchiveProgressProtocol": "BYTE_IDENTICAL",
+  "finalDeletionRuntime": "BYTE_IDENTICAL",
+  "acceptedPriorTests": "BYTE_IDENTICAL",
+  "tradingM1M2M3ProtectedSource": "BYTE_IDENTICAL",
+  "packageBWorktree": "NO_OPERATIONS_PERFORMED",
+  "cloudAccess": false,
+  "newMigration": null,
+  "syntaxFiles": 55,
+  "syntax": "PASS",
+  "diffCheck": "PASS",
+  "archiveProofReadBound": 1024,
+  "cursorBytesBound": 8192,
+  "publicationRowsBound": 64,
+  "resetErrors": [
+    "pa_archive_progress_expired",
+    "pa_archive_progress_token"
+  ],
+  "resetPhase": "LINEAGE_ONLY",
+  "resetResult": "PENDING_NOT_AUTHORITY",
+  "replayWindowChange": false,
+  "physicalReclamationCredit": 0
+}

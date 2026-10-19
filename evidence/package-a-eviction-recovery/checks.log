@@ -1,0 +1,3 @@
+PASS syntax: 55 JavaScript files
+PASS git diff --check
+PASS existing-file and frozen-runtime byte comparisons

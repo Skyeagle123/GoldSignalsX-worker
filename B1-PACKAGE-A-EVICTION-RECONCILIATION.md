@@ -57,6 +57,38 @@ can restart against the new boundary. No completion guarantee is claimed if the
 boundary changes continually before a bounded proof can finish. PENDING never
 counts as successful eviction or physical capacity reclamation.
 
+### Unusable lineage continuation recovery (PA-EVICT-REVIEW-01)
+
+A saved LINEAGE token may outlive its one-hour archive progress slot, or another
+verifier of the same root may advance that shared slot beyond its single replay
+generation. Only the exact `pa_archive_progress_expired` and
+`pa_archive_progress_token` errors from loading an already saved lineage token
+permit recovery. Reconciliation then clears only that token and returns
+`PENDING`, reason `lineage_progress_restarted`; it does not verify additional
+roots or credit incomplete work in that invocation. The next invocation starts
+the accepted full authenticated lineage verifier again. The archive protocol,
+replay window, confirmation pass, integrity checks and work bounds are unchanged.
+
+The reset is committed only under the existing exact progress bytes, generation,
+nonce, owner and SQL-clock lease fences, publication identity, epoch, pinned
+root/catalogue/reference boundary, plus current source/archive revisions,
+dependency closure/pending/correction/recovery state, parity and absence of an
+active restore. Its new generation invalidates old continuations. If a competing
+transition wins, the loser re-reads the publication generation and returns
+`PENDING`, reason `eviction_reconciliation_raced`, without a continuation or
+authority. Poll without the old continuation, respecting the current lease;
+boundary/eligibility failures otherwise remain errors. This bounded conflict
+response never means READY or deletion.
+
+A crash before reset commit leaves the old token; after commit the durable null
+frontier survives response loss. A restart can reacquire after lease expiry.
+Missing/corrupt archive bytes, progress integrity failures, invalid predecessor
+edges/transitions and membership failures are never converted into successful
+proof or caught as stale progress. Expiry can be detected before archive bytes
+are read; in that case subsequent fresh verification must still reject damaged
+evidence. No new schema or accounting allocation is required, and final eviction
+fences and atomic completion receipts remain unchanged.
+
 ## Final transaction and archive integrity
 
 Before deletion, both the older package/root and pinned descendant package/root

@@ -64,9 +64,18 @@ export async function reconcilePublicationEvictionAuthority(db,archive,publicati
  await db.batch([reconciliationFence(db,p,now),reconciliationBoundaryFence(db,p,saved),clearAssertions(db)]);
  let reads=0;const bounded={...archive,async read(...args){need(reads<1024,'pa_eviction_segment_budget');reads++;return archive.read(...args);}};
  let state={...saved};
+ let lineageReset=null;
  if(state.phase==='LINEAGE'){
-  const result=await verifyArchiveLineage(bounded,context.root,{continuation:state.lineage});
-  if(result.status==='PENDING')state.lineage=result.continuation;else{need(result.epoch===context.epoch&&result.generation===context.catalogueGeneration,'pa_eviction_boundary_identity');state.phase='ANCESTRY';state.lineage=null;}
+  try{
+   const result=await verifyArchiveLineage(bounded,context.root,{continuation:state.lineage});
+   if(result.status==='PENDING')state.lineage=result.continuation;else{need(result.epoch===context.epoch&&result.generation===context.catalogueGeneration,'pa_eviction_boundary_identity');state.phase='ANCESTRY';state.lineage=null;}
+  }catch(error){
+   // Only a durable, authenticated saved token may be discarded. Invalid archive
+   // bytes, lineage, membership and progress integrity are never retry evidence.
+   if(!state.lineage||!['pa_archive_progress_expired','pa_archive_progress_token'].includes(error.message))throw error;
+   lineageReset=error.message;state.lineage=null;
+   await hook?.('LINEAGE_RESET_PREPARED',{publication:p,progress:state,reason:lineageReset});
+  }
  }else if(state.phase==='ANCESTRY'){
   for(let units=0;state.current&&units<16;units++){
    let root;try{root=await verifyRoot(bounded,state.current);if(state.child)await verifyArchiveEdge(bounded,state.child,root);}catch(e){if(e.message==='pa_eviction_segment_budget')break;throw e;}
@@ -92,6 +101,21 @@ export async function reconcilePublicationEvictionAuthority(db,archive,publicati
   if(state.member===old.verified.snapshot.membership.length)state.phase='READY';
  }else need(state.phase==='READY','pa_eviction_progress_phase');
  await hook?.('VERIFIED_SEGMENT',{publication:p,progress:state});
- const wire=await encodeEvictionProgress(state),r=await db.batch([reconciliationFence(db,p,now),reconciliationBoundaryFence(db,p,state),db.statement(`UPDATE pa_publications SET eviction_progress=?,eviction_generation=eviction_generation+1,eviction_until=MAX(?,${SQL_CLOCK})+? WHERE id=? RETURNING *`,[wire,now,TTL,p.id]),clearAssertions(db)]);p=r[2].results[0];
- return {status:state.phase==='READY'?'READY':'PENDING',complete:state.phase==='READY',continuation:evictionToken(p),progress:{phase:state.phase,predecessor:state.current,member:state.member,sample:state.sample},reads,rootKey:context.root,catalogueGeneration:context.catalogueGeneration};
+ const resetFences=lineageReset?[
+  assertion(db,"EXISTS(SELECT 1 FROM pa_publications p JOIN pa_scopes s ON s.id=p.scope_id WHERE p.id=? AND p.parity_verified=1 AND s.revision=p.input_revision AND s.archive_revision=p.revision AND s.pending=0 AND s.corrections=0 AND s.recovery_required=0)",p.id),
+  assertion(db,"NOT EXISTS(SELECT 1 FROM json_each(?) x LEFT JOIN pa_scopes s ON s.id=json_extract(x.value,'$.id') WHERE s.id IS NULL OR s.revision!=json_extract(x.value,'$.revision') OR s.archive_revision!=json_extract(x.value,'$.archive_revision') OR s.pending!=0 OR s.corrections!=0 OR s.recovery_required!=0 OR s.quarantine!=json_extract(x.value,'$.quarantine') OR s.conflict!=json_extract(x.value,'$.conflict'))",serialize(JSON.parse(p.snapshot).dependencyScopes)),
+  assertion(db,"NOT EXISTS(SELECT 1 FROM pa_restores WHERE state='RUNNING')")
+ ]:[];
+ const wire=await encodeEvictionProgress(state);let r;
+ try{r=await db.batch([reconciliationFence(db,p,now),reconciliationBoundaryFence(db,p,state),...resetFences,db.statement(`UPDATE pa_publications SET eviction_progress=?,eviction_generation=eviction_generation+1,eviction_until=MAX(?,${SQL_CLOCK})+? WHERE id=? RETURNING *`,[wire,now,TTL,p.id]),clearAssertions(db)]);}
+ catch(error){
+  if(lineageReset&&/\bpa_fence_failed\b/.test(error.message)){
+   const current=await db.first('SELECT eviction_generation FROM pa_publications WHERE id=?',p.id);
+   if(current&&current.eviction_generation!==p.eviction_generation)return {status:'PENDING',complete:false,reason:'eviction_reconciliation_raced',reads};
+  }
+  throw error;
+ }
+ p=r[2+resetFences.length].results[0];
+ if(lineageReset)await hook?.('LINEAGE_RESET_COMMITTED',{publication:p,progress:state,reason:lineageReset});
+ return {status:state.phase==='READY'?'READY':'PENDING',complete:state.phase==='READY',...(lineageReset?{reason:'lineage_progress_restarted'}:{}),continuation:evictionToken(p),progress:{phase:state.phase,predecessor:state.current,member:state.member,sample:state.sample},reads,rootKey:context.root,catalogueGeneration:context.catalogueGeneration};
 }

@@ -1,0 +1,38 @@
+✔ PA-EVICT-REVIEW-01 control: actual 32-root reconciliation reaches READY in six invocations (1364.430652ms)
+✔ PA-EVICT-REVIEW-01 A: expired archive continuation is fenced/reset, then native proof and eviction complete (1600.376007ms)
+✔ PA-EVICT-REVIEW-01 B: shared verifier beyond replay window cannot strand reconciliation (2083.309089ms)
+✔ PA-EVICT-REVIEW-01 C: simultaneous reset has one CAS winner; loser rereads without authority (1365.963306ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects new root during recovery with zero deletion (346.666566ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects catalogue boundary during recovery with zero deletion (311.953804ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects reference boundary during recovery with zero deletion (318.747492ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects source revision during recovery with zero deletion (323.620617ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects archive revision during recovery with zero deletion (297.701644ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects pending ingress during recovery with zero deletion (299.841591ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects correction during recovery with zero deletion (329.736204ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects recovery dependency during recovery with zero deletion (321.798691ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects epoch replacement during recovery with zero deletion (306.865113ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects epoch ABA during recovery with zero deletion (322.740984ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects restore authority during recovery with zero deletion (313.32784ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects publication state during recovery with zero deletion (296.135555ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects publication identity during recovery with zero deletion (288.335896ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects lease replacement during recovery with zero deletion (293.811073ms)
+✔ PA-EVICT-REVIEW-01 D: fresh reset rejects lease expiry during recovery with zero deletion (299.761604ms)
+✔ PA-EVICT-REVIEW-01 crash before reset commit retains old proof and retry safely resets (1433.50181ms)
+✔ PA-EVICT-REVIEW-01 lost reset response and adapter restart resume durable null frontier (1604.320508ms)
+✔ PA-EVICT-REVIEW-01 crash after fresh archive proof starts safely repeats uncredited work (1778.351498ms)
+✔ PA-EVICT-REVIEW-01 lost fresh-progress response resumes committed proof after lease expiry (1565.714053ms)
+✔ PA-EVICT-REVIEW-01 stale owner after recovery cannot resume or consume new proof (1513.781274ms)
+✔ PA-EVICT-REVIEW-01 archive progress advances again after reset without granting partial authority (2076.060387ms)
+✔ PA-EVICT-REVIEW-01 never converts progress digest corruption into restart success (328.491522ms)
+✔ PA-EVICT-REVIEW-01 never converts missing archive root into restart success (312.253529ms)
+✔ PA-EVICT-REVIEW-01 never converts corrupt archive root into restart success (331.89043ms)
+✔ PA-EVICT-REVIEW-01 corruption discovered after expiry reset still fails closed on fresh verification (365.065051ms)
+✔ PA-EVICT-REVIEW-01 recovery retains byte bound, fixed accounting and zero physical credit (1456.500198ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23971.25073
