@@ -1,22 +1,29 @@
-import {time,need,serialize,LIMITS,retention} from './measurement-independent-contract.js';
+import {time,need,serialize,LIMITS,retention,hash} from './measurement-independent-contract.js';
 import {assertion,clearAssertions} from './measurement-d1-adapter.js';
 import {compactOperationalRows} from './measurement-state-compaction.js';
 import {captureTransportTerminal} from './measurement-transport-maintenance.js';
 import {verifyRoot,verifyArchivePackage} from './measurement-archive.js';
+import {loadEvictionReconciliation,reconciliationFence,reconciliationBoundaryFence,encodeEvictionProgress,recheckRetainedPublication} from './measurement-eviction-reconciliation.js';
 export async function verifyArchiveParity(db,archive,publicationId){const p=await db.first('SELECT * FROM pa_publications WHERE id=?',publicationId);need(p?.state==='EVICTION_ELIGIBLE','pa_archive_not_eligible');const root=await verifyRoot(archive,p.root_key);need(root.manifestKey===p.manifest_key,'pa_archive_root_mismatch');
  for(const r of root.verified.records){const live=await db.first('SELECT digest,available_at,semantic_key,ready FROM pa_records WHERE id=?',r.id);need(live?.ready===1&&live.digest===r.digest&&live.available_at===r.available_at&&live.semantic_key===r.semantic_key,'pa_archive_report_parity');}
  await db.batch([assertion(db,'EXISTS(SELECT 1 FROM pa_publications p JOIN pa_scopes s ON s.id=p.scope_id WHERE p.id=? AND p.revision=s.archive_revision AND p.input_revision=s.revision AND s.pending=0 AND s.corrections=0)',p.id),db.statement('UPDATE pa_publications SET parity_verified=1 WHERE id=?',[p.id]),clearAssertions(db)]);return {parity:true};
 }
-export async function evictPublication(db,archive,id,{now,hook=null}={}){
+export async function evictPublication(db,archive,id,{now,hook=null,reconciliation=null}={}){
  time(now);const p=await db.first('SELECT * FROM pa_publications WHERE id=?',id);need(p?.state==='EVICTION_ELIGIBLE'&&p.parity_verified===1,'pa_eviction_not_verified');
+ const reconciled=reconciliation?await loadEvictionReconciliation(db,p,reconciliation,{now,completed:true}):null;
+ if(reconciled?.result)return {...reconciled.result,replayed:true};
  await hook?.('EVICTION_PREPARED',p);const root=await verifyRoot(archive,p.root_key);need(root.manifestKey===p.manifest_key,'pa_eviction_root');const snapshot=root.verified.snapshot,ids=snapshot.membership.map(r=>r.id);
+ if(reconciled){const c=reconciled.state.context;need(archive.namespace===c.namespace&&await hash(p.snapshot)===c.snapshotDigest,'pa_eviction_snapshot_changed');const current=await verifyRoot(archive,c.root);need(current.epoch===c.epoch&&current.generation===c.catalogueGeneration,'pa_eviction_boundary_identity');await recheckRetainedPublication(archive,p,root,current);}
  need(ids.length<=LIMITS.restoreRecords,'pa_eviction_budget');
+ const result={status:'EVICTED',records:ids.length,physicalReclamationCredit:0,rootKey:p.root_key};
+ const completed=reconciled?await encodeEvictionProgress({...reconciled.state,phase:'EVICTED',completedFrom:p.eviction_generation,result}):null;
  // Readback is necessary, but SQL source/closure fences remain eviction authority.
  await db.batch([
-  assertion(db,"EXISTS(SELECT 1 FROM pa_publications p JOIN pa_scopes s ON s.id=p.scope_id JOIN pa_meta m ON m.epoch=p.epoch WHERE p.id=? AND p.state='EVICTION_ELIGIBLE' AND p.parity_verified=1 AND s.archive_revision=p.revision AND s.revision=p.input_revision AND s.pending=0 AND s.corrections=0 AND m.root_key=p.root_key)",id),
+  ...(reconciled?[reconciliationFence(db,p,now),reconciliationBoundaryFence(db,p,reconciled.state),assertion(db,"EXISTS(SELECT 1 FROM pa_publications p JOIN pa_scopes s ON s.id=p.scope_id WHERE p.id=? AND p.state='EVICTION_ELIGIBLE' AND p.parity_verified=1 AND s.archive_revision=p.revision AND s.revision=p.input_revision AND s.pending=0 AND s.corrections=0)",id)]:[assertion(db,"EXISTS(SELECT 1 FROM pa_publications p JOIN pa_scopes s ON s.id=p.scope_id JOIN pa_meta m ON m.epoch=p.epoch WHERE p.id=? AND p.state='EVICTION_ELIGIBLE' AND p.parity_verified=1 AND s.archive_revision=p.revision AND s.revision=p.input_revision AND s.pending=0 AND s.corrections=0 AND m.root_key=p.root_key)",id)]),
   assertion(db,"NOT EXISTS(SELECT 1 FROM pa_pins WHERE scope_id IN(SELECT json_extract(value,'$.id') FROM json_each(?)) AND until_at>?)",serialize(snapshot.dependencyScopes),now),
   assertion(db,"NOT EXISTS(SELECT 1 FROM pa_jobs WHERE scope_id IN(SELECT json_extract(value,'$.id') FROM json_each(?)) AND state IN('PENDING','RUNNING'))",serialize(snapshot.dependencyScopes)),
   assertion(db,'NOT EXISTS(SELECT 1 FROM json_each(?) x LEFT JOIN pa_scopes s ON s.id=json_extract(x.value,\'$.id\') WHERE s.id IS NULL OR s.revision!=json_extract(x.value,\'$.revision\') OR s.archive_revision!=json_extract(x.value,\'$.archive_revision\') OR s.pending!=0 OR s.corrections!=0 OR s.quarantine!=json_extract(x.value,\'$.quarantine\') OR s.conflict!=json_extract(x.value,\'$.conflict\'))',serialize(snapshot.dependencyScopes)),
+  ...(reconciled?[assertion(db,"NOT EXISTS(SELECT 1 FROM json_each(?) x JOIN pa_scopes s ON s.id=json_extract(x.value,'$.id') WHERE s.recovery_required!=0 OR s.active IS NOT json_extract(x.value,'$.active') OR s.processing_eligible IS NOT json_extract(x.value,'$.processing_eligible') OR s.available_at IS NOT json_extract(x.value,'$.available_at') OR s.first_available_at IS NOT json_extract(x.value,'$.first_available_at') OR s.hold_until IS NOT json_extract(x.value,'$.hold_until'))",serialize(snapshot.dependencyScopes)),assertion(db,"NOT EXISTS(SELECT 1 FROM pa_restores WHERE state='RUNNING')"),assertion(db,"(SELECT COUNT(*) FROM pa_bindings WHERE signal_id=? OR evaluation_id=?)=json_array_length(?) AND NOT EXISTS(SELECT 1 FROM pa_bindings b WHERE (b.signal_id=? OR b.evaluation_id=?) AND NOT EXISTS(SELECT 1 FROM json_each(?) x WHERE json_extract(x.value,'$.evaluation_id')=b.evaluation_id AND json_extract(x.value,'$.signal_id') IS b.signal_id AND json_extract(x.value,'$.digest')=b.digest AND json_extract(x.value,'$.first_event')=b.first_event AND json_extract(x.value,'$.cycle_key') IS b.cycle_key AND json_extract(x.value,'$.cohort')=b.cohort))",p.scope_id,p.scope_id,serialize([...(snapshot.bindings??[]),...(snapshot.censusBindings??[])]),p.scope_id,p.scope_id,serialize([...(snapshot.bindings??[]),...(snapshot.censusBindings??[])]))]:[]),
   db.statement('UPDATE pa_scopes SET archive_root=?,revision=revision+1 WHERE id IN(SELECT json_extract(value,\'$.id\') FROM json_each(?))',[p.root_key,serialize(snapshot.dependencyScopes)]),
   db.statement('UPDATE pa_meta SET live_floor=revision+1,revision=revision+1'),
   db.statement("DELETE FROM pa_semantic_ingress WHERE state!='PENDING' AND event_id IN(SELECT id FROM pa_events WHERE 'event:'||id IN(SELECT value FROM json_each(?)))",[serialize(ids)]),
@@ -31,9 +38,10 @@ export async function evictPublication(db,archive,id,{now,hook=null}={}){
   db.statement('DELETE FROM pa_records WHERE id IN(SELECT value FROM json_each(?))',[serialize(ids)]),
   db.statement("DELETE FROM pa_jobs WHERE state IN('DONE','FAILED') AND event_id IN(SELECT json_extract(value,'$.first_event') FROM json_each(?))",[serialize(snapshot.bindings)]),
   db.statement("DELETE FROM pa_events WHERE state='COMMITTED' AND id IN(SELECT json_extract(value,'$.first_event') FROM json_each(?))",[serialize(snapshot.bindings)]),
-  clearAssertions(db)]);
+  ...(reconciled?[db.statement('UPDATE pa_publications SET eviction_progress=?,eviction_generation=eviction_generation+1 WHERE id=?',[completed,id])]:[]),clearAssertions(db)]);
+ await hook?.('EVICTION_COMMITTED',result);
  // No physical space credit. Catalogue detail and immutable bytes now live in archive.
- return {status:'EVICTED',records:ids.length,physicalReclamationCredit:0,rootKey:p.root_key};
+ return result;
 }
 export async function compactIndependentState(db,{now,limit=64,archive=null,retirementArchive=archive,hook=null}={}){
  need(limit>0&&limit<=64,'pa_cleanup_bound');

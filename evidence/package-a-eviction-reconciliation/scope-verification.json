@@ -1,0 +1,30 @@
+{
+  "baseline": "1640c3a9a20fe561dbf190cdf397faf41610179f",
+  "baselineTree": "80f232f3b8174d0604e61b17887237640796bed6",
+  "acceptedTrackedFiles": 199,
+  "existingFilesChanged": [
+    ".github/workflows/test.yml",
+    "measurement-d1-adapter.js",
+    "measurement-independent-retention.js",
+    "measurement-maintenance.js"
+  ],
+  "historicalMigrations0001Through0011": "BYTE_IDENTICAL",
+  "existingTests": "BYTE_IDENTICAL",
+  "tradingM1M2M3ProtectedSource": "BYTE_IDENTICAL",
+  "newMigration": "0012_package_a_eviction_reconciliation.sql",
+  "newOperation": "reconcilePublicationEvictionAuthority",
+  "proofReadBound": 1024,
+  "finalReadBound": 8742,
+  "progressBytesBound": 8192,
+  "publicationRowsBound": 64,
+  "additionalArchiveModelBytesPerPublication": 196608,
+  "physicalReclamationCredit": 0,
+  "runtimeCompatibility": [
+    11,
+    12
+  ],
+  "reconciliationSchema": 12,
+  "oldRuntimeCompatibleWithSchema12": false,
+  "cloudCalls": 0,
+  "productionAccess": false
+}

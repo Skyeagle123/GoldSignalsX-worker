@@ -3,6 +3,7 @@ import {enabled,need,independentBindings,time,identity} from './measurement-inde
 import {assertion,clearAssertions,SQL_CLOCK} from './measurement-d1-adapter.js';
 import {publishArchive,archiveReader} from './measurement-archive.js';
 import {verifyArchiveParity,evictPublication} from './measurement-independent-retention.js';
+import {reconcilePublicationEvictionAuthority} from './measurement-eviction-reconciliation.js';
 import {admitCorrection,processCorrection} from './measurement-corrections.js';
 import {hydrateArchive} from './measurement-restore.js';
 import {authorizeReplay} from './measurement-queue-consumer.js';
@@ -13,7 +14,8 @@ export function createMeasurementMaintenance(db,{archive,env,authorization,clock
  return Object.freeze({
   async publish(scopeId){const now=await authorized('archive','B1_ARCHIVE_WRITE_ENABLED');return publishArchive(db,archive,identity(scopeId),{now});},
   async parity(publicationId){await authorized('archive','B1_ARCHIVE_WRITE_ENABLED');return verifyArchiveParity(db,archive,identity(publicationId));},
-  async evict(publicationId){const now=await authorized('evict','B1_ARCHIVE_EVICTION_ENABLED');return evictPublication(db,archive,identity(publicationId),{now});},
+  async reconcileEviction(publicationId,{owner,continuation}={}){const now=await authorized('evict','B1_ARCHIVE_EVICTION_ENABLED');return reconcilePublicationEvictionAuthority(db,archive,identity(publicationId),{now,owner,continuation});},
+  async evict(publicationId,{reconciliation=null}={}){const now=await authorized('evict','B1_ARCHIVE_EVICTION_ENABLED');return evictPublication(db,archive,identity(publicationId),{now,reconciliation});},
   async correct(input){const now=await authorized('correction','B1_CORRECTION_ADMISSION_ENABLED');return admitCorrection(db,input,{now,archive:reader});},
   async processCorrection(id){const now=await authorized('correction','B1_CORRECTION_ADMISSION_ENABLED');return processCorrection(db,identity(id),{now,archive:reader});},
   async restore(rootKey,options={}){const now=await authorized('restore','B1_RESTORE_ENABLED');return hydrateArchive(db,archive,rootKey,{ids:options.ids??null,lineageContinuation:options.lineageContinuation??null,now,environment,authorization:{operation:'restore',environment,expiresAt:authorization.expiresAt}});},
