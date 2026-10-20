@@ -1,0 +1,11 @@
+{"genuineProducer":{"events":14,"census":7,"evaluation":"native-alias-schedule:1:3","signal":"native-alias-schedule:1:30m:buy","processingJobs":"DONE","evaluationLifecycle":null,"officialResultSubject":"native-alias-schedule:1:30m:buy"}}
+✔ Processing binding: genuine 1 cycle / 7 census / 1 Official / 5 links through Queue and scheduled Worker (2681.247054ms)
+✔ Processing binding: alternate fixed date retains the legitimate daily BUY confirmation through Queue (2580.331472ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5394.63974

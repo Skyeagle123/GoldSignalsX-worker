@@ -1,0 +1,10 @@
+{
+  "note": "Development runs are not final acceptance. The first alternate-date control asserted COMMITTED immediately after Queue staging. The accepted contract requires scheduled recovery. The final control now performs scheduled recovery before checking all 15 committed identities; no runtime change was made. The initial family run was started with that same development test and is retained separately.",
+  "developmentLogs": [
+    "development-focused-queue-only.log.gz",
+    "development-family-queue-only.log.gz"
+  ],
+  "finalFocusedLog": "focused.log",
+  "finalFamilyLog": "processing-binding.log",
+  "storage": "Gzip preserves raw development output byte-for-byte, including assertion whitespace."
+}

@@ -1,0 +1,12 @@
+{
+  "node": "v24.19.0",
+  "aggregateCommand": "node --test test-b1-*.mjs",
+  "aggregateTestFileConcurrency": "Node default; no --test-concurrency override",
+  "githubWorkflowNodeMajor": 22,
+  "localNodeMajor": 24,
+  "note": "Exact workflow aggregate command/configuration used with locally available Node 24.19.0. No GitHub workflow rerun or runtime change. Automatic exact-SHA CI remains required after independent review/publication.",
+  "testAssertionsRemoved": false,
+  "testsExcluded": false,
+  "internalWorkerSchedulesChanged": false,
+  "expectedFailureWorkaround": false
+}

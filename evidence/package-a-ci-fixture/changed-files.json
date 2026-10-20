@@ -1,0 +1,22 @@
+[
+  "B1-PACKAGE-A-CI-FIXTURE.md",
+  "evidence/package-a-ci-fixture/acceptance-summary.json",
+  "evidence/package-a-ci-fixture/changed-files.json",
+  "evidence/package-a-ci-fixture/development-family-queue-only.log.gz",
+  "evidence/package-a-ci-fixture/development-focused-queue-only.log.gz",
+  "evidence/package-a-ci-fixture/development-notes.json",
+  "evidence/package-a-ci-fixture/expected-events.json",
+  "evidence/package-a-ci-fixture/focused.log",
+  "evidence/package-a-ci-fixture/frozen-source-sha256.json",
+  "evidence/package-a-ci-fixture/full-acceptance.log",
+  "evidence/package-a-ci-fixture/news.log",
+  "evidence/package-a-ci-fixture/processing-binding.log",
+  "evidence/package-a-ci-fixture/reliability.log",
+  "evidence/package-a-ci-fixture/risk-budget.log",
+  "evidence/package-a-ci-fixture/risk-sizing.log",
+  "evidence/package-a-ci-fixture/runtime-identity.json",
+  "evidence/package-a-ci-fixture/scope-verification.json",
+  "evidence/package-a-ci-fixture/signals-security.log",
+  "evidence/package-a-ci-fixture/validation-environment.json",
+  "test-b1-package-a-processing-binding.mjs"
+]

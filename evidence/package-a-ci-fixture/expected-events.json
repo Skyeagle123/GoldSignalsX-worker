@@ -1,0 +1,70 @@
+{
+  "namespace": "goldsignalsx:b1",
+  "fixedTimestamp": "2026-10-19T21:40:00Z",
+  "exactSchedule": [
+    [
+      "DECISION_CYCLE",
+      "native-alias-schedule:1"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:0"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:1"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:2"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:3"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:4"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:5"
+    ],
+    [
+      "EVALUATION_CENSUS",
+      "native-alias-schedule:1:6"
+    ],
+    [
+      "OFFICIAL_CREATION",
+      "native-alias-schedule:1:30m:buy"
+    ],
+    [
+      "CONFIRMATION_LINK",
+      "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:1m:buy"
+    ],
+    [
+      "CONFIRMATION_LINK",
+      "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:5m:buy"
+    ],
+    [
+      "CONFIRMATION_LINK",
+      "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:15m:buy"
+    ],
+    [
+      "CONFIRMATION_LINK",
+      "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:60m:buy"
+    ],
+    [
+      "CONFIRMATION_LINK",
+      "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:240m:buy"
+    ]
+  ],
+  "exactCount": 14,
+  "alternateTimestamp": "2026-10-20T08:40:00Z",
+  "alternateAdditionalEvent": [
+    "CONFIRMATION_LINK",
+    "native-alias-schedule:1:30m:buy:confirmation:native-alias-schedule:1:1d:buy"
+  ],
+  "alternateCount": 15,
+  "postRecoveryAssertions": "Committed kind/semantic identity set and exact event IDs equal the pre-Queue producer set."
+}

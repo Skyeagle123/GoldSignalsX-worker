@@ -1,0 +1,33 @@
+{
+  "baseline": "800965af73d9398ad5f754b6e8fe62129bfb0ef0",
+  "baselineTree": "59d054b18134fcc695e77d42fcabe43a8fa0b311",
+  "baselineTrackedFiles": 299,
+  "byteIdenticalBaselineFiles": 298,
+  "onlyChangedBaselineFile": [
+    "test-b1-package-a-processing-binding.mjs"
+  ],
+  "runtimeByteIdentical": true,
+  "migrationsByteIdentical": true,
+  "migrationFiles": 12,
+  "noMigrationAdded": true,
+  "frozenSourceFiles": 166,
+  "frozenSourceUnchanged": true,
+  "allPrevious1005TestsPreserved": true,
+  "newTests": [
+    "Processing binding: alternate fixed date retains the legitimate daily BUY confirmation through Queue"
+  ],
+  "preservedWorktrees": [
+    {
+      "path": "/workspace/scratch/c6f879705017/GoldSignalsX-sample-alias-reconciliation",
+      "files": 227,
+      "byteIdentical": true
+    },
+    {
+      "path": "/workspace/scratch/c6f879705017/package-a-publication-recovery/GoldSignalsX-Package-A",
+      "files": 258,
+      "byteIdentical": true
+    }
+  ],
+  "noPush": true,
+  "noCloudflareAccess": true
+}

@@ -21,15 +21,39 @@ async function drain(x,hook=null){for(let i=0;i<12;i++)await runRecovery(createM
 async function selected(x){const r=await resolveProcessingSubject(x.db,x.evaluationId,{now:x.at});assert.equal(r.role,'OFFICIAL_EVALUATION');return r;}
 async function canonical(x){return processCapturedOutcome(x.db,x.scopeId,{now:x.at,rebuild:true});}
 
+// Monday's synthetic daily candle fails the accepted 72-hour candle-age gate.
+// Pin this exact five-link schedule; real execution time must not select its inputs.
+const genuineScheduleAt=Date.parse('2026-10-19T21:40:00Z');
+const dailyConfirmationAt=Date.parse('2026-10-20T08:40:00Z');
+const genuineCycle='native-alias-schedule:1',genuineSignal=genuineCycle+':30m:buy';
+function expectedGenuineEvents({daily=false}={}){
+ return [['DECISION_CYCLE',genuineCycle],...Array.from({length:7},(_,i)=>['EVALUATION_CENSUS',genuineCycle+':'+i]),['OFFICIAL_CREATION',genuineSignal],...['1m','5m','15m','60m','240m',...(daily?['1d']:[])].map(tf=>['CONFIRMATION_LINK',genuineSignal+':confirmation:'+genuineCycle+':'+tf+':buy'])];
+}
+const sortedEventSet=events=>events.map(event=>JSON.stringify(event)).sort();
+function assertProducerEvents(w,expected){
+ assert.equal(w.packets.length,expected.length);
+ assert.deepEqual(sortedEventSet(w.packets.map(p=>[p.envelope.kind,p.envelope.semanticId])),sortedEventSet(expected));
+ assert.equal(new Set(w.packets.map(p=>p.envelope.eventId)).size,expected.length);
+}
+function assertCommittedEvents(x,w,expected){
+ const rows=x.raw.prepare("SELECT id,kind,semantic_key FROM pa_events WHERE state='COMMITTED'").all();
+ assert.equal(rows.length,expected.length);
+ assert.deepEqual(sortedEventSet(rows.map(r=>{const [namespace,kind,id]=JSON.parse(r.semantic_key);assert.equal(namespace,'goldsignalsx:b1');assert.equal(r.kind,kind);return [kind,id];})),sortedEventSet(expected));
+ assert.deepEqual(rows.map(r=>r.id).sort(),w.packets.map(p=>p.envelope.eventId).sort());
+}
+
 test('Processing binding: genuine 1 cycle / 7 census / 1 Official / 5 links through Queue and scheduled Worker',async()=>{
- let clock=Date.now();const saved=Date.now;Date.now=()=>clock;const x=await packageDatabase({clock:()=>clock}),bucket=fakeBucket();try{
+ let clock=genuineScheduleAt;const saved=Date.now;Date.now=()=>clock;const x=await packageDatabase({clock:()=>clock}),bucket=fakeBucket();try{
  const w=await syntheticWorkload((await loadM1Workers()).after,{runId:'native-alias-schedule',tick:1,at:clock});
+ const expected=expectedGenuineEvents();assert.equal(expected.length,14);assertProducerEvents(w,expected);
  const env={MEASUREMENT_ENVIRONMENT:'synthetic-b1-package-a',MEASUREMENT_EXPECTED_D1_ID:'LOCAL_ONLY_NO_CLOUD_ID',MEASUREMENT_DB:x.binding,MEASUREMENT_ARCHIVE:bucket.bucket,MEASUREMENT_ARCHIVE_NAMESPACE:'synthetic-b1-processing/',MEASUREMENT_QUEUE_NAME:'synthetic-b1-queue',MEASUREMENT_DLQ_NAME:'synthetic-b1-dlq',B1_MEASUREMENT_CONSUMER_ENABLED:'1',B1_ARCHIVE_WRITE_ENABLED:'0',B1_ARCHIVE_EVICTION_ENABLED:'0'};
  const send=async ms=>measurement.queue({queue:env.MEASUREMENT_QUEUE_NAME,messages:ms.map(({body})=>({body,ack(){},retry(){throw Error('unexpected_retry');}}))},env);
  await send(w.messages);
  const completed=new Set();
  for(let n=0;n<12;n++){clock+=120000;const tasks=[];await measurement.scheduled({},env,{waitUntil:p=>tasks.push(p)});await Promise.all(tasks);for(const j of x.raw.prepare("SELECT scope_id FROM pa_jobs WHERE class='processing' AND state='DONE'").all())completed.add(j.scope_id);}
  assert.equal(sql(x,"SELECT COUNT(*) n FROM pa_events WHERE state='COMMITTED'").n,14);
+ assertCommittedEvents(x,w,expected);
+ assert.equal(sql(x,"SELECT COUNT(*) n FROM pa_events WHERE state='COMMITTED' AND kind='OFFICIAL_CREATION'").n,1);
  const e='native-alias-schedule:1:3',s='native-alias-schedule:1:30m:buy';assert.notEqual(e,s);
  assert(completed.has(e));assert(completed.has(s));assert(!job(x,e)||job(x,e).state==='DONE');assert(!job(x,s)||job(x,s).state==='DONE');
  assert.equal(await rebuildD1Projection(x.db,e,{now:clock}),null);
@@ -39,6 +63,17 @@ test('Processing binding: genuine 1 cycle / 7 census / 1 Official / 5 links thro
  assert.equal(sql(x,"SELECT COUNT(*) n FROM pa_jobs WHERE class='processing' AND state!='DONE'").n,0);
  const report=await createIndependentReporting(x.db,{tokenKey:'x'.repeat(32),clock:()=>clock});const page=await report.query({view:'CENSUS',cohort:w.cohort,definition:'engine-v1',from:0,to:clock,asOf:clock});assert.equal(page.censusDenominator,7);assert.equal(page.denominatorScope,'PAGE_ONLY');
  console.log(JSON.stringify({genuineProducer:{events:14,census:7,evaluation:e,signal:s,processingJobs:'DONE',evaluationLifecycle:null,officialResultSubject:p.subjectId}}));
+ }finally{x.close();Date.now=saved;}
+});
+
+test('Processing binding: alternate fixed date retains the legitimate daily BUY confirmation through Queue',async()=>{
+ let clock=dailyConfirmationAt;const saved=Date.now;Date.now=()=>clock;const x=await packageDatabase({clock:()=>clock}),bucket=fakeBucket();try{
+  const w=await syntheticWorkload((await loadM1Workers()).after,{runId:'native-alias-schedule',tick:1,at:dailyConfirmationAt}),expected=expectedGenuineEvents({daily:true});assert.equal(expected.length,15);assertProducerEvents(w,expected);
+  const id=genuineSignal+':confirmation:'+genuineCycle+':1d:buy',daily=w.packets.find(p=>p.envelope.kind==='CONFIRMATION_LINK'&&p.envelope.semanticId===id);assert(daily);assert.equal(daily.envelope.payload.primarySignalId,genuineSignal);assert.equal(daily.envelope.payload.confirmationSignalId,genuineCycle+':1d:buy');
+  const env={MEASUREMENT_ENVIRONMENT:'synthetic-b1-package-a',MEASUREMENT_EXPECTED_D1_ID:'LOCAL_ONLY_NO_CLOUD_ID',MEASUREMENT_DB:x.binding,MEASUREMENT_ARCHIVE:bucket.bucket,MEASUREMENT_ARCHIVE_NAMESPACE:'synthetic-b1-processing/',MEASUREMENT_QUEUE_NAME:'synthetic-b1-queue',MEASUREMENT_DLQ_NAME:'synthetic-b1-dlq',B1_MEASUREMENT_CONSUMER_ENABLED:'1',B1_ARCHIVE_WRITE_ENABLED:'0',B1_ARCHIVE_EVICTION_ENABLED:'0'};
+  await measurement.queue({queue:env.MEASUREMENT_QUEUE_NAME,messages:w.messages.map(({body})=>({body,ack(){},retry(){throw Error('unexpected_retry');}}))},env);
+  for(let n=0;n<12;n++){clock+=120000;const tasks=[];await measurement.scheduled({},env,{waitUntil:p=>tasks.push(p)});await Promise.all(tasks);}
+  assertCommittedEvents(x,w,expected);assert.equal(sql(x,"SELECT state FROM pa_events WHERE id=?",daily.envelope.eventId).state,'COMMITTED');
  }finally{x.close();Date.now=saved;}
 });
 

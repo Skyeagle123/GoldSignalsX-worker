@@ -1,0 +1,82 @@
+{
+  "baseline": "800965af73d9398ad5f754b6e8fe62129bfb0ef0",
+  "baselineTree": "59d054b18134fcc695e77d42fcabe43a8fa0b311",
+  "scope": "TEST / FIXTURE ONLY",
+  "fixedTimestamp": "2026-10-19T21:40:00Z",
+  "alternateTimestamp": "2026-10-20T08:40:00Z",
+  "exactProducerEvents": 14,
+  "alternateProducerEvents": 15,
+  "focused": {
+    "tests": 2,
+    "pass": 2,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "processingBinding": {
+    "tests": 61,
+    "pass": 61,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "aggregateCommand": "node --test test-b1-*.mjs",
+  "aggregate": {
+    "tests": 1006,
+    "pass": 1006,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "previous1005Preserved": true,
+  "newTests": 1,
+  "families": {
+    "acceptedRuntime": 811,
+    "processingBinding": 61,
+    "processingProgress": 33,
+    "sampleOrdering": 35,
+    "boundedArchive": 41,
+    "continuity": 25
+  },
+  "policies": {
+    "News": "PASS",
+    "Reliability": "PASS",
+    "Risk Budget": "PASS",
+    "Risk Sizing": "PASS",
+    "Signals Security": "PASS"
+  },
+  "reliabilityExpectedFailureWorkaround": false,
+  "runtimeByteIdentical": true,
+  "migrationsByteIdentical": true,
+  "migrationAdded": false,
+  "frozenSourceFiles": 166,
+  "frozenSourceUnchanged": true,
+  "workflowDefaultConcurrency": true,
+  "localNode": "v24.19.0",
+  "workflowNodeMajor": 22,
+  "githubCiRerun": false,
+  "pushPerformed": false,
+  "cloudflareAccess": false,
+  "remainingFindings": [],
+  "developmentRuns": "Earlier Queue-only assertion failures are preserved separately; final fixed-source acceptance uses actual scheduled recovery. See development-notes.json.",
+  "evidenceSha256": {
+    "changed-files.json": "04174417a87a3e810f725f6463ffa4a05dba7f92da1b5db7bf12bb4553714707",
+    "development-family-queue-only.log.gz": "9e50319b1d4027a6df66d04f00ea2da026069be026daf909de8152dfef8afa2c",
+    "development-focused-queue-only.log.gz": "436a3444e3d778caf93085b6f9c39e2e13f70996aca073b4875d87a9eef0c8e8",
+    "development-notes.json": "cb8ffc5843610f3b98d0992caee85280e0f0e7713ca22d604bf07527cd096514",
+    "expected-events.json": "921357eaa1cc2cb83f2298f03592de60d233a5bb0edc3572cf3ab77637028392",
+    "focused.log": "4c6a69b7b208786d320bf260597b8adab394986b624611752808cac024f961c0",
+    "frozen-source-sha256.json": "f0667a5bbc47985a61385a045058cac1c0ce472365ef5b5d38d35fb066c1a71f",
+    "full-acceptance.log": "566db86ecdb8a1449b0d006863b58325d3c13b36859302c4f6c68f36f3fbd314",
+    "news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "processing-binding.log": "0451d1448172ff34392a3b31d8c99052f7b75b45d4699b92c3a4f0552fb26584",
+    "reliability.log": "fb4acaf0fc4d565d540dc848f7e85089d5fb299c7f2476973a642554fa6dbd6a",
+    "risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "runtime-identity.json": "60d9936c3fd732a95077e25e1993278e059d5f66ba75de98191446c0d09c80e1",
+    "scope-verification.json": "88017fa4500b6c5f6e2894cb86dd29a1ddee0e81ebc1af83a041bafd37a9b793",
+    "signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b",
+    "validation-environment.json": "802bd2220a10862ca84e1f1e628a1573bbcd81d01b4ff77bc470c9564e707857"
+  },
+  "sourceDiffCheck": "PASS"
+}
