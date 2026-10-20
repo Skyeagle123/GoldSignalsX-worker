@@ -1,0 +1,101 @@
+name: Publish accepted Git bundle
+
+# Preparation only. Owner setup and independent review precede enablement.
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_json:
+        description: 'Canonical publication manifest JSON (no credentials)'
+        required: true
+        type: string
+      manifest_sha256:
+        description: 'Owner-approved canonical manifest SHA-256'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: goldsignalsx-exact-publication
+  cancel-in-progress: false
+
+env:
+  INPUT_MANIFEST_JSON: ${{ inputs.manifest_json }}
+  INPUT_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+  GSX_PUBLICATION_ENABLED: ${{ vars.GSX_PUBLICATION_ENABLED }}
+  GSX_REVIEWED_INFRASTRUCTURE_SHA: ${{ vars.GSX_REVIEWED_INFRASTRUCTURE_SHA }}
+  GSX_APPROVED_MANIFEST_SHA256: ${{ vars.GSX_APPROVED_MANIFEST_SHA256 }}
+  GSX_PUBLICATION_ENVIRONMENT_ID: ${{ vars.GSX_PUBLICATION_ENVIRONMENT_ID }}
+  GSX_PUBLICATION_APP_ID: ${{ vars.GSX_PUBLICATION_APP_ID }}
+  GSX_PUBLICATION_INSTALLATION_ID: ${{ vars.GSX_PUBLICATION_INSTALLATION_ID }}
+  GSX_PROTECTIONS_VERIFIED: ${{ vars.GSX_PROTECTIONS_VERIFIED }}
+  GSX_PRODUCTION_ISOLATION_VERIFIED: ${{ vars.GSX_PRODUCTION_ISOLATION_VERIFIED }}
+
+jobs:
+  validate:
+    if: >-
+      github.repository == 'Skyeagle123/GoldSignalsX-worker' &&
+      github.repository_id == '1085006449' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.run_attempt == 1 &&
+      vars.GSX_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout trusted infrastructure only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Validate immutable input and exact Git objects
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/publication/publication.py validate
+
+  publish:
+    needs: validate
+    if: >-
+      needs.validate.result == 'success' && github.run_attempt == 1 &&
+      github.ref == 'refs/heads/main' && vars.GSX_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    environment:
+      name: goldsignalsx-publication
+      deployment: false
+    steps:
+      - name: Checkout trusted infrastructure only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Revalidate, verify Owner approval, publish once and revoke
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          GSX_PUBLICATION_APP_PRIVATE_KEY: ${{ secrets.GSX_PUBLICATION_APP_PRIVATE_KEY }}
+        run: python3 -I scripts/publication/publication.py publish
+
+  observe:
+    needs: [validate, publish]
+    # Includes uncertain publication failures: observation never retries a push.
+    if: >-
+      always() && !cancelled() && needs.validate.result == 'success' &&
+      github.run_attempt == 1 && github.ref == 'refs/heads/main' &&
+      vars.GSX_PUBLICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 32
+    steps:
+      - name: Checkout trusted infrastructure only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Observe remote and genuine automatic push CI
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/publication/publication.py observe
