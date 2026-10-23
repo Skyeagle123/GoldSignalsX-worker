@@ -2,7 +2,7 @@ name: Production security qualification
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, phase/b1-production-isolation-retry-safety]
 permissions:
   contents: read
 jobs:

@@ -1,0 +1,56 @@
+{
+  "scope": "Offline qualification of the CI trigger successor; no automatic CI executed.",
+  "accepted_security_commit": "e6af396425a4527a6aec3a7633769ddec21e534a",
+  "accepted_tree": "ef1e14505658c217ead49bc60d0211186ce9b6ff",
+  "accepted_parent": "5820a9c7fb10f6d1e6c9c944a3490edc36da9c48",
+  "remote_main_verified": "5820a9c7fb10f6d1e6c9c944a3490edc36da9c48",
+  "qualified_at_utc": "2026-10-23T20:16:49.766939+00:00",
+  "workflows": {
+    ".github/workflows/test.yml": {
+      "before_sha256": "7ff2fb1153e07cc036d3f017d48cb394dc2b66231e52dbf93dcf8762007f784b",
+      "after_sha256": "749b3a2fca99ac249bfd9b75b89fc92c7b4dd28694c67c8ecb1b77c12bdedd05",
+      "only_literal_branch_added": true,
+      "yaml_structure_except_push_branches_identical": true,
+      "jobs": [
+        "test"
+      ]
+    },
+    ".github/workflows/production-security-tests.yml": {
+      "before_sha256": "abf05c64990fb7ada4b5dd742357fc0275d45fc75cd919b78e9c6f6061f30509",
+      "after_sha256": "ae666826481ac9c5f350969bd112bfe0da431658f59cf175a3e9b39de32baff9",
+      "only_literal_branch_added": true,
+      "yaml_structure_except_push_branches_identical": true,
+      "jobs": [
+        "offline",
+        "policies"
+      ]
+    }
+  },
+  "offline_checks": {
+    "yaml_base_loader": "PASS (PyYAML 6.0.3; preserves on key)",
+    "actionlint": "1.7.12 PASS (both changed workflows)",
+    "raw_byte_delta": "Exactly one push branches line per workflow; all other bytes identical",
+    "structure": "All permissions, jobs, steps, actions, PR/manual triggers and path filters unchanged",
+    "path_filter": "Test Worker push matches changed .github/workflows/test.yml; Production security has no path restriction",
+    "push_eligibility": "Both workflows eligible on literal branch for this successor push, subject to GitHub repository settings and authorization",
+    "git_diff_check": "PASS",
+    "unaffected_parent_tracked_files_byte_identical": 68,
+    "accepted_source_hashes_verified": 27,
+    "accepted_evidence_hashes_verified": 18
+  },
+  "historical_validation": {
+    "scope": "Existing evidence/production-isolation/validation.json and preservation/reconciliation evidence remain unmodified historical evidence for e6af396, not fresh workflow hashes or test execution on this successor. New workflow hashes are recorded above.",
+    "security_tests": 162,
+    "publication_tests": 90,
+    "bls_tests_included_in_security": 6,
+    "current_task_rerun": false
+  },
+  "reliability": {
+    "status": "Separate release/full-regression blocker; unchanged parent failure",
+    "assertion": "test-reliability.mjs:86; actual degraded; expected healthy",
+    "assertions_modified_or_skipped": false,
+    "candidate_log_sha256": "4662d49af6e380b1fe1529deeb7ec05feb6d94ce27f3e310dd4001d446afa68c",
+    "parent_log_sha256": "a4b14ef018933d55bfa8d804171ef9dc22ac728294fd7f3103c835e203c17ed6"
+  },
+  "restrictions": "No publication, push, PR, merge, dispatch, rerun, deployment, Production or secret changes."
+}
