@@ -1,0 +1,15 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn deprecated rollup-plugin-inject@3.0.2: This package has been deprecated and is no longer maintained. Please use @rollup/plugin-inject.
+npm warn deprecated sourcemap-codec@1.4.8: Please use @jridgewell/sourcemap-codec instead
+
+added 61 packages in 11s
+{"patched_cli_sha256": "9bd4b41d6120638fff269498446c50e010e235be043a27dc5e8c4718b3d7f724", "patcher_sha256": "ebdb0f782c0e4bcf272e57c8336bfbb152e34c4cb1404adc10689f851c5ea18b", "upstream_cli_sha256": "3ddc7ba0e400b3ad75e49a4bb18dc9b6b6727873920efe4797940b67bdbb790a"}
+one 97874192 955fb3f75c6cec81920074ca279dac545d8a099ee3ac391b6c580c390cb32f53
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn deprecated sourcemap-codec@1.4.8: Please use @jridgewell/sourcemap-codec instead
+npm warn deprecated rollup-plugin-inject@3.0.2: This package has been deprecated and is no longer maintained. Please use @rollup/plugin-inject.
+
+added 61 packages in 11s
+{"patched_cli_sha256": "9bd4b41d6120638fff269498446c50e010e235be043a27dc5e8c4718b3d7f724", "patcher_sha256": "ebdb0f782c0e4bcf272e57c8336bfbb152e34c4cb1404adc10689f851c5ea18b", "upstream_cli_sha256": "3ddc7ba0e400b3ad75e49a4bb18dc9b6b6727873920efe4797940b67bdbb790a"}
+two 97874192 955fb3f75c6cec81920074ca279dac545d8a099ee3ac391b6c580c390cb32f53
+FINAL REPRODUCIBILITY PASS

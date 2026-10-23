@@ -1,0 +1,19 @@
+{
+  "format": "gsx-toolchain-v1",
+  "wrangler": "3.114.17",
+  "upstream_source": "f21ee75d09f24e655574e9bae920585e1a31b15e",
+  "npm_integrity": "sha512-tAvf7ly+tB+zwwrmjsCyJ2pJnnc7SZhbnNwXbH+OIdVas3zTSmjcZOjmLKcGGptssAA3RyTKhcF9BvKZzMUycA==",
+  "upstream_cli_sha256": "3ddc7ba0e400b3ad75e49a4bb18dc9b6b6727873920efe4797940b67bdbb790a",
+  "patched_cli_sha256": "9bd4b41d6120638fff269498446c50e010e235be043a27dc5e8c4718b3d7f724",
+  "node": "24.19.0",
+  "node_binary_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+  "npm": "11.17.0",
+  "node_archive_sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647",
+  "npm_cli_sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+  "lock_sha256": "f6dabcd74a719bfd36163f3ce73944af836867619347e16f44a1b2872bc126cd",
+  "patcher_sha256": "ebdb0f782c0e4bcf272e57c8336bfbb152e34c4cb1404adc10689f851c5ea18b",
+  "gate_sha256": "5693513af8a94606a95b0ec327be3a0df0875ef057686b72c606e6e01d8ebddb",
+  "strict_json_sha256": "9be1414891226f865296c59fb14ec42f6088e423710241fc73d246e8b5afa5d9",
+  "npm_tree_sha256": "a845a2fb7c3974914f58326b7d9e3c1edb3b20f1f370b360b972c63b4bd1458c",
+  "node_license_sha256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5"
+}

@@ -1,28 +1,102 @@
 name: Deploy GoldSignalsX Worker
-
 on:
   workflow_dispatch:
-
+    inputs:
+      baseline_json:
+        description: 'Reviewed exact Production baseline JSON; no credentials'
+        required: true
+        type: string
+      rollback_version:
+        description: 'Reviewed compatible rollback version UUID'
+        required: true
+        type: string
+      rollback_digest:
+        description: 'SHA-256 of reviewed canonical rollback-version API record'
+        required: true
+        type: string
 permissions:
   contents: read
-
+  actions: read
+concurrency:
+  group: goldsignalsx-production
+  cancel-in-progress: false
+env:
+  GSX_PRODUCTION_ENABLED: ${{ vars.GSX_PRODUCTION_ENABLED }}
+  GSX_PRODUCTION_REVIEWED_SHA: ${{ vars.GSX_PRODUCTION_REVIEWED_SHA }}
+  GSX_PRODUCTION_ENVIRONMENT_ID: ${{ vars.GSX_PRODUCTION_ENVIRONMENT_ID }}
+  GSX_PRODUCTION_ACCOUNT: ${{ vars.GSX_PRODUCTION_ACCOUNT }}
+  GSX_PRODUCTION_CREDENTIAL_MODE: ${{ vars.GSX_PRODUCTION_CREDENTIAL_MODE }}
+  GSX_PRODUCTION_MIGRATION_T0: ${{ vars.GSX_PRODUCTION_MIGRATION_T0 }}
+  GSX_PRODUCTION_ISOLATION_READY: ${{ vars.GSX_PRODUCTION_ISOLATION_READY }}
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    env:
-      WORKER_BASE_URL: ${{ vars.GSX_WORKER_URL || 'https://goldsignalsx-worker.samer-mourtada.workers.dev' }}
-      PWA_URL: ${{ vars.GSX_PWA_URL || 'https://skyeagle123.github.io/GoldSignalsX-Ultimate/' }}
+  prepare:
+    name: Prepare Production
+    if: >-
+      github.repository == 'Skyeagle123/GoldSignalsX-worker' &&
+      github.repository_id == '1085006449' && github.actor == 'Skyeagle123' &&
+      github.actor_id == '125151458' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && github.run_attempt == 1 &&
+      vars.GSX_PRODUCTION_ENABLED == 'true' &&
+      github.sha == vars.GSX_PRODUCTION_REVIEWED_SHA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
-
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+      - name: Build and bind secret-free artifact
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          INPUT_BASELINE_JSON: ${{ inputs.baseline_json }}
+          INPUT_ROLLBACK: ${{ inputs.rollback_version }}
+          INPUT_ROLLBACK_DIGEST: ${{ inputs.rollback_digest }}
+        run: python3 -I ops/production/prepare.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: upload
+        with:
+          name: gsx-production-${{ github.run_id }}-1
+          path: |
+            .production-build/authorization.json
+            .production-build/policy.json
+            .production-build/toolchain.tar.gz
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+  deploy:
+    name: Deploy Production
+    needs: prepare
+    if: needs.prepare.result == 'success' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: goldsignalsx-production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
+          merge-multiple: true
+          path: .production-build
+      - name: Fresh approval, state and baseline; invoke once
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          GSX_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          GSX_CHECK_RUN_ID: ${{ job.check_run_id }}
+          GSX_PRODUCTION_CF_API_TOKEN: ${{ secrets.GSX_PRODUCTION_CF_API_TOKEN }}
+          GSX_PRODUCTION_CF_ACCOUNT_ID: ${{ secrets.GSX_PRODUCTION_CF_ACCOUNT_ID }}
+        run: python3 -I ops/production/deploy.py
       - name: Post-deploy smoke test
         timeout-minutes: 5
+        env:
+          WORKER_BASE_URL: ${{ vars.GSX_WORKER_URL || 'https://goldsignalsx-worker.samer-mourtada.workers.dev' }}
+          PWA_URL: ${{ vars.GSX_PWA_URL || 'https://skyeagle123.github.io/GoldSignalsX-Ultimate/' }}
         run: node .github/scripts/post-deploy-smoke.mjs
