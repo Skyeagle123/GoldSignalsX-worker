@@ -58,7 +58,7 @@ async function operation(resource,init,query,signal,Response){
  if((id==='upload-version'||id==='upload-legacy')&&data.result.startup_time_ms!==undefined&&(!Number.isFinite(data.result.startup_time_ms)||data.result.startup_time_ms<0))fail();
  if(id==='settings'&&(!data.result||typeof data.result!=='object'||Array.isArray(data.result)))fail();
  if(id==='subdomain'&&(data.result?.enabled!==c.subdomain.enabled||data.result?.previews_enabled!==c.subdomain.previews_enabled))fail();
- if(id==='schedules'&&(!Array.isArray(data.result)||canonical(data.result.map(x=>({cron:x.cron})))!==canonical(c.schedules)))fail();
+ if(id==='schedules'&&(!data.result||!Array.isArray(data.result.schedules)||canonical(data.result.schedules.map(x=>({cron:x.cron})))!==canonical(c.schedules)))fail();
  if(failed||stopped)fail();return new Response(r.bytes,{status:r.status,headers:{'Content-Type':'application/json'}});
 }
 exports.fetch=function(resource,init={},query,signal,Response){const result=chain.then(()=>operation(resource,init,query,signal,Response));chain=result.then(()=>{},()=>{failed=true;});return result;};

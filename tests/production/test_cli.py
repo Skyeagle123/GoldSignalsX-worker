@@ -5,6 +5,10 @@ from cli_http import scenario,prepare_control,ROOT
 class CLIQualification(unittest.TestCase):
  @classmethod
  def setUpClass(cls):prepare_control()
+ def test_invalid_schedule_contract_single_request(self):
+  for fault in ('old-schedules','wrong-schedules'):
+   with self.subTest(fault=fault):
+    code,calls,out=scenario(fault=fault,at='schedules');self.assertNotEqual(code,0,out);self.assertEqual(sum(c['kind']=='schedules' for c in calls),1);self.assertEqual(calls[-1]['kind'],'schedules')
  def test_kernel_egress_denied(self):
   p=subprocess.run(['/tmp/gsx-no-network',sys.executable,'-c','import socket; socket.socket(socket.AF_INET)'],capture_output=True);self.assertNotEqual(p.returncode,0);self.assertIn(b'Operation not permitted',p.stderr)
  def test_kernel_ipv6_denied(self):

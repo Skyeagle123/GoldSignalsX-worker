@@ -1,0 +1,13 @@
+{
+  "builds": [
+    {
+      "artifact_bytes": 97902438,
+      "artifact_sha256": "cebdee1ce573f50ca96beb9ae13170a7a0618bef36323718afd27bb94c30b84d"
+    },
+    {
+      "artifact_bytes": 97902438,
+      "artifact_sha256": "cebdee1ce573f50ca96beb9ae13170a7a0618bef36323718afd27bb94c30b84d"
+    }
+  ],
+  "status": "two independent builds match"
+}

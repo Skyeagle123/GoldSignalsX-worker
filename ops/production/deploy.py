@@ -14,15 +14,17 @@ def cancel(signum,frame):
  # exec must prevent invocation too. exec keeps the same PID; after exec the
  # preloaded Node gate owns cancellation and non-success exit semantics.
  raise Rejected('cancelled before CLI invocation')
-def cfget(account,token,suffix,deadline=None):
+def cfget(account,token,suffix,deadline=None,envelope=False):
  class NoRedirect(urllib.request.HTTPRedirectHandler):
   def redirect_request(self,*a,**k):return None
  timeout=3 if deadline is None else min(3,deadline-time.monotonic());need(timeout>0,'Cloudflare read deadline')
  q=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+account+suffix,headers={'Authorization':'Bearer '+token,'Cache-Control':'no-cache'})
  with urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect()).open(q,timeout=timeout) as r:
-  need(r.status==200,'Cloudflare read status');v=parse(r.read(1048577),integers_only=False);need(v['success']is True and not v['errors'],'Cloudflare read evidence');need(not v.get('result_info',{}).get('cursor') and v.get('result_info',{}).get('total_pages',1)<=1,'Cloudflare read pagination');return v['result']
+  need(r.status==200,'Cloudflare read status');raw=r.read(1048577);need(len(raw)<=1048576,'Cloudflare response size');v=parse(raw,integers_only=False);need(v['success']is True and not v['errors'],'Cloudflare read evidence');need(envelope or (not v.get('result_info',{}).get('cursor') and v.get('result_info',{}).get('total_pages',1)<=1),'Cloudflare read pagination');return v if envelope else v['result']
 def baseline(account,token,deadline=None):
- s='/workers/scripts/goldsignalsx-worker';v={k:cfget(account,token,s+'/'+k,deadline) for k in ['deployments','settings','subdomain','schedules']}
+ s='/workers/scripts/goldsignalsx-worker';v={k:cfget(account,token,s+'/'+k,deadline) for k in ['settings','subdomain','schedules']}
+ from history import complete_history
+ v['deployments']=complete_history(lambda page:cfget(account,token,s+f'/deployments?page={page}&per_page=100',deadline,envelope=True))
  scripts=cfget(account,token,'/workers/scripts',deadline);rows=[x for x in scripts if x['id']=='goldsignalsx-worker'];need(len(rows)==1,'Worker baseline identity');return {**{k:digest(canonical(x)) for k,x in v.items()},'migration_tag':rows[0].get('migration_tag')}
 def unpack(path,dest):
  need(path.stat().st_size<=100_000_000,'artifact size')

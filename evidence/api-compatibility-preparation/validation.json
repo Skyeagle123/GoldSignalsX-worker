@@ -1,0 +1,36 @@
+{
+  "status": "offline candidate; no live qualification or activation",
+  "base_sha": "1e2833f7cda555ea51294da41ad766a67ca9e841",
+  "base_tree": "d84caa92e686e84e069398bc32b36dca6d0ee7a0",
+  "node": "24.19.0",
+  "security_tests": 176,
+  "publication_tests": 90,
+  "bls_tests": "6 included in security",
+  "policies": [
+    "reliability",
+    "news",
+    "risk-budget",
+    "risk-sizing",
+    "signals-security"
+  ],
+  "actionlint": "all workflows PASS",
+  "toolchain": "two independent builds match; see toolchain-build.json",
+  "modified_existing_paths": [
+    "ops/production/deploy.py",
+    "ops/production/qualify-build.py",
+    "ops/production/request-gate.cjs",
+    "ops/production/toolchain/identities.json",
+    "tests/production/cli_http.py",
+    "tests/production/test_cli.py"
+  ],
+  "unchanged_parent_paths": 65,
+  "limitations": [
+    "No live permission, approval or API compatibility claim",
+    "Source inventory verification does not qualify future deployment-artifact transfer",
+    "App mint/revoke requires separate reviewed authorization",
+    "Read-only Cloudflare policy must be independently verified before harness use",
+    "Matching history scans are not an atomic provider snapshot",
+    "Ten-second final freshness ceiling unchanged; slow enumeration refuses",
+    "Historical toolchain evidence preserved; new golden is candidate-only"
+  ]
+}
