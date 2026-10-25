@@ -1,0 +1,40 @@
+name: Read-only security qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+env:
+  GSX_QUALIFICATION_REVIEWED_SHA: ${{ vars.GSX_QUALIFICATION_REVIEWED_SHA }}
+  GSX_QUALIFICATION_SOURCE_DIGEST: ${{ vars.GSX_QUALIFICATION_SOURCE_DIGEST }}
+jobs:
+  production:
+    if: github.repository_id == '1085006449' && github.actor_id == '125151458' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && vars.GSX_QUALIFICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: goldsignalsx-production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python3 -B -I ops/qualification/read_only.py production
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          GSX_QUALIFICATION_CF_READ_TOKEN: ${{ secrets.GSX_QUALIFICATION_CF_READ_TOKEN }}
+          GSX_QUALIFICATION_READ_POLICY_VERIFIED: ${{ vars.GSX_QUALIFICATION_READ_POLICY_VERIFIED }}
+  publication:
+    if: github.repository_id == '1085006449' && github.actor_id == '125151458' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && vars.GSX_QUALIFICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: goldsignalsx-publication
+      deployment: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python3 -B -I ops/qualification/read_only.py publication
+        env:
+          GH_READ_TOKEN: ${{ github.token }}

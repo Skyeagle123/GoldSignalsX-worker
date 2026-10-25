@@ -2,7 +2,7 @@
 import json,pathlib,sys,tempfile,tarfile
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from prepare import build,ROOT,digest,need
-expected=json.loads((ROOT/'evidence/production-isolation/toolchain-build.json').read_text())
+expected=json.loads((ROOT/'evidence/api-compatibility-preparation/toolchain-build.json').read_text())['builds'][0]
 with tempfile.TemporaryDirectory()as td:
  results=[]
  for n in ('one','two'):

@@ -38,7 +38,10 @@ def scenario(fault='',at='versions',legacy=False,control=False,timeout=8,attack=
        p.terminate();return
       if fault in ('disconnect','committed-loss'):return
       if fault=='timeout':time.sleep(13);return
-      if fault in ('bad-id','missing-resources'):
+      if fault in ('old-schedules','wrong-schedules'):
+       result=[{'cron':'*/5 * * * *'}] if fault=='old-schedules' else {'schedules':[{'cron':'0 * * * *'}]}
+       raw=json.dumps({'success':True,'errors':[],'result':result}).encode()
+      elif fault in ('bad-id','missing-resources'):
        wrong={'id':'-'*36 if fault=='bad-id' else V,'resources':{'script':{'etag':'etag'}}}
        if kind=='legacy':wrong={'deployment_id':'a'*31}
        if fault=='missing-resources':wrong={'id':V}
@@ -56,7 +59,7 @@ def scenario(fault='',at='versions',legacy=False,control=False,timeout=8,attack=
      elif kind=='deployments':result={'id':V}
      elif kind=='legacy':result={'deployment_id':V.replace('-',''),'startup_time_ms':0.25 if floats else 1}
      elif kind=='subdomain':result={'enabled':True,'previews_enabled':True}
-     elif kind=='schedules':result=[{'cron':'*/5 * * * *'}]
+     elif kind=='schedules':result={'schedules':[{'cron':'*/5 * * * *'}]}
     raw=raw if raw is not None else json.dumps({'success':True,'errors':[],'messages':[],'result':result}).encode()
     s.sendall(f'HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nLocation: https://example.invalid/\r\nContent-Length: {len(raw)}\r\nConnection: close\r\n\r\n'.encode()+raw)
     # Keep the receive half open until Node finishes its request write.
