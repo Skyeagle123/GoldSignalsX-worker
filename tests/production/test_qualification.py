@@ -19,18 +19,20 @@ class QualificationIsolation(unittest.TestCase):
    with self.assertRaises(q.Refused):q.run('publication')
    transport.assert_not_called()
  def context(self):
-  return {'GITHUB_REPOSITORY':q.REPO,'GITHUB_REPOSITORY_ID':'1085006449','GITHUB_ACTOR_ID':'125151458','GITHUB_TRIGGERING_ACTOR':'Skyeagle123','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main','GITHUB_RUN_ATTEMPT':'1','GITHUB_RUN_ID':'12','GITHUB_SHA':'a'*40,'GH_READ_TOKEN':'synthetic','GSX_QUALIFICATION_READ_POLICY_VERIFIED':'true','GSX_QUALIFICATION_CF_READ_TOKEN':'synthetic-read'}
+  return {'GITHUB_JOB':'publication','RUNNER_NAME':'fixture-runner','GITHUB_REPOSITORY':q.REPO,'GITHUB_REPOSITORY_ID':'1085006449','GITHUB_ACTOR_ID':'125151458','GITHUB_TRIGGERING_ACTOR':'Skyeagle123','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main','GITHUB_RUN_ATTEMPT':'1','GITHUB_RUN_ID':'12','GITHUB_SHA':'a'*40,'GH_READ_TOKEN':'synthetic','GSX_QUALIFICATION_READ_POLICY_VERIFIED':'true','GSX_QUALIFICATION_CF_READ_TOKEN':'synthetic-read'}
  def fake(self,mode,state='in_progress'):
   def read(host,path,*args):
+   if '/attempts/1/jobs?' in path:return {'total_count':2,'jobs':[self.job(m) for m in ('production','publication')]}
+   if '/actions/jobs/' in path:return self.job(mode)
    if host=='api.cloudflare.com':return {'success':True,'errors':[]}
    if path.endswith('/approvals'):return [{'state':'approved','user':{'id':125151458},'environments':[{'id':25273664884 if mode=='production' else 25273747086,'name':'goldsignalsx-'+mode}]}]
    if path.endswith('/main'):return {'object':{'sha':'a'*40}}
-   return {'head_sha':'a'*40,'run_attempt':1,'event':'workflow_dispatch','status':state,'actor':{'id':125151458},'triggering_actor':{'id':125151458},'repository':{'id':1085006449},'path':'.github/workflows/qualification-only.yml'}
+   return {'workflow_id':396101973,'head_branch':'main','id':12,'conclusion':None,'head_sha':'a'*40,'run_attempt':1,'event':'workflow_dispatch','status':state,'actor':{'id':125151458},'triggering_actor':{'id':125151458},'repository':{'id':1085006449},'path':'.github/workflows/qualification-only.yml'}
   return read
  def test_positive_read_only_composition(self):
   for mode in ('production','publication'):
-   with self.subTest(mode=mode),patch.dict(q.os.environ,self.context(),clear=True),patch.object(q,'source'),patch.object(q,'read',side_effect=self.fake(mode)) as reads:
-    q.run(mode);self.assertEqual(reads.call_count,6 if mode=='production' else 3)
+   with self.subTest(mode=mode),patch.dict(q.os.environ,{**self.context(),'GITHUB_JOB':mode},clear=True),patch.object(q,'source'),patch.object(q,'read',side_effect=self.fake(mode)) as reads:
+    q.run(mode);self.assertEqual(reads.call_count,9 if mode=='production' else 6)
  def test_cancelled_run_refused(self):
   with patch.dict(q.os.environ,self.context(),clear=True),patch.object(q,'source'),patch.object(q,'read',side_effect=self.fake('publication','cancelled')):
    with self.assertRaises(q.Refused):q.run('publication')
@@ -43,3 +45,6 @@ class QualificationIsolation(unittest.TestCase):
   with patch.dict(q.os.environ,self.context(),clear=True),patch.object(q,'source',side_effect=q.Refused),patch.object(q,'read') as reads:
    with self.assertRaises(q.Refused):q.run('publication')
    reads.assert_not_called()
+
+ def job(self,mode):
+  return {'id':21 if mode=='production' else 22,'run_id':12,'head_sha':'a'*40,'head_branch':'main','name':mode,'workflow_name':'Read-only security qualification','status':'in_progress','conclusion':None,'runner_name':'fixture-runner','runner_id':3,'run_url':'https://api.github.com/repos/'+q.REPO+'/actions/runs/12'}

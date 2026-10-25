@@ -9,6 +9,7 @@ env:
   GSX_QUALIFICATION_SOURCE_DIGEST: ${{ vars.GSX_QUALIFICATION_SOURCE_DIGEST }}
 jobs:
   production:
+    name: production
     if: github.repository_id == '1085006449' && github.actor_id == '125151458' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && vars.GSX_QUALIFICATION_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -24,6 +25,7 @@ jobs:
           GSX_QUALIFICATION_CF_READ_TOKEN: ${{ secrets.GSX_QUALIFICATION_CF_READ_TOKEN }}
           GSX_QUALIFICATION_READ_POLICY_VERIFIED: ${{ vars.GSX_QUALIFICATION_READ_POLICY_VERIFIED }}
   publication:
+    name: publication
     if: github.repository_id == '1085006449' && github.actor_id == '125151458' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && vars.GSX_QUALIFICATION_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
