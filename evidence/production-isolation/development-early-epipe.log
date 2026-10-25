@@ -1,0 +1,53 @@
+
+ ⛅️ wrangler 3.114.17
+---------------------
+
+GSX-TEST-API {"resource":"/accounts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workers/services/goldsignalsx-worker","method":"GET"}
+GSX-TEST-API {"resource":"/accounts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workers/scripts/goldsignalsx-worker/deployments","method":"GET"}
+GSX-TEST-API {"resource":"/accounts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workers/scripts","method":"GET"}
+Total Upload: 453.51 KiB / gzip: 104.14 KiB
+GSX-TEST-API {"resource":"/accounts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workers/scripts/goldsignalsx-worker/versions","method":"POST"}
+Your worker has access to the following bindings:
+- Durable Objects:
+  - GOLD_FEED: GoldFeed
+- KV Namespaces:
+  - GSX_KV: 8a1e80ff17ec4a73bb32a15ad1e92552
+- D1 Databases:
+  - GSX_DB: gsx_bars (2bd08f22-1829-48b9-b889-3b2693f2d8ea)
+- Services:
+  - TICKS: gold-ticks
+- AI:
+  - Name: AI
+- Vars:
+  - UPSTREAM_URL: "https://gold-ticks.samer-mourtada.wor..."
+  - ALLOW_ORIGINS: "["https://skyeagle123.github.io","htt..."
+  - RL_LIMIT: "180"
+  - OANDA_ENABLED: "1"
+  - OANDA_ENV: "practice"
+  - OANDA_INSTRUMENT: "XAU_USD"
+  - NEWS_ALERTS_ENABLED: "1"
+  - SIGNALS_ENABLED: "1"
+  - SIGNAL_ALERTS_ENABLED: "1"
+  - CALENDAR_LOCAL_TIMEZONE: "Asia/Beirut"
+  - CALENDAR_MACRO_BEFORE_MIN: "30"
+  - CALENDAR_MACRO_AFTER_MIN: "15"
+  - CALENDAR_FOMC_BEFORE_MIN: "60"
+  - CALENDAR_FOMC_AFTER_MIN: "30"
+  - CALENDAR_CLAIMS_BEFORE_MIN: "15"
+  - CALENDAR_CLAIMS_AFTER_MIN: "10"
+  - NEWS_GEOPOLITICAL_AFTER_MIN: "15"
+  - RISK_MAX_PERCENT: "2"
+  - RISK_MAX_LOTS: "5"
+  - RISK_METADATA_MAX_AGE_MS: "900000"
+  - RISK_MAX_DAILY_LOSS_USD: "0"
+  - RISK_MAX_WEEKLY_LOSS_USD: "0"
+  - RISK_MAX_TOTAL_EXPOSURE_USD: "0"
+  - RISK_BUDGET_TIMEZONE: "UTC"
+
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mwrite EPIPE[0m
+
+
+[32mIf you think this is a bug then please create an issue at https://github.com/cloudflare/workers-sdk/issues/new/choose[0m
+? Would you like to report this error to Cloudflare? Wrangler's output and the error details will be shared with the Wrangler team to help us diagnose and fix the issue.
+🤖 Using fallback value in non-interactive context: no
+🪵  Logs were written to "/tmp/tmpechyob8s/.config/.wrangler/logs/wrangler-2026-10-23_10-58-44_410.log"

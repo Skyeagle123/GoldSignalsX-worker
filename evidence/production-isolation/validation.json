@@ -1,0 +1,91 @@
+{
+  "baseline_sha": "5820a9c7fb10f6d1e6c9c944a3490edc36da9c48",
+  "baseline_tree": "6e18bee7090849efbf25b64867723a74a6acc92c",
+  "publication_branch_head": "7118403761e084ea9f6e0c623766ce14168a7854",
+  "security_tests": {
+    "passed": 162,
+    "failed": 0,
+    "skipped": 0
+  },
+  "publication_tests": {
+    "passed": 90,
+    "failed": 0,
+    "skipped": 0
+  },
+  "policy_suites": {
+    "news": "PASS",
+    "reliability": "FAIL (unchanged parent fixture, line 86)",
+    "risk_budget": "PASS",
+    "risk_sizing": "PASS",
+    "signals_security": "PASS"
+  },
+  "parent_reliability_control": "same assertion/actual degraded, expected healthy",
+  "http_scenarios": 72,
+  "cli_qualification": "actual patched CLI; synthetic HTTP on inherited local sockets; seccomp blocks external socket creation",
+  "artifact": {
+    "artifact_bytes": 97902432,
+    "artifact_sha256": "f9617bdf6160dd63d5cdcfcf720c89b93773949c27fc6590378d1a42d9f625aa",
+    "inventory_sha256": "c1f64414dcfe550e29eafea9b7dd21dbc7e3d0cf6dd45249eb03278cacda0d00",
+    "tracked_file_count": 1501,
+    "source_capture_in_artifact": false
+  },
+  "static_checks": {
+    "actionlint": "1.7.12 PASS; three changed/new workflows",
+    "yaml": "three workflows PASS",
+    "python_compile": "PASS",
+    "node_syntax": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "source_files_sha256": {
+    ".github/CODEOWNERS": "285097a9841258d7be743bd3a7630df8da46a1a1578654ef0909725bc53963f4",
+    ".github/workflows/deploy-worker.yml": "48161ec6f5dce914b3bb9a13e75f0952db2a3bea797a4c28a4034efd8f2017d8",
+    ".github/workflows/production-security-tests.yml": "abf05c64990fb7ada4b5dd742357fc0275d45fc75cd919b78e9c6f6061f30509",
+    ".github/workflows/update-bls-official-snapshot.yml": "e037f86f8b1cfd5fd3c213314ab9a822015e531ec676a7b92e3d1f7ab673c060",
+    ".gitignore": "6b5618b59085bde386d8d83e90946a88569dfa4f3218db90eb924831a641028f",
+    "docs/production/README.md": "a9dc61e60766603db1cb4579fd47d138b08a21dec0315f436288814c28df4829",
+    "ops/production/authorization.py": "f56db6a5c0b02330dad64643b375602c2eaaf7066ffc729312b4457ed09b7638",
+    "ops/production/bls-generate.py": "32e9605ade31fa3f4ac462307c8157efcfefb2352f7f9815c7c18a7a64ab6ce6",
+    "ops/production/bls-pr.py": "f068620999b1691bb55ebc9acb6f92a7a3a91b9bb7b948aabf8a0d02b0056aec",
+    "ops/production/capture-policy.py": "bbf6d438adef6860723c9400cf87ac39355217e2e81a249fef6f60bcbcb0cb1f",
+    "ops/production/deploy.py": "a0212bf63ebbd70af38726e235981e843d3931019f1fbd77b66408742042a075",
+    "ops/production/patch-toolchain.py": "ebdb0f782c0e4bcf272e57c8336bfbb152e34c4cb1404adc10689f851c5ea18b",
+    "ops/production/prepare.py": "72cfdf9d6909d8aedbe6659db06cfd02aa0b17070363fea586ad18acfbac08ea",
+    "ops/production/qualify-build.py": "6f19b5d277910593932ee1fa9f19a33a40399571124ccc78f62db3554015e340",
+    "ops/production/request-gate.cjs": "5693513af8a94606a95b0ec327be3a0df0875ef057686b72c606e6e01d8ebddb",
+    "ops/production/strict-json.cjs": "9be1414891226f865296c59fb14ec42f6088e423710241fc73d246e8b5afa5d9",
+    "ops/production/toolchain/identities.json": "08a1603ab3a3ab35cdc337ebdee911aaa4500d874cef58c957d9e2f9e209f9b2",
+    "ops/production/toolchain/package-lock.json": "f6dabcd74a719bfd36163f3ce73944af836867619347e16f44a1b2872bc126cd",
+    "ops/production/toolchain/package.json": "b530f3abd9f749d94f73378469f99cac2c4677e5cf4d0cb552c82e9751309f4f",
+    "tests/production/cli_http.py": "906849fb42fc1f39ba7d06e7c21bb944cec8bdc77a8f40bc523e7a4a48974b5a",
+    "tests/production/no-network.c": "3b1ee898e8c864777d2c1037accd017c2b660df853fcb70864a73cb2676f55a5",
+    "tests/production/test_authorization.py": "97f44d82d7bfa9ce6c52ab9034ce4e89ca515c0d33bb934a55f8a62503d07b61",
+    "tests/production/test_bls.py": "eb4f3e010b6922bcd37491b235e263a8b724b888868193a12c3a8d2aef993c7d",
+    "tests/production/test_cli.py": "799dbeb9c67d552aebeb5b29611dde0a289e738e4d180a9911047d5d7beb4f41",
+    "tests/production/test_controls.py": "d921d3f0232adc8a3651d1b550ea2215808aa1a7be2515fc865bc95e77cf1828",
+    "tests/production/test_deploy.py": "8a96780fd74d7a9b7f2cb5631559d35e438bac95bb062b546a046fd20065d533",
+    "tests/production/unix-transport.cjs": "3b0f0ba494905da44e25fc6f9c3f3eb4034d3388681c05aabd1234aa016659d2"
+  },
+  "evidence_sha256": {
+    "security-tests.log": "9008785a5cfb71f92999569348cbd13379615b3aa8d0dfd31b8a04f947262ef6",
+    "actionlint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "publication-tests.log": "b9370fc2841536715d25829706b4ad2e57de0981f0064dd153f7d0cb5d61ccbe",
+    "test-risk-sizing.log": "b30a6679592109fd7abde98a9ea8ba916781cb5b28e6f4151855d151cae86c51",
+    "development-reproducibility.log": "8b868cd737d76dbbad491dc96e7da1e9b75da22e593768a2cda6a8290ca29c13",
+    "toolchain-build.json": "3f4dbcaaf4ab23892e4154e21d9ec0fc59c77ee1ee095d73f08534ff1cbe136f",
+    "development-early-epipe.log": "0477088e40e65171f4d62622e170116a5897e6050092ce0c43d2e617ac82ddb1",
+    "test-reliability.log": "4662d49af6e380b1fe1529deeb7ec05feb6d94ce27f3e310dd4001d446afa68c",
+    "development-http-trace.jsonl": "a426e677e00e503048356aa6e5f9380420147466e8d8792308509ff26b25f750",
+    "development-security-tests.log": "59f6b0eb47300ecff985950db7908198322036e81b942faece7fabda3c3bbf60",
+    "preservation.json": "25a7bb6fd52fcae7d64aff0321dd88a1b75b30a259c30a2e6d5276531a3e669f",
+    "test-risk-budget.log": "d18b2cc7aa6496b1151c28aaae4bb27aa134374acad1c1e0e159bc2d67f87ad2",
+    "http-trace.jsonl": "27ffea77a1c6dd540e7aa73f6ef5c833e0e2162e545e7495c36e7d41a05af651",
+    "test-signals-security.log": "bf50c44d27bfdb57891665d6b2b99a4c2ed139a3c78428e4a37f895d7e444c1b",
+    "parent-reliability.log": "a4b14ef018933d55bfa8d804171ef9dc22ac728294fd7f3103c835e203c17ed6",
+    "reproducibility.log": "62312bd4520b4dda30057291f443c082c03d7b2f9c1e7da5544f82c9b375f1bf",
+    "test-news.log": "18cd11bb7a6eb479d00ea56471e71ff4975be5aa067534e7f31108f8f51fdbae",
+    "reconciliation.json": "cbc65928226032d062cc2c5c247047d274334833513fd7700518c432230c9b8b"
+  },
+  "review_readiness": "DRAFT ONLY; full normal regression acceptance BLOCKED by parent Reliability fixture",
+  "live_qualification": "NOT PERFORMED; no credentials/configuration/deployment",
+  "development_evidence": "development-* files are intermediate diagnostics, not final acceptance"
+}

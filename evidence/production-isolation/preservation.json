@@ -1,0 +1,140 @@
+{
+  "baseline": "5820a9c7fb10f6d1e6c9c944a3490edc36da9c48",
+  "existing_changed_paths": [
+    ".github/workflows/deploy-worker.yml",
+    ".github/workflows/update-bls-official-snapshot.yml"
+  ],
+  "unchanged_count": 24,
+  "files": {
+    ".github/scripts/post-deploy-smoke.mjs": {
+      "parent_sha256": "37568b0106a1ae38ceb728dfda61f95a00a206eabfe833290b75ec4a93210e00",
+      "candidate_sha256": "37568b0106a1ae38ceb728dfda61f95a00a206eabfe833290b75ec4a93210e00",
+      "identical": true
+    },
+    ".github/workflows/deploy-worker.yml": {
+      "parent_sha256": "9dca2295e2ea99b56fa86c3070daf676ae2a2dff67aded477d23ceb99359667c",
+      "candidate_sha256": "48161ec6f5dce914b3bb9a13e75f0952db2a3bea797a4c28a4034efd8f2017d8",
+      "identical": false
+    },
+    ".github/workflows/publish-accepted-bundle.yml": {
+      "parent_sha256": "13f312ec5948053825ac6dd9eb7501407e07c0a38b0220b3026e93e18a1500c1",
+      "candidate_sha256": "13f312ec5948053825ac6dd9eb7501407e07c0a38b0220b3026e93e18a1500c1",
+      "identical": true
+    },
+    ".github/workflows/test.yml": {
+      "parent_sha256": "7ff2fb1153e07cc036d3f017d48cb394dc2b66231e52dbf93dcf8762007f784b",
+      "candidate_sha256": "7ff2fb1153e07cc036d3f017d48cb394dc2b66231e52dbf93dcf8762007f784b",
+      "identical": true
+    },
+    ".github/workflows/update-bls-official-snapshot.yml": {
+      "parent_sha256": "aa08ec6d34addbb7c181a86c7d19b5807991c17d3ca7c57f2c8bb128371c7e08",
+      "candidate_sha256": "e037f86f8b1cfd5fd3c213314ab9a822015e531ec676a7b92e3d1f7ab673c060",
+      "identical": false
+    },
+    "bls-official-snapshot.js": {
+      "parent_sha256": "a23e9454c3e18df3320d283a1447de5e778035012365950043d0a5b37001358e",
+      "candidate_sha256": "a23e9454c3e18df3320d283a1447de5e778035012365950043d0a5b37001358e",
+      "identical": true
+    },
+    "docs/publication/README.md": {
+      "parent_sha256": "85c47d647131e382c812ef297d3b39d61e022a5017483fc54bea3ff4bd2bdd09",
+      "candidate_sha256": "85c47d647131e382c812ef297d3b39d61e022a5017483fc54bea3ff4bd2bdd09",
+      "identical": true
+    },
+    "economic-calendar.js": {
+      "parent_sha256": "e3e05811efbceba1f9f37f076d489208025c24256583019c66a7907a91351eae",
+      "candidate_sha256": "e3e05811efbceba1f9f37f076d489208025c24256583019c66a7907a91351eae",
+      "identical": true
+    },
+    "evidence/publication-infrastructure/offline-tests.log": {
+      "parent_sha256": "1fa7c3f003ce170690420f285de8f9eb93e77d0a9f023477a433052667906fe9",
+      "candidate_sha256": "1fa7c3f003ce170690420f285de8f9eb93e77d0a9f023477a433052667906fe9",
+      "identical": true
+    },
+    "evidence/publication-infrastructure/validation.json": {
+      "parent_sha256": "65e527934b1d319f5414bcfefa47b33606c1e4b24936b3bee0bfb7e34564bbf5",
+      "candidate_sha256": "65e527934b1d319f5414bcfefa47b33606c1e4b24936b3bee0bfb7e34564bbf5",
+      "identical": true
+    },
+    "goldsignalsx-worker.js": {
+      "parent_sha256": "ce71a8ee3f4bbacdbcfb5579ed1740ccad989d83b9ab786e8a97240d6c93eb40",
+      "candidate_sha256": "ce71a8ee3f4bbacdbcfb5579ed1740ccad989d83b9ab786e8a97240d6c93eb40",
+      "identical": true
+    },
+    "mt5/GoldSignalsXPriceBridge.mq5": {
+      "parent_sha256": "c83b73580b7de0ce25e91d87ce2b1d43d3514360a5d2bd535b71c97fcf213b99",
+      "candidate_sha256": "c83b73580b7de0ce25e91d87ce2b1d43d3514360a5d2bd535b71c97fcf213b99",
+      "identical": true
+    },
+    "mt5/README.md": {
+      "parent_sha256": "51d493522e3ad45abd9a0a57e328bf6ec16edda3e5737f4a0b6836ad760eebe8",
+      "candidate_sha256": "51d493522e3ad45abd9a0a57e328bf6ec16edda3e5737f4a0b6836ad760eebe8",
+      "identical": true
+    },
+    "risk-budget.js": {
+      "parent_sha256": "c0e15c52332e90a68a5eb02a1e2fed6366ea0f21fdc01cca3dd5b20a50b3237c",
+      "candidate_sha256": "c0e15c52332e90a68a5eb02a1e2fed6366ea0f21fdc01cca3dd5b20a50b3237c",
+      "identical": true
+    },
+    "risk-sizing.js": {
+      "parent_sha256": "d92f228fba3b5a77861decab893cb3bb8f87774d2b89e6ad86df406bbf4b1d80",
+      "candidate_sha256": "d92f228fba3b5a77861decab893cb3bb8f87774d2b89e6ad86df406bbf4b1d80",
+      "identical": true
+    },
+    "schema.sql": {
+      "parent_sha256": "d96aed6e6a5f6d20ef171f2dcf4eb57e3c96503e7e5806bdd29c7c3304d2aa36",
+      "candidate_sha256": "d96aed6e6a5f6d20ef171f2dcf4eb57e3c96503e7e5806bdd29c7c3304d2aa36",
+      "identical": true
+    },
+    "scripts/publication/publication.py": {
+      "parent_sha256": "54a52102e5b4667c5497d208f3a9be76ec16c034f6dc4b46259f951e6cc91a41",
+      "candidate_sha256": "54a52102e5b4667c5497d208f3a9be76ec16c034f6dc4b46259f951e6cc91a41",
+      "identical": true
+    },
+    "scripts/update-bls-official-snapshot.mjs": {
+      "parent_sha256": "cba700f55ce654ac522f82e4f6499f4c226b5af6a3e1fa48dd232a09287c450b",
+      "candidate_sha256": "cba700f55ce654ac522f82e4f6499f4c226b5af6a3e1fa48dd232a09287c450b",
+      "identical": true
+    },
+    "signal-engine.js": {
+      "parent_sha256": "c85f47a0623047a58f07a1440f9ec04a3898f951849494fde59269f33dc41b25",
+      "candidate_sha256": "c85f47a0623047a58f07a1440f9ec04a3898f951849494fde59269f33dc41b25",
+      "identical": true
+    },
+    "test-news.mjs": {
+      "parent_sha256": "675672fc2c2463a75588a6f0610e59721e0149c4815b480c51b22d0e5f025bbb",
+      "candidate_sha256": "675672fc2c2463a75588a6f0610e59721e0149c4815b480c51b22d0e5f025bbb",
+      "identical": true
+    },
+    "test-reliability.mjs": {
+      "parent_sha256": "e2ace629c0682694c89551f898fe2fdb16a4d0d66d5b09c0aef4c1c75b36d98e",
+      "candidate_sha256": "e2ace629c0682694c89551f898fe2fdb16a4d0d66d5b09c0aef4c1c75b36d98e",
+      "identical": true
+    },
+    "test-risk-budget.mjs": {
+      "parent_sha256": "894555bfa86dcefa40c5bf0650f954fe107dfda31e02dc2d83c354c59ff3ecf9",
+      "candidate_sha256": "894555bfa86dcefa40c5bf0650f954fe107dfda31e02dc2d83c354c59ff3ecf9",
+      "identical": true
+    },
+    "test-risk-sizing.mjs": {
+      "parent_sha256": "ca067aa0aeca4c1ee14db9d8d0f12b17fe7c33136069a1a5f29a440bba279841",
+      "candidate_sha256": "ca067aa0aeca4c1ee14db9d8d0f12b17fe7c33136069a1a5f29a440bba279841",
+      "identical": true
+    },
+    "test-signals-security.mjs": {
+      "parent_sha256": "8dae8d37ce7432b4f63c54aeb6c3c731dfce12dd7e81e0f95b2d4a7a8b1d1692",
+      "candidate_sha256": "8dae8d37ce7432b4f63c54aeb6c3c731dfce12dd7e81e0f95b2d4a7a8b1d1692",
+      "identical": true
+    },
+    "tests/publication/test_publication.py": {
+      "parent_sha256": "2f6128275e2f026266c12c0709ec486c42f11e5ad8219b9bdc56d1ebc54aaa4a",
+      "candidate_sha256": "2f6128275e2f026266c12c0709ec486c42f11e5ad8219b9bdc56d1ebc54aaa4a",
+      "identical": true
+    },
+    "wrangler.toml": {
+      "parent_sha256": "003ba675a52810679d9ead5e468861d5140d7fcbbe497b76835ebdf11eb564f4",
+      "candidate_sha256": "003ba675a52810679d9ead5e468861d5140d7fcbbe497b76835ebdf11eb564f4",
+      "identical": true
+    }
+  }
+}

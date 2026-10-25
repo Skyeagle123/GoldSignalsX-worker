@@ -1,0 +1,166 @@
+test_backward_clock (test_authorization.Authorization.test_backward_clock) ... ok
+test_canonical (test_authorization.Authorization.test_canonical) ... ok
+test_duplicate_approval (test_authorization.Authorization.test_duplicate_approval) ... ok
+test_duplicate_job (test_authorization.Authorization.test_duplicate_job) ... ok
+test_duplicate_json (test_authorization.Authorization.test_duplicate_json) ... ok
+test_expiry (test_authorization.Authorization.test_expiry) ... ok
+test_float_json (test_authorization.Authorization.test_float_json) ... ok
+test_incomplete_jobs (test_authorization.Authorization.test_incomplete_jobs) ... ok
+test_job_cancelled (test_authorization.Authorization.test_job_cancelled) ... ok
+test_main_advanced (test_authorization.Authorization.test_main_advanced) ... ok
+test_manifest_account (test_authorization.Authorization.test_manifest_account) ... ok
+test_manifest_artifact_digest (test_authorization.Authorization.test_manifest_artifact_digest) ... ok
+test_manifest_attempt (test_authorization.Authorization.test_manifest_attempt) ... ok
+test_manifest_created_at (test_authorization.Authorization.test_manifest_created_at) ... ok
+test_manifest_environment (test_authorization.Authorization.test_manifest_environment) ... ok
+test_manifest_environment_id (test_authorization.Authorization.test_manifest_environment_id) ... ok
+test_manifest_event (test_authorization.Authorization.test_manifest_event) ... ok
+test_manifest_expires_at (test_authorization.Authorization.test_manifest_expires_at) ... ok
+test_manifest_format (test_authorization.Authorization.test_manifest_format) ... ok
+test_manifest_owner (test_authorization.Authorization.test_manifest_owner) ... ok
+test_manifest_owner_id (test_authorization.Authorization.test_manifest_owner_id) ... ok
+test_manifest_repository (test_authorization.Authorization.test_manifest_repository) ... ok
+test_manifest_repository_id (test_authorization.Authorization.test_manifest_repository_id) ... ok
+test_manifest_rollback (test_authorization.Authorization.test_manifest_rollback) ... ok
+test_manifest_source_sha (test_authorization.Authorization.test_manifest_source_sha) ... ok
+test_manifest_source_tree (test_authorization.Authorization.test_manifest_source_tree) ... ok
+test_manifest_worker (test_authorization.Authorization.test_manifest_worker) ... ok
+test_manifest_workflow_path (test_authorization.Authorization.test_manifest_workflow_path) ... ok
+test_manifest_workflow_sha (test_authorization.Authorization.test_manifest_workflow_sha) ... ok
+test_missing_approval (test_authorization.Authorization.test_missing_approval) ... ok
+test_no_cached_api_fallback (test_authorization.Authorization.test_no_cached_api_fallback) ... ok
+test_prepare_failed (test_authorization.Authorization.test_prepare_failed) ... ok
+test_rejection (test_authorization.Authorization.test_rejection) ... ok
+test_run_branch (test_authorization.Authorization.test_run_branch) ... ok
+test_run_cancelled (test_authorization.Authorization.test_run_cancelled) ... ok
+test_run_owner (test_authorization.Authorization.test_run_owner) ... ok
+test_run_rerun (test_authorization.Authorization.test_run_rerun) ... ok
+test_run_source (test_authorization.Authorization.test_run_source) ... ok
+test_ten_second_limit (test_authorization.Authorization.test_ten_second_limit) ... ok
+test_tree_changed (test_authorization.Authorization.test_tree_changed) ... ok
+test_valid (test_authorization.Authorization.test_valid) ... ok
+test_wrong_approval_owner (test_authorization.Authorization.test_wrong_approval_owner) ... ok
+test_wrong_check_run (test_authorization.Authorization.test_wrong_check_run) ... ok
+test_wrong_comment (test_authorization.Authorization.test_wrong_comment) ... ok
+test_wrong_environment (test_authorization.Authorization.test_wrong_environment) ... ok
+test_wrong_job_run (test_authorization.Authorization.test_wrong_job_run) ... ok
+test_divergence_no_overwrite (test_bls.SnapshotPR.test_divergence_no_overwrite) ... ok
+test_existing_branch_fast_forward (test_bls.SnapshotPR.test_existing_branch_fast_forward) ... ok
+test_merged_branch_restarts_from_current_main (test_bls.SnapshotPR.test_merged_branch_restarts_from_current_main) ... ok
+test_new_pr_snapshot_only (test_bls.SnapshotPR.test_new_pr_snapshot_only) ... ok
+test_wrong_generated_scope_rejected (test_bls.SnapshotPR.test_wrong_generated_scope_rejected) ... ok
+test_cancellation_before_mutation (test_cli.CLIQualification.test_cancellation_before_mutation) ... ok
+test_cancellation_with_queued_trigger (test_cli.CLIQualification.test_cancellation_with_queued_trigger) ... ok
+test_deployments_307 (test_cli.CLIQualification.test_deployments_307) ... ok
+test_deployments_429 (test_cli.CLIQualification.test_deployments_429) ... ok
+test_deployments_500 (test_cli.CLIQualification.test_deployments_500) ... ok
+test_deployments_500_malformed (test_cli.CLIQualification.test_deployments_500_malformed) ... ok
+test_deployments_524 (test_cli.CLIQualification.test_deployments_524) ... ok
+test_deployments_committed_loss (test_cli.CLIQualification.test_deployments_committed_loss) ... ok
+test_deployments_disconnect (test_cli.CLIQualification.test_deployments_disconnect) ... ok
+test_deployments_duplicate_json (test_cli.CLIQualification.test_deployments_duplicate_json) ... ok
+test_deployments_malformed (test_cli.CLIQualification.test_deployments_malformed) ... FAIL
+test_duplicate_mutation_blocked (test_cli.CLIQualification.test_duplicate_mutation_blocked) ... ok
+test_failure_before_mutation_send (test_cli.CLIQualification.test_failure_before_mutation_send) ... ok
+test_fallback_route_blocked (test_cli.CLIQualification.test_fallback_route_blocked) ... ok
+test_kernel_egress_denied (test_cli.CLIQualification.test_kernel_egress_denied) ... ok
+test_kernel_ipv6_denied (test_cli.CLIQualification.test_kernel_ipv6_denied) ... ok
+test_legacy_307 (test_cli.CLIQualification.test_legacy_307) ... ok
+test_legacy_429 (test_cli.CLIQualification.test_legacy_429) ... ok
+test_legacy_500 (test_cli.CLIQualification.test_legacy_500) ... ok
+test_legacy_500_malformed (test_cli.CLIQualification.test_legacy_500_malformed) ... ok
+test_legacy_524 (test_cli.CLIQualification.test_legacy_524) ... ok
+test_legacy_committed_loss (test_cli.CLIQualification.test_legacy_committed_loss) ... ok
+test_legacy_disconnect (test_cli.CLIQualification.test_legacy_disconnect) ... ok
+test_legacy_duplicate_json (test_cli.CLIQualification.test_legacy_duplicate_json) ... ok
+test_legacy_malformed (test_cli.CLIQualification.test_legacy_malformed) ... ok
+test_legacy_success (test_cli.CLIQualification.test_legacy_success) ... ok
+test_schedules_307 (test_cli.CLIQualification.test_schedules_307) ... ok
+test_schedules_429 (test_cli.CLIQualification.test_schedules_429) ... ok
+test_schedules_500 (test_cli.CLIQualification.test_schedules_500) ... ok
+test_schedules_500_malformed (test_cli.CLIQualification.test_schedules_500_malformed) ... ok
+test_schedules_524 (test_cli.CLIQualification.test_schedules_524) ... ok
+test_schedules_committed_loss (test_cli.CLIQualification.test_schedules_committed_loss) ... ok
+test_schedules_disconnect (test_cli.CLIQualification.test_schedules_disconnect) ... ok
+test_schedules_duplicate_json (test_cli.CLIQualification.test_schedules_duplicate_json) ... ok
+test_schedules_malformed (test_cli.CLIQualification.test_schedules_malformed) ... ok
+test_script_settings_307 (test_cli.CLIQualification.test_script_settings_307) ... ok
+test_script_settings_429 (test_cli.CLIQualification.test_script_settings_429) ... ok
+test_script_settings_500 (test_cli.CLIQualification.test_script_settings_500) ... ok
+test_script_settings_500_malformed (test_cli.CLIQualification.test_script_settings_500_malformed) ... ok
+test_script_settings_524 (test_cli.CLIQualification.test_script_settings_524) ... ok
+test_script_settings_committed_loss (test_cli.CLIQualification.test_script_settings_committed_loss) ... ok
+test_script_settings_disconnect (test_cli.CLIQualification.test_script_settings_disconnect) ... ok
+test_script_settings_duplicate_json (test_cli.CLIQualification.test_script_settings_duplicate_json) ... ok
+test_script_settings_malformed (test_cli.CLIQualification.test_script_settings_malformed) ... ok
+test_subdomain_307 (test_cli.CLIQualification.test_subdomain_307) ... ok
+test_subdomain_429 (test_cli.CLIQualification.test_subdomain_429) ... ok
+test_subdomain_500 (test_cli.CLIQualification.test_subdomain_500) ... ok
+test_subdomain_500_malformed (test_cli.CLIQualification.test_subdomain_500_malformed) ... ok
+test_subdomain_524 (test_cli.CLIQualification.test_subdomain_524) ... ok
+test_subdomain_committed_loss (test_cli.CLIQualification.test_subdomain_committed_loss) ... ok
+test_subdomain_disconnect (test_cli.CLIQualification.test_subdomain_disconnect) ... ok
+test_subdomain_duplicate_json (test_cli.CLIQualification.test_subdomain_duplicate_json) ... ok
+test_subdomain_malformed (test_cli.CLIQualification.test_subdomain_malformed) ... ok
+test_successful_fractional_api_metrics (test_cli.CLIQualification.test_successful_fractional_api_metrics) ... ok
+test_successful_upstream_parity (test_cli.CLIQualification.test_successful_upstream_parity) ... ok
+test_timeout_blocks_queued_trigger (test_cli.CLIQualification.test_timeout_blocks_queued_trigger) ... ok
+test_upstream_retry_control (test_cli.CLIQualification.test_upstream_retry_control) ... ok
+test_versioned_success (test_cli.CLIQualification.test_versioned_success) ... ok
+test_versions_307 (test_cli.CLIQualification.test_versions_307) ... ok
+test_versions_429 (test_cli.CLIQualification.test_versions_429) ... ok
+test_versions_500 (test_cli.CLIQualification.test_versions_500) ... ok
+test_versions_500_malformed (test_cli.CLIQualification.test_versions_500_malformed) ... ok
+test_versions_524 (test_cli.CLIQualification.test_versions_524) ... ok
+test_versions_committed_loss (test_cli.CLIQualification.test_versions_committed_loss) ... ok
+test_versions_disconnect (test_cli.CLIQualification.test_versions_disconnect) ... ok
+test_versions_duplicate_json (test_cli.CLIQualification.test_versions_duplicate_json) ... ok
+test_versions_malformed (test_cli.CLIQualification.test_versions_malformed) ... ok
+test_artifact_path_traversal (test_controls.Controls.test_artifact_path_traversal) ... ok
+test_artifact_symlink (test_controls.Controls.test_artifact_symlink) ... ok
+test_bls_schedule_and_no_direct_push (test_controls.Controls.test_bls_schedule_and_no_direct_push) ... ok
+test_bls_writer_exact_scope (test_controls.Controls.test_bls_writer_exact_scope) ... ok
+test_config_smoke_unchanged (test_controls.Controls.test_config_smoke_unchanged) ... ok
+test_environment_only_deploy (test_controls.Controls.test_environment_only_deploy) ... ok
+test_existing_generator_unchanged (test_controls.Controls.test_existing_generator_unchanged) ... ok
+test_immutable_actions (test_controls.Controls.test_immutable_actions) ... ok
+test_inventory_substitution (test_controls.Controls.test_inventory_substitution) ... ok
+test_locked_origins_and_integrity (test_controls.Controls.test_locked_origins_and_integrity) ... ok
+test_manual_no_cancel (test_controls.Controls.test_manual_no_cancel) ... ok
+test_missing_credentials_no_fallback (test_controls.Controls.test_missing_credentials_no_fallback) ... ok
+test_no_install_in_deploy (test_controls.Controls.test_no_install_in_deploy) ... ok
+test_no_legacy_secret_reference (test_controls.Controls.test_no_legacy_secret_reference) ... ok
+test_node_strict_json_rejects_duplicates (test_controls.Controls.test_node_strict_json_rejects_duplicates) ... ok
+test_patch_rejects_wrong_bytes (test_controls.Controls.test_patch_rejects_wrong_bytes) ... ok
+test_publisher_unchanged (test_controls.Controls.test_publisher_unchanged) ... ok
+test_required_check_unfiltered (test_controls.Controls.test_required_check_unfiltered) ... ok
+test_artifact_substitution (test_deploy.DeploymentVerifier.test_artifact_substitution) ... ok
+test_baseline_changes_in_final_segment (test_deploy.DeploymentVerifier.test_baseline_changes_in_final_segment) ... ok
+test_cancel_during_baseline (test_deploy.DeploymentVerifier.test_cancel_during_baseline) ... ok
+test_legacy_only_not_accepted (test_deploy.DeploymentVerifier.test_legacy_only_not_accepted) ... ok
+test_missing_token (test_deploy.DeploymentVerifier.test_missing_token) ... ok
+test_other_run_artifact (test_deploy.DeploymentVerifier.test_other_run_artifact) ... ok
+test_policy_substitution (test_deploy.DeploymentVerifier.test_policy_substitution) ... ok
+test_single_invocation_and_clean_environment (test_deploy.DeploymentVerifier.test_single_invocation_and_clean_environment) ... ok
+test_source_substitution (test_deploy.DeploymentVerifier.test_source_substitution) ... ok
+test_stale_baseline (test_deploy.DeploymentVerifier.test_stale_baseline) ... ok
+test_uncertain_invocation_no_retry (test_deploy.DeploymentVerifier.test_uncertain_invocation_no_retry) ... ok
+test_whitespace_token (test_deploy.DeploymentVerifier.test_whitespace_token) ... ok
+test_wrong_workflow_revision (test_deploy.DeploymentVerifier.test_wrong_workflow_revision) ... ok
+
+======================================================================
+FAIL: test_deployments_malformed (test_cli.CLIQualification.test_deployments_malformed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/c6f879705017/goldsignalsx-production-isolation/tests/production/test_cli.py", line 53, in test
+    kinds=[c['kind']for c in calls];self.assertEqual(kinds.count(at),1,kinds);self.assertEqual(kinds[-1],at);self.assertFalse(any(c['after_failure']for c in calls));self.assertEqual(calls[-1]['server_committed'],fault=='committed-loss')
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : ['versions']
+
+----------------------------------------------------------------------
+Ran 149 tests in 101.700s
+
+FAILED (failures=1)
+BLS snapshot PR prepared; review/CI required
+BLS snapshot PR prepared; review/CI required
+BLS snapshot PR prepared; review/CI required

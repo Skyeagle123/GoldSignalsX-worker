@@ -1,0 +1,13 @@
+# BEFORE protection activation: add an eligible independent human with write
+# access to every rule below. Skyeagle123 cannot approve an Owner-authored PR.
+# No bypass is permitted as a substitute for that independent reviewer.
+/.github/CODEOWNERS @Skyeagle123
+/.github/workflows/ @Skyeagle123
+/ops/production/ @Skyeagle123
+/scripts/publication/ @Skyeagle123
+/scripts/update-bls-official-snapshot.mjs @Skyeagle123
+/wrangler.toml @Skyeagle123
+/.github/scripts/post-deploy-smoke.mjs @Skyeagle123
+/tests/production/ @Skyeagle123
+/evidence/production-isolation/toolchain-build.json @Skyeagle123
+/docs/production/ @Skyeagle123

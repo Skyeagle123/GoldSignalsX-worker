@@ -1,0 +1,53 @@
+name: Production security qualification
+on:
+  pull_request:
+  push:
+    branches: [main, phase/b1-production-isolation-retry-safety]
+permissions:
+  contents: read
+jobs:
+  offline:
+    name: Production security offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Locked secret-free installation
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix ops/production/toolchain
+      - name: Prepare exact upstream control, patch and dry-run policy
+        run: |
+          cp ops/production/toolchain/node_modules/wrangler/wrangler-dist/cli.js ops/production/toolchain/node_modules/wrangler/wrangler-dist/cli.js.upstream
+          python3 -I ops/production/patch-toolchain.py
+          gcc -O2 -Wall -Werror tests/production/no-network.c -o /tmp/gsx-no-network
+          python3 -I ops/production/capture-policy.py . /tmp/gsx-policy.json
+      - name: Offline tests including actual CLI HTTP requests
+        run: python3 -m unittest discover -s tests/production -p 'test_*.py' -v
+      - name: Independently rebuild and match exact toolchain artifact twice
+        run: python3 -I ops/production/qualify-build.py
+  policies:
+    name: Production policy (${{ matrix.suite }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [news, reliability, risk-budget, risk-sizing, signals-security]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Run unchanged policy suite without external egress
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          gcc -O2 -Wall -Werror tests/production/no-network.c -o /tmp/gsx-no-network
+          /tmp/gsx-no-network node "test-${SUITE}.mjs"

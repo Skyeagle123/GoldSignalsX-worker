@@ -1,0 +1,31 @@
+{
+  "format": "gsx-evidence-reconciliation-v1",
+  "date": "2026-10-23",
+  "baseline_sha": "5820a9c7fb10f6d1e6c9c944a3490edc36da9c48",
+  "recovered_candidate_tree": "24dd10a0570420838f6ee0c9147ecc07bd42ea9c",
+  "affected_evidence_path": "evidence/production-isolation/preservation.json",
+  "affected_json_pointer": "/files/.github~1workflows~1deploy-worker.yml/candidate_sha256",
+  "supporting_source_path": ".github/workflows/deploy-worker.yml",
+  "original_value": "e045f1b70c48154afb1130116af494770747d8d4aa113c065513836818aebb99",
+  "corrected_value": "48161ec6f5dce914b3bb9a13e75f0952db2a3bea797a4c28a4034efd8f2017d8",
+  "supporting_source_git_blob": "b91402d5eca84ad3fc7212494747d2f2fad3d269",
+  "reason": "A stale duplicate candidate hash remained in preservation.json. Current worktree bytes, staged Git blob, the preserved recovery ZIP entry and the later validation.json source hash all agree. No source or test mismatch was found. Only this evidence entry is corrected.",
+  "original_preservation_sha256": "3aadf3b5cd6ae3ffecd47c10bd325eb0c8f370e1d17850a9bbd242d6829de6bf",
+  "corrected_preservation_sha256": "25a7bb6fd52fcae7d64aff0321dd88a1b75b30a259c30a2e6d5276531a3e669f",
+  "original_validation_sha256": "a415d225ac6ecb1e6915d2dadfee6f736bdfd3be6b43162172b44ac3ddb652c7",
+  "recovery_zip": {
+    "name": "GoldSignalsX-B1-Work5-Emergency-Recovery-2026-10-23.zip",
+    "bytes": 417765899,
+    "sha256": "1d7c9270a4e02c4b402edb1ca0ee7a07b0a2cb55100d6923087cf324f8779d6c"
+  },
+  "source_workflow_tests_assertions_changed": false,
+  "reliability": "Unchanged assertion at test-reliability.mjs:86 fails with actual degraded, expected healthy on both candidate and exact unchanged baseline. Separate validation blocker; no full clean regression claim.",
+  "recovered_results": {
+    "security_tests_passed": 162,
+    "publication_tests_passed": 90,
+    "bls_pr_tests_passed": 6,
+    "actionlint": "PASS (fresh finalization invocation)",
+    "toolchain_payload_hashes": "1500 of 1500 match; archive and patched CLI also match"
+  },
+  "acceptance": "Independent review required; full normal regression acceptance BLOCKED by unchanged Reliability failure."
+}
