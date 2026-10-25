@@ -8,6 +8,7 @@ on:
       - "goldsignalsx-worker.js"
       - "signal-engine.js"
       - "test-news.mjs"
+      - "test-reliability.mjs"
       - "schema.sql"
       - "wrangler.toml"
       - ".github/workflows/test.yml"
