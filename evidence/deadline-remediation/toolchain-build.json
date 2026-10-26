@@ -1,0 +1,17 @@
+{
+  "builds": [
+    {
+      "artifact_bytes": 97903133,
+      "artifact_sha256": "dd367b1b11e10681d866b560dc6da0c3341389ea2adef1a350ec7a393fe948f7",
+      "inventory_sha256": "bce05841a1e8d348ae00f40ab92fbf8cce1acac225c4c0cef7d1ca4770dc0b93"
+    },
+    {
+      "artifact_bytes": 97903133,
+      "artifact_sha256": "dd367b1b11e10681d866b560dc6da0c3341389ea2adef1a350ec7a393fe948f7",
+      "inventory_sha256": "bce05841a1e8d348ae00f40ab92fbf8cce1acac225c4c0cef7d1ca4770dc0b93"
+    }
+  ],
+  "status": "two offline reconstructions match",
+  "baseline_repack_sha256": "cebdee1ce573f50ca96beb9ae13170a7a0618bef36323718afd27bb94c30b84d",
+  "method": "Verified previous accepted deadline artifact and its 1500-file inventory; replaced only gate bytes and inventory for freshness resampling; packed twice independently. No npm install or network."
+}

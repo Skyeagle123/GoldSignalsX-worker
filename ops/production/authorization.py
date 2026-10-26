@@ -6,6 +6,11 @@ FIELDS={'format','repository','repository_id','owner','owner_id','workflow_path'
 class Rejected(Exception):pass
 def need(ok,why):
  if not ok:raise Rejected(why)
+def integer(value):return type(value)is int and value>0
+def identity(value,expected,why):need(integer(value) and value==expected,why)
+def runner_integer(value,why):
+ need(type(value)is str and re.fullmatch('[1-9][0-9]*',value),'invalid '+why)
+ return int(value)
 def pairs(xs):
  d={}
  for k,v in xs:
@@ -56,13 +61,18 @@ def window(m,clock):
  if m['credential_mode']=='migration':need(time.time()<stamp(m['migration_t0'])+2400,'migration start cutoff expired')
 
 def run_identity(run,m):
- need(run['id']==m['run_id'] and run['run_attempt']==1 and run['event']=='workflow_dispatch' and run['head_sha']==m['source_sha'] and run['head_branch']=='main','run identity')
- need(run['repository']['id']==REPO_ID and run['repository']['full_name']==REPO,'run repository')
- for k in ['actor','triggering_actor']:need(run[k]['id']==OWNER_ID and run[k]['login']==OWNER,'run Owner')
- need(run['workflow_id']==m['workflow_id'] and run['path']==WORKFLOW and run['created_at']==m['created_at'],'run workflow/time')
- need(run['status']=='in_progress' and run.get('conclusion')is None,'run terminal/cancelled')
+ need(type(run)is dict,'run schema')
+ for k,v in [('id',m['run_id']),('run_attempt',1),('workflow_id',m['workflow_id'])]:identity(run.get(k),v,'run numeric identity')
+ need(run.get('event')=='workflow_dispatch' and run.get('head_sha')==m['source_sha'] and run.get('head_branch')=='main','run identity')
+ repository=run.get('repository');need(type(repository)is dict,'run repository schema')
+ identity(repository.get('id'),REPO_ID,'run repository identity');need(repository.get('full_name')==REPO,'run repository')
+ for k in ['actor','triggering_actor']:
+  actor=run.get(k);need(type(actor)is dict,'run Owner schema');identity(actor.get('id'),OWNER_ID,'run Owner identity');need(actor.get('login')==OWNER,'run Owner')
+ need(run.get('path')==WORKFLOW and run.get('created_at')==m['created_at'],'run workflow/time')
+ need(run.get('status')=='in_progress' and 'conclusion'in run and run['conclusion']is None,'run terminal/cancelled')
 def fresh(api,m,check_run_id,clock,deadline=None):
  expected=manifest(m);window(m,clock);start=time.monotonic();deadline=min(deadline,start+10) if deadline is not None else start+10
+ need(integer(check_run_id),'check-run identity')
  base='/repos/'+REPO
  run=api.get(f'{base}/actions/runs/{m["run_id"]}',deadline);run_identity(run,m)
  main=api.get(base+'/git/ref/heads/main',deadline);need(main['object']['sha']==m['source_sha'],'main advanced')
@@ -71,16 +81,28 @@ def fresh(api,m,check_run_id,clock,deadline=None):
  need(type(reviews)is list,'approval response');relevant=[]
  for r in reviews:
   need(type(r)is dict and type(r.get('environments'))is list,'approval schema')
+  need(all(type(e)is dict and integer(e.get('id')) and type(e.get('name'))is str for e in r['environments']),'approval environment schema')
+  need(len({e['id'] for e in r['environments']})==len(r['environments']),'duplicate approval environment')
+  user=r.get('user');need(type(user)is dict and integer(user.get('id')),'approval reviewer identity')
   if any(e.get('id')==m['environment_id'] or e.get('name')==ENVIRONMENT for e in r['environments']):relevant.append(r)
  need(len(relevant)==1,'missing/multiple relevant reviews');r=relevant[0]
  need(r['state']=='approved' and r['user']['login']==OWNER and r['user']['id']==OWNER_ID,'approval/rejection/reviewer')
  need(r['comment']=='GSX-PRODUCTION-APPROVE v1 sha256:'+expected,'approval digest')
  need(sum(e.get('id')==m['environment_id'] and e.get('name')==ENVIRONMENT for e in r['environments'])==1,'approval environment')
  jobs=api.get(f'{base}/actions/runs/{m["run_id"]}/attempts/1/jobs?per_page=100',deadline)
- need(type(jobs['total_count'])is int and jobs['total_count']==len(jobs['jobs']) and jobs['total_count']<=100,'job enumeration')
+ need(type(jobs)is dict and type(jobs.get('jobs'))is list,'job enumeration schema')
+ need(type(jobs.get('total_count'))is int and jobs['total_count']==len(jobs['jobs']) and 0<jobs['total_count']<=100,'job enumeration')
+ need(all(type(j)is dict and integer(j.get('id')) for j in jobs['jobs']),'job numeric identity')
+ need(len({j['id'] for j in jobs['jobs']})==len(jobs['jobs']),'duplicate job identity')
  ds=[j for j in jobs['jobs'] if j['name']=='Deploy Production'];ps=[j for j in jobs['jobs'] if j['name']=='Prepare Production']
  need(len(ds)==len(ps)==1,'job ambiguity');j=ds[0]
- need(type(j['id'])is int and j['id']>0 and j['run_id']==m['run_id'] and j['run_attempt']==1 and j['head_sha']==m['source_sha'] and j['status']=='in_progress' and j['conclusion']is None,'Deploy job identity/state')
+ for job in (j,ps[0]):
+  identity(job.get('run_id'),m['run_id'],'job run identity');identity(job.get('run_attempt'),1,'job attempt identity')
+  need(job.get('head_sha')==m['source_sha'] and 'conclusion'in job,'job source/state')
+ need(j.get('status')=='in_progress' and j['conclusion']is None,'Deploy job identity/state')
  need(j['check_run_url']==f'https://api.github.com/repos/{REPO}/check-runs/{check_run_id}','check-run cross-check')
  need(ps[0]['status']=='completed' and ps[0]['conclusion']=='success' and ps[0]['run_id']==m['run_id'] and ps[0]['run_attempt']==1 and ps[0]['head_sha']==m['source_sha'],'Prepare completion')
+ # Re-read authenticated run identity after approval/jobs, within the original
+ # shared deadline. Never substitute the earlier response or retry a refusal.
+ run_identity(api.get(f'{base}/actions/runs/{m["run_id"]}',deadline),m)
  window(m,clock);need(time.monotonic()<deadline,'final check exceeded ten seconds');return deadline

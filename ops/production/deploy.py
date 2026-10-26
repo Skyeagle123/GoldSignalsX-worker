@@ -1,7 +1,7 @@
 """One final authorization process, followed by at most one CLI invocation.
 No live call is made by importing this module. No retries or automatic rollback.
 """
-import os,pathlib,signal,subprocess,sys,tarfile,tempfile,time,urllib.request
+import contextlib,math,os,pathlib,signal,subprocess,sys,tarfile,tempfile,time,urllib.request
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from authorization import *
 from prepare import inventory,git
@@ -38,6 +38,36 @@ def unpack(path,dest):
    if m.isdir():out.mkdir(parents=True,exist_ok=True)
    else:
     out.parent.mkdir(parents=True,exist_ok=True);out.write_bytes(t.extractfile(m).read());out.chmod(m.mode&0o755)
+def artifact_identity(art,expected_id,m):
+ need(integer(expected_id) and type(art)is dict,'artifact response schema')
+ identity(art.get('id'),expected_id,'artifact identity')
+ run=art.get('workflow_run');need(type(run)is dict,'artifact run schema')
+ identity(run.get('id'),m['run_id'],'artifact run identity')
+ need(run.get('head_sha')==m['source_sha'] and type(art.get('expired'))is bool and art['expired']is False and art.get('name')==f'gsx-production-{m["run_id"]}-1','same-run artifact')
+@contextlib.contextmanager
+def execution_authority(m,artifact_id,check_run_id,clock,deadline,executable,final_start):
+ # This private, one-use pipe is the authority capability. The environment
+ # contains only its descriptor locator, never a caller-supplied deadline.
+ manifest(m);window(m,clock)
+ need(integer(artifact_id) and integer(check_run_id),'execution identity')
+ need(type(deadline) in (int,float) and math.isfinite(deadline) and time.monotonic()<deadline,'execution deadline')
+ need(deadline<=final_start+10 and final_start>=clock.mono,'shared final budget')
+ packet=dict(format='gsx-execution-authority-v1',pid=os.getpid(),manifest=m,
+  manifest_digest=manifest(m),artifact_id=artifact_id,check_run_id=check_run_id,
+  executable=str(executable),clock_wall_ms=int(clock.wall*1000),
+  clock_mono_ns=str(int(clock.mono*1_000_000_000)),
+  final_start_ns=str(math.floor(final_start*1_000_000_000)),
+  deadline_mono_ns=str(min(math.floor(deadline*1_000_000_000),math.floor(final_start*1_000_000_000)+10_000_000_000)))
+ data=canonical(packet);need(len(data)<=4096,'execution authority size')
+ rd,wr=os.pipe()
+ try:
+  need(os.write(wr,data)==len(data),'execution authority transfer');os.close(wr);wr=None
+  os.set_inheritable(rd,True)
+  yield str(rd)
+ finally:
+  os.close(rd)
+  if wr is not None:os.close(wr)
+
 def deploy(build):
  need(not CANCELLED,'cancelled');m=parse((build/'authorization.json').read_bytes());manifest(m)
  need(os.environ.get('GSX_PRODUCTION_ENABLED')=='true' and m['source_sha']==os.environ['GSX_PRODUCTION_REVIEWED_SHA'],'initial constraints')
@@ -49,8 +79,9 @@ def deploy(build):
  need(digest(canonical({f:digest((ROOT/f).read_bytes()) for f in git('ls-files').splitlines()}))==m['source_digest'],'source bytes')
  need(digest((ROOT/'wrangler.toml').read_bytes())==m['config_digest'],'configuration')
  need(digest((build/'toolchain.tar.gz').read_bytes())==m['artifact_digest'] and digest((build/'policy.json').read_bytes())==m['policy_digest'],'artifact/policy substitution')
- api=API(os.environ['GH_READ_TOKEN']);art=api.get(f'/repos/{REPO}/actions/artifacts/{int(os.environ["GSX_ARTIFACT_ID"])}')
- need(art['workflow_run']['id']==m['run_id'] and art['workflow_run']['head_sha']==m['source_sha'] and not art['expired'] and art['name']==f'gsx-production-{m["run_id"]}-1','same-run artifact')
+ artifact_id=runner_integer(os.environ.get('GSX_ARTIFACT_ID'),'artifact ID');check_run_id=runner_integer(os.environ.get('GSX_CHECK_RUN_ID'),'check-run ID')
+ api=API(os.environ['GH_READ_TOKEN']);art=api.get(f'/repos/{REPO}/actions/artifacts/{artifact_id}')
+ artifact_identity(art,artifact_id,m)
  clock=Clock();window(m,clock)
  with tempfile.TemporaryDirectory() as td:
   d=pathlib.Path(td);unpack(build/'toolchain.tar.gz',d)
@@ -66,14 +97,17 @@ def deploy(build):
   start=time.monotonic();deadline=start+10;need(baseline(account,token,deadline)==m['baseline'],'baseline changed')
   rollback=cfget(account,token,'/workers/scripts/goldsignalsx-worker/versions/'+m['rollback']['version_id'],deadline)
   need(rollback.get('id')==m['rollback']['version_id'] and digest(canonical(rollback))==m['rollback']['version_digest'],'rollback evidence changed')
-  deadline=fresh(api,m,int(os.environ['GSX_CHECK_RUN_ID']),clock,deadline)
+  deadline=fresh(api,m,check_run_id,clock,deadline)
   need(time.monotonic()-start<10 and time.monotonic()<deadline and not CANCELLED,'final freshness/cancellation')
   window(m,clock)
   need(not CANCELLED,'cancelled before invocation')
   # Replace this verifier process. There is no mutable command handoff, child
   # supervisor retry or second invocation after an uncertain result.
   os.chdir(ROOT)
-  os.execve(cmd[0],cmd,env)
+  with execution_authority(m,artifact_id,check_run_id,clock,min(deadline,start+10),cmd[0],start) as authority_fd:
+   env['GSX_EXECUTION_AUTHORITY_FD']=authority_fd
+   window(m,clock);need(time.monotonic()<deadline and not CANCELLED,'execution handoff expired/cancelled')
+   os.execve(cmd[0],cmd,env)
 if __name__=='__main__':
  for s in [signal.SIGINT,signal.SIGTERM]:signal.signal(s,cancel)
  try:deploy(ROOT/'.production-build')
