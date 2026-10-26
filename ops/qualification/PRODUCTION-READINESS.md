@@ -64,19 +64,43 @@ Four distinct times must not be conflated:
 2. Final baseline, rollback and GitHub checks share one 10-second monotonic budget.
    The second run read cannot reset or extend it. Equality with a cutoff refuses.
 3. Python verifies the limits immediately before its single CLI exec boundary.
-4. Node startup and Wrangler discovery occur after exec. The first possible
-   Cloudflare mutation therefore has no independently enforced 10-second or
-   manifest-expiry deadline inside the unchanged request gate. A mocked delayed
-   startup demonstrates that limit honestly; it does not measure real latency.
+4. Node startup, discovery and body preparation consume the same absolute budget.
+   The inherited authority pipe carries the original final-check start and deadline,
+   run expiry and migration cutoff. The gate checks these immediately before each
+   mutation request is created and again before request.end. Every mutation must
+   begin within the unchanged final ten-second budget and run/migration authority.
 
-No mutation deadline or globally persistent exactly-once guarantee is claimed.
-No automatic retry exists within the controller invocation; the unchanged gate
-rejects repeated operation identities and seals on failure. Replay/duplicate job,
-attempt and terminal-state tests must pass. A separately authorized campaign must
-not start another run after uncertainty. If a first-mutation deadline is required,
-stop and separately authorize a narrowly reviewed request-gate design; this patch
-does not silently add one. Hosted transfer, discovery compatibility and latency
-remain separately authorized evidence gates.
+The controller creates a bounded anonymous pipe after full authenticated validation.
+Only the read end is inherited across exec; the writer is closed. Its environment
+variable is a descriptor locator, not timing authority. The gate requires a FIFO,
+reads it once, closes it, removes the locator and freezes validated timing state.
+It binds the current PID (unchanged by exec), verified executable path, full manifest
+and manifest digest, run/attempt/source, artifact ID/digests, check-run ID and actual
+policy bytes. It rejects malformed, extended, contradictory or expired evidence.
+The capability's trust comes from the verified controller and clean exec environment,
+not from a self-signature. Arbitrary code execution in the trusted runner, or a
+same-UID attacker capable of manufacturing the entire launch, is outside this IPC
+boundary; no local self-supplied JSON can prove GitHub approval independently.
+
+Timing uses Linux CLOCK_MONOTONIC: Python time.monotonic and pinned Node/libuv hrtime
+share that clock across exec. Decimal nanosecond strings avoid JSON integer precision
+loss; deadlines are rounded down. Unix wall milliseconds independently check run
+expiry, migration cutoff and <=2-second wall/monotonic divergence. Backward clocks,
+future origins, deadline equality and incompatible epochs refuse. No deadline is
+reset at Node startup. Runtime compatibility must retain the pinned Linux platform.
+System suspension and scheduler stalls cannot provide a provider-acceptance deadline:
+checks enforce freshness at local pre-initiation/pre-end boundaries, not atomically
+at kernel transmission or provider acceptance. A scheduler pause after a check
+remains a race. Cancellation, network
+flight and provider acceptance are not atomic. A request already sent may commit
+after expiry or cancellation; reconcile read-only and never retry automatically.
+
+Tests exercise actual gate code with injected clocks/transport, real controller pipe
+handoff, and actual pinned CLI over isolated Unix sockets. The earlier Python-only
+startup model remains as historical boundary coverage, not current gate evidence.
+No globally persistent exactly-once guarantee is claimed. Existing serialized operation
+IDs, sticky failure and no automatic retry remain. A separate process/campaign cannot
+be safely restarted after uncertainty without independent provider reconciliation.
 
 ## Credential migration: prerequisites, abort and cleanup
 

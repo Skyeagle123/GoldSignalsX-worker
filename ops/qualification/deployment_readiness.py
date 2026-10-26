@@ -39,7 +39,7 @@ def main():
  except Exception:
   print('OFFLINE PROBE FAIL: isolation or harness error');return 1
  print('OFFLINE PROBE PASS tests='+str(result.testsRun)+'; mocks only; deployment NOT authorized')
- print('TIMING: run-created TTL=900s; final pre-exec budget=10s; CLI/first-mutation deadline NOT enforced')
+ print('TIMING: run-created TTL=900s; final pre-exec budget=10s; gate deadline enforced separately; actual gate regressions required')
  return 0
 
 if __name__=='__main__':raise SystemExit(main())

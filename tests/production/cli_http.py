@@ -82,8 +82,16 @@ def scenario(fault='',at='versions',legacy=False,control=False,timeout=8,attack=
      worker=threading.Thread(target=serve,args=(a,),daemon=True);workers.append(worker);worker.start()
   dispatcher=threading.Thread(target=dispatch,daemon=True);dispatcher.start()
   env={'PATH':os.environ['PATH'],'HOME':td,'CI':'true','WRANGLER_SEND_METRICS':'false','CLOUDFLARE_SEND_METRICS':'false','CLOUDFLARE_API_TOKEN':'synthetic-not-a-secret','CLOUDFLARE_ACCOUNT_ID':ACCOUNT,'GSX_PRODUCTION_CF_API_TOKEN':'synthetic-not-a-secret','GSX_PRODUCTION_CF_ACCOUNT_ID':ACCOUNT,'GSX_DEPLOY_CONTEXT_FILE':str(pp),'GSX_TEST_ATTACK':attack,'GSX_UPSTREAM_TRANSPORT':str(ROOT/'tests/production/unix-transport.cjs'),'GSX_FAKE_FDS':json.dumps([b.fileno() for a,b in pairs])}
+  rd,wr=os.pipe();env['GSX_EXECUTION_AUTHORITY_FD']=str(rd)
   cmd=['/tmp/gsx-no-network','node','--require',str(ROOT/'tests/production/unix-transport.cjs'),*(['--require',str(ROOT/'ops/production/request-gate.cjs')] if not control else []),str(CLI)+('.upstream' if control else ''),'deploy','--config',str(ROOT/'wrangler.toml')]
-  p=subprocess.Popen(cmd,cwd=ROOT,env=env,pass_fds=tuple(b.fileno() for a,b in pairs),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+  p=subprocess.Popen(cmd,cwd=ROOT,env=env,pass_fds=tuple(b.fileno() for a,b in pairs)+(rd,),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+  from deadline_fixture import packet
+  import shutil
+  from authorization import canonical
+  os.close(rd)
+  try:
+   if not control:os.write(wr,canonical(packet(p.pid,pp.read_bytes(),str(pathlib.Path(shutil.which('node')).resolve()))))
+  finally:os.close(wr)
   for a,b in pairs:b.close()
   try:out=p.communicate(timeout=timeout)[0]
   except subprocess.TimeoutExpired:p.terminate();out=p.communicate(timeout=5)[0]
