@@ -1,8 +1,64 @@
 """Synthetic transport only; no secrets, production credentials or live requests."""
-import contextlib,copy,hashlib,io,json,os,pathlib,socket,sys,unittest,urllib.error
+import contextlib,copy,hashlib,io,json,os,pathlib,socket,subprocess,sys,tempfile,unittest,urllib.error
 from unittest.mock import patch
 import test_qualification as fixtures
 q=fixtures.q;ROOT=fixtures.ROOT
+
+def tracked_files(root):
+ raw=subprocess.check_output(['git','ls-files','-z'],cwd=root,env={'PATH':'/usr/bin:/bin','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_NO_REPLACE_OBJECTS':'1'})
+ return [os.fsdecode(f) for f in raw.split(b'\0') if f]
+
+class SourceInventory(unittest.TestCase):
+ def setUp(self):
+  temporary=tempfile.TemporaryDirectory(prefix='gsx-source-inventory-');self.addCleanup(temporary.cleanup);self.root=pathlib.Path(temporary.name)
+  self.git_env={'PATH':'/usr/bin:/bin','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_NO_REPLACE_OBJECTS':'1'}
+  self.git('init','--quiet')
+  self.names=['tracked.txt','space name.txt','line\nbreak.txt','unicodé.txt']
+  for name in self.names:(self.root/name).write_bytes(b'reviewed source\n')
+  (self.root/'.gitignore').write_text('ops/production/toolchain/node_modules/\n')
+  self.git('add','--','.gitignore',*self.names)
+  self.inventory={f:hashlib.sha256((self.root/f).read_bytes()).hexdigest() for f in tracked_files(self.root)}
+  self.network=patch.object(socket,'socket',side_effect=AssertionError('NETWORK FORBIDDEN'));self.network.start();self.addCleanup(self.network.stop)
+ def git(self,*args):
+  return subprocess.check_output(['git',*args],cwd=self.root,env=self.git_env)
+ def exercise(self,reject=False,digest=None):
+  original=subprocess.check_output
+  def checked(args,**kwargs):
+   if args==['git','rev-parse','HEAD']:return 'a'*40
+   return original(args,**kwargs)
+  env={**fixtures.QualificationIsolation().context(),'GSX_QUALIFICATION_REVIEWED_SHA':'a'*40,'GITHUB_WORKFLOW_SHA':'a'*40,'GITHUB_WORKFLOW_REF':q.REPO+'/.github/workflows/qualification-only.yml@refs/heads/main','GSX_QUALIFICATION_SOURCE_DIGEST':digest or hashlib.sha256(json.dumps(self.inventory,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+  with patch.object(q,'ROOT',self.root),patch.dict(os.environ,env,clear=True),patch.object(q.subprocess,'check_output',side_effect=checked),patch.object(q,'read') as api:
+   if reject:
+    for mode in ('production','publication'):
+     with self.subTest(mode=mode),self.assertRaises(q.Refused) as caught:q.run(mode)
+     self.assertEqual(caught.exception.code,'SOURCE')
+   else:q.source()
+   api.assert_not_called()
+ def test_clean_tracked_inventory_and_nul_paths(self):
+  self.assertEqual(set(tracked_files(self.root)),set(self.inventory));self.assertIn('line\nbreak.txt',tracked_files(self.root));self.exercise()
+ def test_installed_dependencies_and_untracked_files_excluded(self):
+  before=tracked_files(self.root)
+  modules=self.root/'ops/production/toolchain/node_modules';(modules/'acorn/bin').mkdir(parents=True);(modules/'.bin').mkdir()
+  (modules/'acorn/bin/acorn').write_bytes(b'offline dependency fixture')
+  (modules/'.bin/acorn').symlink_to('../acorn/bin/acorn')
+  (self.root/'untracked.txt').write_text('untracked')
+  (self.root/'untracked-link').symlink_to('tracked.txt')
+  (self.root/'untracked-broken-link').symlink_to('absent')
+  self.assertTrue((modules/'.bin/acorn').is_file());self.assertTrue((modules/'.bin/acorn').is_symlink())
+  self.assertEqual(tracked_files(self.root),before);self.exercise()
+ def test_tracked_missing_file_refused_before_api(self):
+  (self.root/'tracked.txt').unlink();self.assertIn('tracked.txt',tracked_files(self.root));self.exercise(reject=True)
+ def test_tracked_symlink_refused_before_api(self):
+  path=self.root/'tracked.txt';path.unlink();path.symlink_to('space name.txt')
+  self.assertTrue(path.is_file());self.exercise(reject=True)
+  # A symlink actually recorded in the index must also remain in the inventory.
+  self.git('add','--','tracked.txt');self.assertIn('tracked.txt',tracked_files(self.root));self.exercise(reject=True)
+ def test_tracked_non_regular_entries_refused_before_api(self):
+  path=self.root/'tracked.txt';path.unlink();path.mkdir();self.exercise(reject=True)
+  path.rmdir();os.mkfifo(path);self.exercise(reject=True)
+ def test_tracked_digest_mismatch_refused_before_api(self):
+  self.exercise(reject=True,digest='0'*64)
+  (self.root/'tracked.txt').write_bytes(b'changed source');self.exercise(reject=True)
 
 class Diagnostics(unittest.TestCase):
  def setUp(self):
@@ -77,7 +133,7 @@ class Diagnostics(unittest.TestCase):
     transport.return_value.open.return_value=response
     with self.assertRaises(q.Refused):q.read('api.github.com','/x','synthetic',{'/x'})
  def test_source_real_inventory(self):
-  files=sorted(p.relative_to(ROOT).as_posix() for p in ROOT.rglob('*') if p.is_file() and '__pycache__' not in p.parts and '.git' not in p.parts)
+  files=tracked_files(ROOT)
   inv={f:hashlib.sha256((ROOT/f).read_bytes()).hexdigest() for f in files};digest=hashlib.sha256(json.dumps(inv,sort_keys=True,separators=(',',':')).encode()).hexdigest()
   env={'GSX_QUALIFICATION_REVIEWED_SHA':'a'*40,'GITHUB_SHA':'a'*40,'GITHUB_WORKFLOW_SHA':'a'*40,'GITHUB_WORKFLOW_REF':q.REPO+'/.github/workflows/qualification-only.yml@refs/heads/main','GSX_QUALIFICATION_SOURCE_DIGEST':digest}
   with patch.dict(os.environ,env,clear=True),patch.object(q.subprocess,'check_output',side_effect=lambda args,**kw:'a'*40 if args[1]=='rev-parse' else '\0'.join(files)+'\0'):
