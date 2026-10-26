@@ -16,7 +16,7 @@ class DeploymentVerifier(unittest.TestCase):
     x=tarfile.TarInfo(name);x.size=len(b);x.mode=0o755;t.addfile(x,io.BytesIO(b))
   m['artifact_digest']=digest((self.build/'toolchain.tar.gz').read_bytes());policy=canonical({'account':m['account'],'worker':m['worker']});(self.build/'policy.json').write_bytes(policy);m['policy_digest']=digest(policy);self.save()
   self.env={'GITHUB_REPOSITORY':REPO,'GITHUB_REPOSITORY_ID':str(REPO_ID),'GITHUB_ACTOR':OWNER,'GITHUB_ACTOR_ID':str(OWNER_ID),'GITHUB_SHA':m['source_sha'],'GITHUB_RUN_ID':str(m['run_id']),'GITHUB_RUN_ATTEMPT':'1','GITHUB_REF':'refs/heads/main','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_WORKFLOW_SHA':m['workflow_sha'],'GITHUB_WORKFLOW_REF':REPO+'/'+WORKFLOW+'@refs/heads/main','GSX_PRODUCTION_ENABLED':'true','GSX_PRODUCTION_REVIEWED_SHA':m['source_sha'],'GSX_PRODUCTION_CF_API_TOKEN':'synthetic','GSX_PRODUCTION_CF_ACCOUNT_ID':m['account'],'GH_READ_TOKEN':'synthetic-gh','GSX_ARTIFACT_ID':'1','GSX_CHECK_RUN_ID':'11','NODE_OPTIONS':'untrusted','PUBLICATION_PRIVATE_KEY':'synthetic-not-real'}
-  self.artifact={'workflow_run':{'id':m['run_id'],'head_sha':m['source_sha']},'expired':False,'name':f'gsx-production-{m["run_id"]}-1'}
+  self.artifact={'id':1,'workflow_run':{'id':m['run_id'],'head_sha':m['source_sha']},'expired':False,'name':f'gsx-production-{m["run_id"]}-1'}
  def save(self):(self.build/'authorization.json').write_bytes(canonical(self.m))
  def call(self,baseline=None,execute=Invoked):
   stack=contextlib.ExitStack();self.addCleanup(stack.close)

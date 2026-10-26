@@ -38,6 +38,12 @@ def unpack(path,dest):
    if m.isdir():out.mkdir(parents=True,exist_ok=True)
    else:
     out.parent.mkdir(parents=True,exist_ok=True);out.write_bytes(t.extractfile(m).read());out.chmod(m.mode&0o755)
+def artifact_identity(art,expected_id,m):
+ need(integer(expected_id) and type(art)is dict,'artifact response schema')
+ identity(art.get('id'),expected_id,'artifact identity')
+ run=art.get('workflow_run');need(type(run)is dict,'artifact run schema')
+ identity(run.get('id'),m['run_id'],'artifact run identity')
+ need(run.get('head_sha')==m['source_sha'] and type(art.get('expired'))is bool and art['expired']is False and art.get('name')==f'gsx-production-{m["run_id"]}-1','same-run artifact')
 def deploy(build):
  need(not CANCELLED,'cancelled');m=parse((build/'authorization.json').read_bytes());manifest(m)
  need(os.environ.get('GSX_PRODUCTION_ENABLED')=='true' and m['source_sha']==os.environ['GSX_PRODUCTION_REVIEWED_SHA'],'initial constraints')
@@ -49,8 +55,9 @@ def deploy(build):
  need(digest(canonical({f:digest((ROOT/f).read_bytes()) for f in git('ls-files').splitlines()}))==m['source_digest'],'source bytes')
  need(digest((ROOT/'wrangler.toml').read_bytes())==m['config_digest'],'configuration')
  need(digest((build/'toolchain.tar.gz').read_bytes())==m['artifact_digest'] and digest((build/'policy.json').read_bytes())==m['policy_digest'],'artifact/policy substitution')
- api=API(os.environ['GH_READ_TOKEN']);art=api.get(f'/repos/{REPO}/actions/artifacts/{int(os.environ["GSX_ARTIFACT_ID"])}')
- need(art['workflow_run']['id']==m['run_id'] and art['workflow_run']['head_sha']==m['source_sha'] and not art['expired'] and art['name']==f'gsx-production-{m["run_id"]}-1','same-run artifact')
+ artifact_id=runner_integer(os.environ.get('GSX_ARTIFACT_ID'),'artifact ID');check_run_id=runner_integer(os.environ.get('GSX_CHECK_RUN_ID'),'check-run ID')
+ api=API(os.environ['GH_READ_TOKEN']);art=api.get(f'/repos/{REPO}/actions/artifacts/{artifact_id}')
+ artifact_identity(art,artifact_id,m)
  clock=Clock();window(m,clock)
  with tempfile.TemporaryDirectory() as td:
   d=pathlib.Path(td);unpack(build/'toolchain.tar.gz',d)
@@ -66,7 +73,7 @@ def deploy(build):
   start=time.monotonic();deadline=start+10;need(baseline(account,token,deadline)==m['baseline'],'baseline changed')
   rollback=cfget(account,token,'/workers/scripts/goldsignalsx-worker/versions/'+m['rollback']['version_id'],deadline)
   need(rollback.get('id')==m['rollback']['version_id'] and digest(canonical(rollback))==m['rollback']['version_digest'],'rollback evidence changed')
-  deadline=fresh(api,m,int(os.environ['GSX_CHECK_RUN_ID']),clock,deadline)
+  deadline=fresh(api,m,check_run_id,clock,deadline)
   need(time.monotonic()-start<10 and time.monotonic()<deadline and not CANCELLED,'final freshness/cancellation')
   window(m,clock)
   need(not CANCELLED,'cancelled before invocation')
