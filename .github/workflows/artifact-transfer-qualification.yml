@@ -1,0 +1,142 @@
+name: GoldSignalsX artifact transfer qualification
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_control_sha:
+        description: 'Separately reviewed installed qualification commit (40 hex)'
+        required: true
+        type: string
+      golden_run_id:
+        description: 'Existing seed artifact run; separate upload authorization required'
+        required: true
+        type: string
+      golden_artifact_id:
+        description: 'Existing seed artifact with exactly toolchain.tar.gz and policy.json'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: gsx-artifact-qualification-${{ github.run_id }}
+  cancel-in-progress: false
+env:
+  GSX_PRODUCTION_ENABLED: 'false'
+  REVIEWED_CONTROL_SHA: ${{ inputs.reviewed_control_sha }}
+jobs:
+  prepare_transfer:
+    if: >-
+      github.repository == 'Skyeagle123/GoldSignalsX-worker' &&
+      github.repository_id == '1085006449' && github.actor == 'Skyeagle123' &&
+      github.actor_id == '125151458' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && github.run_attempt == 1 &&
+      github.sha == inputs.reviewed_control_sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    outputs:
+      artifact_id: ${{ steps.payload_upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.payload_upload.outputs.artifact-digest }}
+      manifest_digest: ${{ steps.package.outputs.manifest_digest }}
+    steps:
+      - id: control_checkout
+        name: gsx:control_checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          path: qualification-control
+          persist-credentials: false
+      - id: source_checkout
+        name: gsx:source_checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: '892da18f2f3935d2bea669051f101156d11c26ae'
+          path: qualification-source
+          persist-credentials: false
+      - id: seed_download
+        name: gsx:seed_download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ inputs.golden_artifact_id }}
+          run-id: ${{ inputs.golden_run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/gsx-seed
+      - id: package
+        name: gsx:package
+        env:
+          QUALIFICATION_GH_TOKEN: ${{ github.token }}
+          QUALIFICATION_INPUT_DIR: ${{ runner.temp }}/gsx-seed
+        run: >-
+          python3 -B -I qualification-control/ops/qualification/artifact_transfer.py
+          build qualification-source qualification-control
+          '${{ runner.temp }}/gsx-transfer/payload'
+      - id: payload_upload
+        name: gsx:payload_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gsx-artifact-qualification-${{ github.run_id }}-1
+          path: |
+            ${{ runner.temp }}/gsx-transfer/payload/authorization.json
+            ${{ runner.temp }}/gsx-transfer/payload/policy.json
+            ${{ runner.temp }}/gsx-transfer/payload/toolchain.tar.gz
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false
+  verify_transfer:
+    needs: prepare_transfer
+    if: needs.prepare_transfer.result == 'success' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - id: control_checkout
+        name: gsx:control_checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          path: qualification-control
+          persist-credentials: false
+      - id: source_checkout
+        name: gsx:source_checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: '892da18f2f3935d2bea669051f101156d11c26ae'
+          path: qualification-source
+          persist-credentials: false
+      - id: zip_verify
+        name: gsx:zip_verify
+        env:
+          QUALIFICATION_GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.prepare_transfer.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.prepare_transfer.outputs.artifact_digest }}
+        run: >-
+          python3 -B -I qualification-control/ops/qualification/artifact_transfer.py
+          zip qualification-source qualification-control
+          '${{ runner.temp }}/gsx-transfer/receipt'
+      - id: payload_download
+        name: gsx:payload_download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.prepare_transfer.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/gsx-transfer/payload
+      - id: payload_verify
+        name: gsx:payload_verify
+        env:
+          QUALIFICATION_GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.prepare_transfer.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.prepare_transfer.outputs.artifact_digest }}
+          MANIFEST_DIGEST: ${{ needs.prepare_transfer.outputs.manifest_digest }}
+        run: >-
+          python3 -B -I qualification-control/ops/qualification/artifact_transfer.py
+          verify qualification-source qualification-control
+          '${{ runner.temp }}/gsx-transfer/payload'
+      - id: receipt_upload
+        name: gsx:receipt_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gsx-artifact-receipt-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/gsx-transfer/receipt/qualification-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false
